@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "titan"
+version = "0.1.0"
+description = "Project Titan - Multiagent Competitive Intelligence System"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "requests==2.32.3",
+    "beautifulsoup4==4.12.3",
+    "playwright==1.48.0",
+    "python-dotenv==1.0.1",
+    "pydantic>=2.9",
+    "langgraph>=0.6",
+    "langchain-ollama>=0.3.6",
+    "mcp>=1.9",
+    "langchain-mcp-adapters>=0.1",
+    "httpx>=0.28",
+    "trafilatura>=2.0",
+]
+
+[project.optional-dependencies]
+# Power mode: proprietary model provider, never required for Standard mode
+power = [
+    "langchain-anthropic>=0.3",
+]
+
+# Installed by plain `uv sync`
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+markers = [
+    "network: needs internet access",
+    "docker: needs Docker running in WSL",
+]
