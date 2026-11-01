@@ -4,9 +4,9 @@ import logging
 import httpx
 
 from config import (
-    validate_config, DATABASE_PATH, LOG_LEVEL, LLM_MODE, LOCAL_LLM_MODEL, OLLAMA_BASE_URL,
+    validate_config, EVIDENCE_DB_PATH, LOG_LEVEL, LLM_MODE, LOCAL_LLM_MODEL, OLLAMA_BASE_URL,
 )
-from database import TitanDatabase
+from evidence import EvidenceStore
 
 # Configure logging
 logging.basicConfig(
@@ -27,9 +27,8 @@ class TitanApp:
         if not validate_config():
             self.logger.warning("Configuration incomplete. Some features may not work.")
 
-        # Initialize database
-        self.db = TitanDatabase(DATABASE_PATH)
-        self.logger.info(f"Database initialized: {DATABASE_PATH}")
+        self.store = EvidenceStore(EVIDENCE_DB_PATH)
+        self.logger.info(f"Evidence store: {EVIDENCE_DB_PATH}")
 
     def research_company(self, company_name: str, focus_area: str = None) -> dict:
         """
@@ -44,9 +43,8 @@ class TitanApp:
         """
         self.logger.info(f"Starting research for {company_name}")
 
-        # Add company to database
-        company_id = self.db.add_company(company_name)
-        self.logger.info(f"Company ID: {company_id}")
+        entity_id = self.store.add_entity(company_name)
+        self.logger.info(f"Entity ID: {entity_id}")
 
         # Placeholder: no research workflow exists yet (skills, search and the runner are unbuilt)
         return {
@@ -57,7 +55,6 @@ class TitanApp:
 
     def close(self):
         """Clean up resources"""
-        self.db.close()
         self.logger.info("Application shutdown")
 
     def __enter__(self):
@@ -92,9 +89,19 @@ def main():
                 note = "" if LOCAL_LLM_MODEL in models else f"  (WARNING: {LOCAL_LLM_MODEL} not installed)"
                 print(f"OK   Ollama: {', '.join(models)}{note}")
             print(f"OK   Mode: {LLM_MODE}, default model {LOCAL_LLM_MODEL}")
-            print(f"OK   Database: {DATABASE_PATH}")
+            counts = app.store.counts()
+            print(f"OK   Evidence store: {EVIDENCE_DB_PATH}")
+            print(f"     {counts['sources']} sources, {counts['claims']} claims, "
+                  f"{counts['rejected_claims']} rejected attempts")
+            problems = app.store.audit()
+            if problems:
+                print("FAIL Audit:")
+                for problem in problems:
+                    print(f"     {problem}")
+            else:
+                print("OK   Audit: every stored claim re-verifies")
             print()
-            print("Not built yet: skills, search, workflow runner, evidence store")
+            print("Not built yet: skills, workflow runner, reranker, evals")
             print("Tools (fetch, browser, sandbox): run `uv run pytest` to verify")
     except Exception as e:
         print(f"FAIL Error: {e}")

@@ -12,12 +12,11 @@ Built and tested:
 - **Standard and Power modes**: Standard uses open-source models only. Power swaps in Anthropic for the tasks listed in `POWER_MODE_TASKS`.
 - **Search** ([src/tools/search/](src/tools/search)): `web_search` fans a query out to the configured providers in parallel, merges them by reciprocal rank fusion, and logs every search (including failed engines) to an append-only ledger. SearXNG is the open-source default; Brave Search API is an opt-in paid provider.
 - **Primary sources** ([src/tools/primary.py](src/tools/primary.py)): `resolve_company_domain` (Wikidata candidates with evidence; `confirmed`, `ambiguous` or `needs_review`) and `discover_company_pages` (sitemaps, homepage, feeds; honors robots.txt; archives discovery files).
+- **Evidence store** ([src/evidence.py](src/evidence.py)): sources, entities and claims in append-only SQLite (triggers block UPDATE and DELETE). A claim is stored only if its quote appears word for word in the archived page text; code checks this, not the model. Rejected attempts are logged. Corrections are new rows (retraction, supersession, contradiction). `audit()` re-verifies every stored claim and file hash. MCP tools: `record_claim`, `list_claims`; every `fetch_url` / `render_url` result carries a `source_id`.
 - **Tools over MCP** ([src/tools/](src/tools)): `web_search`, `fetch_url`, `render_url` (headless browser), `run_python` and `run_shell` (sandbox). Every fetch is archived under its SHA-256 hash. An SSRF guard blocks localhost, LAN and metadata addresses.
 - **Sandbox**: throwaway Docker container in WSL2 with no network, a read-only filesystem, capped resources, and a hard timeout.
 
-Not built yet: skills loader, search reranker and direct-source connectors (EDGAR, RSS, sitemaps), LangGraph runner with pause/resume, evidence and claims store, quote verification, tracing, evals, dashboard, A2A.
-
-The database ([src/database.py](src/database.py)) is the older design and will be replaced by the evidence store.
+Not built yet: skills loader, search reranker and more direct-source connectors (EDGAR, RSS), LangGraph runner with pause/resume, a check that each claim is actually supported by its quote, tracing, evals, dashboard, A2A.
 
 ## Requirements
 
@@ -56,7 +55,7 @@ src/llm.py          get_chat_model(task): Ollama or Anthropic
 src/tools/          fetch, browser, sandbox, archive, MCP server and client
 src/tools/search/   providers, rank fusion, append-only search ledger
 infra/              SearXNG config and launcher
-src/database.py     SQLite store (to be replaced)
+src/evidence.py     append-only evidence store with quote verification
 tests/              tool and sandbox tests
 data/               archive and databases (git-ignored, back up separately)
 ```

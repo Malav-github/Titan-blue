@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import httpx
 import trafilatura
+from bs4 import BeautifulSoup
 
 from tools.archive import USER_AGENT, archive_bytes, check_public_url, clip, utc_now
 
@@ -43,19 +44,42 @@ def download(url: str, timeout: float = 20.0, max_bytes: int = MAX_BYTES) -> Dow
                             resp.encoding or "utf-8")
 
 
+META_KEYS = ("dc.", "citation_", "og:", "description", "twitter:title", "article:")
+MAX_META = 40
+
+
+def meta_block(html: str) -> str:
+    """Page metadata that article extraction drops (e.g. a patent's assignee), as plain `name: value` lines."""
+    lines = []
+    for tag in BeautifulSoup(html, "html.parser").find_all("meta"):
+        name = (tag.get("name") or tag.get("property") or "").strip()
+        content = (tag.get("content") or "").strip()
+        if content and name.lower().startswith(META_KEYS):
+            scheme = tag.get("scheme")
+            lines.append(f"{name}{f' ({scheme})' if scheme else ''}: {content}")
+    return "\n".join(lines[:MAX_META])
+
+
+def extract_text(body: bytes, content_type: str, encoding: str, url: str) -> tuple[str, str]:
+    """(file suffix, readable text). The one extractor used for fetching AND for evidence ingestion."""
+    if "html" in content_type:
+        html = body.decode(encoding, errors="replace")
+        text = trafilatura.extract(html, url=url, include_comments=False) or ""
+        meta = meta_block(html)
+        return ".html", f"{text}\n\n[Page metadata]\n{meta}" if meta else text
+    if content_type.startswith("text/") or content_type.endswith("json"):
+        return (".json" if content_type.endswith("json") else ".txt"), body.decode(encoding, errors="replace")
+    return ".bin", ""
+
+
+EXTRACTOR = f"trafilatura {trafilatura.__version__} + meta-v1"
+
+
 def fetch_url(url: str, max_chars: int = 12_000, timeout: float = 20.0) -> dict:
     dl = download(url, timeout)
     body, content_type, final_url, encoding = dl.body, dl.content_type, dl.final_url, dl.encoding
 
-    if "html" in content_type:
-        suffix = ".html"
-        html = body.decode(encoding, errors="replace")
-        text = trafilatura.extract(html, url=final_url, include_comments=False) or ""
-    elif content_type.startswith("text/") or content_type.endswith("json"):
-        suffix = ".json" if content_type.endswith("json") else ".txt"
-        text = body.decode(encoding, errors="replace")
-    else:
-        suffix, text = ".bin", ""
+    suffix, text = extract_text(body, content_type, encoding, final_url)
 
     sha256, path = archive_bytes(body, suffix)
     text, truncated = clip(text, max_chars)
@@ -64,6 +88,7 @@ def fetch_url(url: str, max_chars: int = 12_000, timeout: float = 20.0) -> dict:
         "final_url": final_url,
         "status": dl.status,
         "content_type": content_type,
+        "encoding": encoding,
         "fetched_at": utc_now(),
         "sha256": sha256,
         "archive_path": path,

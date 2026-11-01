@@ -32,8 +32,9 @@ SEARCH_TIMEOUT = float(os.getenv("SEARCH_TIMEOUT", "20"))
 # Identifies Titan to sites it fetches from (email or URL). Wikimedia and some other sites reject bots without one.
 TITAN_CONTACT = os.getenv("TITAN_CONTACT", "").strip()
 
-# Database Configuration
-DATABASE_PATH = os.getenv("DATABASE_PATH", str(DATA_DIR / "titan.db"))
+# Evidence store (append-only; git-ignored, back it up separately)
+# Relative paths resolve against the project root, not whichever directory a process starts in
+EVIDENCE_DB_PATH = str((PROJECT_ROOT / os.getenv("EVIDENCE_DB_PATH", "data/evidence.db")).resolve())
 
 # Application Configuration
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
@@ -58,7 +59,7 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 POWER_MODE_TASKS = {
     t.strip() for t in os.getenv(
         "POWER_MODE_TASKS",
-        "text2sql,confidence_scoring,contradiction_detection,synthesis",
+        "text2sql,confidence_scoring,contradiction_detection,synthesis,claim_support",
     ).split(",") if t.strip()
 }
 
@@ -109,7 +110,7 @@ if __name__ == "__main__":
     print("Project Configuration")
     print("========================\n")
     print(f"Project root: {PROJECT_ROOT}")
-    print(f"Database: {DATABASE_PATH}")
+    print(f"Evidence DB: {EVIDENCE_DB_PATH}")
     print(f"Debug mode: {DEBUG}")
     print(f"Log level: {LOG_LEVEL}")
     print(f"\nOK   Configuration loaded")

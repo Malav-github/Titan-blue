@@ -92,7 +92,7 @@ def test_mcp_server_round_trip():
         async with titan_tools() as tools:
             by_name = {t.name: t for t in tools}
             assert set(by_name) == {"web_search", "resolve_company_domain", "discover_company_pages",
-                              "fetch_url", "render_url", "run_python", "run_shell"}
+                              "fetch_url", "render_url", "record_claim", "list_claims", "run_python", "run_shell"}
             return await by_name["run_python"].ainvoke({"code": "print(6 * 7)"})
 
     output = asyncio.run(go())

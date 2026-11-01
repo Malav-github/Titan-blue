@@ -1,9 +1,9 @@
 """Headless-browser fetch for JavaScript-rendered pages. Slower than HTTP; archives HTML and a screenshot."""
 
-import trafilatura
 from playwright.sync_api import sync_playwright
 
 from tools.archive import USER_AGENT, archive_bytes, check_public_url, clip, utc_now
+from tools.web import extract_text
 
 
 def render_url(url: str, max_chars: int = 12_000, wait_ms: int = 1500) -> dict:
@@ -24,13 +24,15 @@ def render_url(url: str, max_chars: int = 12_000, wait_ms: int = 1500) -> dict:
 
     sha256, path = archive_bytes(html.encode("utf-8"), ".html")
     shot_sha256, shot_path = archive_bytes(screenshot, ".png")
-    text = trafilatura.extract(html, url=final_url, include_comments=False) or ""
+    _, text = extract_text(html.encode("utf-8"), "text/html", "utf-8", final_url)
     text, truncated = clip(text, max_chars)
     return {
         "url": url,
         "final_url": final_url,
         "status": status,
         "fetched_at": utc_now(),
+        "content_type": "text/html",
+        "encoding": "utf-8",
         "sha256": sha256,
         "archive_path": path,
         "screenshot_sha256": shot_sha256,

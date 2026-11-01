@@ -20,8 +20,11 @@ CONNECTIONS = {
 
 
 @asynccontextmanager
-async def titan_tools():
-    """Yield LangChain tools backed by one long-lived MCP server session."""
-    client = MultiServerMCPClient(CONNECTIONS)
+async def titan_tools(env: dict[str, str] | None = None):
+    """Yield LangChain tools backed by one long-lived MCP server session.
+
+    `env` adds variables to the server process (e.g. EVIDENCE_DB_PATH for an isolated run)."""
+    connections = {"titan": {**CONNECTIONS["titan"], **({"env": env} if env else {})}}
+    client = MultiServerMCPClient(connections)
     async with client.session("titan") as session:
         yield await load_mcp_tools(session)
