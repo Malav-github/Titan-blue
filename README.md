@@ -19,7 +19,9 @@ Built and tested:
 - **Tools over MCP** ([src/tools/](src/tools)): `web_search`, `fetch_url`, `render_url` (headless browser), `list_connectors` / `call_api`, `record_claim` / `list_claims`, `run_python` and `run_shell` (sandbox). Every fetch is archived under its SHA-256 hash. An SSRF guard blocks localhost, LAN and metadata addresses.
 - **Sandbox**: throwaway Docker container in WSL2 with no network, a read-only filesystem, capped resources, and a hard timeout.
 
-Not built yet: skills loader, search reranker, backend API and frontend, A2A, MCP-server integration.
+- **Block registry and API** ([definitions/](definitions), [src/api/](src/api), [docs/block-spec.md](docs/block-spec.md)): every capability is a JSON block definition (typed ports, settings schema, needs and costs). `uv run python serve.py` starts a localhost-only API (session token in `data/api_token.txt`, header `X-Titan-Token`; foreign Host headers refused) with block listing and availability, models, health, single-block runs, run events (JSON and server-sent events), approval decisions and file uploads. One engine runs a single block and a graph of blocks; its history is the append-only run log, so a run waiting for approval survives a restart. Claims and sources can only be references to the evidence store. Uploaded files become sources with tier `user_provided`. `research.run` and `capability.request` are not wired to the engine yet (use the CLIs).
+
+Not built yet: the frontend, templates, chat endpoint, evidence and connector endpoints, skills loader, search reranker, A2A, MCP-server integration.
 
 ## Requirements
 

@@ -4,19 +4,26 @@ Binds to localhost only. Every /api request needs the session token (header X-Ti
 local Host header, so a web page open in the user's browser cannot talk to it.
 """
 
+import asyncio
 import hmac
+import json
 import os
 import secrets
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+from sse_starlette.sse import EventSourceResponse
 
 import config
 from api import probes
+from api.engine import TERMINAL, Engine, RunError
+from api.executors import MAX_UPLOAD_BYTES, save_upload
 from api.registry import BlockDef, Registry
 from app import ollama_models
 from evidence import EvidenceStore
+from runs import RunStore
 
 ALLOWED_HOSTS = {"localhost", "127.0.0.1", "[::1]", "testserver"}
 TOKEN_FILE = Path(config.DATA_DIR) / "api_token.txt"
@@ -41,11 +48,26 @@ def load_token() -> str:
     return token
 
 
+class RunRequest(BaseModel):
+    inputs: dict = Field(default_factory=dict)
+    settings: dict = Field(default_factory=dict)
+
+
+class Decision(BaseModel):
+    approved: bool
+    note: str = ""
+
+
 def create_app(registry: Registry | None = None, token: str | None = None,
-               probe_map: dict | None = None, store: EvidenceStore | None = None) -> FastAPI:
+               probe_map: dict | None = None, store: EvidenceStore | None = None,
+               engine: Engine | None = None) -> FastAPI:
     registry = registry or Registry.load()
     token = token or load_token()
     probe_map = probe_map if probe_map is not None else probes.PROBES
+    if engine is None:
+        from connectors.registry import ConnectorRegistry
+        engine = Engine(registry, store or EvidenceStore(config.EVIDENCE_DB_PATH), RunStore(), probe_map,
+                        connectors=ConnectorRegistry())
     app = FastAPI(title="Titan", docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.middleware("http")
@@ -125,5 +147,64 @@ def create_app(registry: Registry | None = None, token: str | None = None,
             "langfuse_configured": bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY")),
             "evidence": {**st.counts(), "audit_problems": problems},
         }
+
+    @app.post("/api/blocks/{block_id}/run", status_code=202)
+    def run_block(block_id: str, body: RunRequest):
+        if registry.latest(block_id) is None:
+            raise HTTPException(404, f"No block {block_id}")
+        graph, run_inputs = engine.single_block_graph(block_id, body.settings, body.inputs)
+        try:
+            return {"run_id": engine.start(graph, run_inputs, registry.latest(block_id).title)}
+        except RunError as exc:
+            raise HTTPException(422, {"problems": exc.problems})
+
+    @app.get("/api/runs")
+    def runs(limit: int = 50):
+        return engine.runs.runs(min(max(limit, 1), 200))
+
+    @app.get("/api/runs/{run_id}")
+    def run(run_id: str):
+        data = engine.describe(run_id)
+        if data is None:
+            raise HTTPException(404, "No such run")
+        return data
+
+    @app.get("/api/runs/{run_id}/events")
+    def run_events(run_id: str, after: int = 0):
+        return engine.runs.events(run_id, after)
+
+    @app.get("/api/runs/{run_id}/stream")
+    async def run_stream(run_id: str, after: int = 0):
+        """Server-sent events. Ends at a final state or when approval is needed; reconnect with ?after=<last id>."""
+        async def gen():
+            last = after
+            while True:
+                status = engine.runs.status(run_id)       # read first: every event up to this status is visible below
+                events = engine.runs.events(run_id, last)
+                for e in events:
+                    last = e["event_id"]
+                    yield {"event": e["type"], "id": str(last), "data": json.dumps(e)}
+                if not events and (status in TERMINAL or status == "awaiting_approval"):
+                    return
+                await asyncio.sleep(0.3)
+        return EventSourceResponse(gen())
+
+    @app.post("/api/runs/{run_id}/decision")
+    def decide(run_id: str, body: Decision):
+        try:
+            engine.resume(run_id, body.approved, body.note)
+        except RunError as exc:
+            raise HTTPException(409, {"problems": exc.problems})
+        return {"ok": True}
+
+    @app.post("/api/uploads", status_code=201)
+    async def upload(request: Request, filename: str):
+        if int(request.headers.get("content-length") or 0) > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, "File too large")
+        data = await request.body()
+        try:
+            return save_upload(engine.uploads_dir, filename, data)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
 
     return app

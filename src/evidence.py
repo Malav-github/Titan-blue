@@ -22,6 +22,7 @@ from tools.archive import archive_bytes, utc_now
 from tools.primary import host_of, is_official
 from tools.web import EXTRACTOR, extract_text
 
+UPLOAD_SCHEME = "upload://"   # URL given to sources that came from a user-uploaded file
 MIN_QUOTE_CHARS = 20
 HINT_CONTEXT = 60
 
@@ -234,7 +235,10 @@ class EvidenceStore:
             if ent is None:
                 return {"ok": False, "reason": f"unknown entity_id {entity_id}"}
             known_domain = [ent["domain"]] if ent["domain"] and ent["domain_status"] == "confirmed" else []
-            tier = "primary" if is_official(source["final_url"], known_domain) else "secondary"
+            if source["final_url"].startswith(UPLOAD_SCHEME):
+                tier = "user_provided"     # the user's own file: never counts as independent or primary evidence
+            else:
+                tier = "primary" if is_official(source["final_url"], known_domain) else "secondary"
             cur = db.execute(
                 "INSERT INTO claims (entity_id, predicate, value, claim_text, source_sha256, source_tier, quote,"
                 " quote_start, quote_end, text_sha256, as_of, created_at, created_by)"
