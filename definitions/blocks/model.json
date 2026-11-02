@@ -1,0 +1,25 @@
+[
+  {
+    "id": "model.chat", "version": 1, "kind": "model", "group": "model",
+    "title": "Chat with a model",
+    "summary": "Plain chat with a local model. Tools are opt-in and every tool call is shown.",
+    "inputs": [{"name": "message", "type": "Text", "required": true}],
+    "outputs": [{"name": "reply", "type": "Text"}],
+    "settings": {"type": "object", "properties": {
+      "model": {"type": "string", "default": ""}, "temperature": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.2}}},
+    "badges": {"needs": ["ollama"], "costs": "free", "side_effects": []},
+    "executor": {"type": "python", "ref": "api.executors:chat"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  },
+  {
+    "id": "model.list", "version": 1, "kind": "capability", "group": "model",
+    "title": "List installed models",
+    "summary": "Models installed in Ollama, with the task each one is assigned to.",
+    "inputs": [],
+    "outputs": [{"name": "models", "type": "Json"}],
+    "settings": {"type": "object", "properties": {}},
+    "badges": {"needs": ["ollama"], "costs": "free", "side_effects": []},
+    "executor": {"type": "python", "ref": "api.executors:list_models"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  }
+]

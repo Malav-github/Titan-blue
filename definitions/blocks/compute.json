@@ -1,0 +1,24 @@
+[
+  {
+    "id": "sandbox.python", "version": 1, "kind": "capability", "group": "compute",
+    "title": "Run Python (sandbox)",
+    "summary": "Run Python in a throwaway container: no network, read-only, capped CPU, memory and output.",
+    "inputs": [{"name": "code", "type": "Text", "required": true}],
+    "outputs": [{"name": "result", "type": "Json"}],
+    "settings": {"type": "object", "properties": {"timeout": {"type": "integer", "minimum": 1, "maximum": 120, "default": 30}}},
+    "badges": {"needs": ["docker"], "costs": "free", "side_effects": ["starts a container"]},
+    "executor": {"type": "python", "ref": "api.executors:sandbox_python"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  },
+  {
+    "id": "sandbox.shell", "version": 1, "kind": "capability", "group": "compute",
+    "title": "Run shell (sandbox)",
+    "summary": "Run a shell script in the same locked-down container.",
+    "inputs": [{"name": "script", "type": "Text", "required": true}],
+    "outputs": [{"name": "result", "type": "Json"}],
+    "settings": {"type": "object", "properties": {"timeout": {"type": "integer", "minimum": 1, "maximum": 120, "default": 30}}},
+    "badges": {"needs": ["docker"], "costs": "free", "side_effects": ["starts a container"]},
+    "executor": {"type": "python", "ref": "api.executors:sandbox_shell"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  }
+]

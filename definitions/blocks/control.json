@@ -1,0 +1,27 @@
+[
+  {
+    "id": "control.approve", "version": 1, "kind": "control", "group": "control",
+    "title": "Ask for approval",
+    "summary": "Pause the run until a person approves or rejects. The decision is recorded in the run log.",
+    "inputs": [{"name": "subject", "type": "Json", "required": true}],
+    "outputs": [{"name": "decision", "type": "Json"}],
+    "settings": {"type": "object", "properties": {"prompt": {"type": "string", "default": "Approve to continue?"}}},
+    "badges": {"needs": [], "costs": "free", "side_effects": ["waits for a person"]},
+    "executor": {"type": "python", "ref": "api.executors:approve"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  },
+  {
+    "id": "research.run", "version": 1, "kind": "composite", "group": "control",
+    "title": "Research a company",
+    "summary": "The full research run: plan, approve, discover, fetch, extract, check, assess, report. Pauses at the plan for approval.",
+    "inputs": [{"name": "question", "type": "Text", "required": true}, {"name": "subject", "type": "Text", "required": false}],
+    "outputs": [{"name": "claims", "type": "Claims"}, {"name": "report", "type": "Text"}],
+    "settings": {"type": "object", "properties": {
+      "max_searches": {"type": "integer", "minimum": 0, "maximum": 20, "default": 6},
+      "max_fetches": {"type": "integer", "minimum": 1, "maximum": 50, "default": 8},
+      "max_api_calls": {"type": "integer", "minimum": 0, "maximum": 100, "default": 6}}},
+    "badges": {"needs": ["network", "ollama"], "costs": "free", "side_effects": ["archives pages", "appends claims", "waits for approval"]},
+    "executor": {"type": "python", "ref": "api.executors:research_run"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  }
+]

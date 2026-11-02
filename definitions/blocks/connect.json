@@ -1,0 +1,25 @@
+[
+  {
+    "id": "api.call", "version": 1, "kind": "capability", "group": "connect",
+    "title": "Call an approved API",
+    "summary": "Call an endpoint of an activated connector through the guarded caller (rate limit, budget, no redirects, size cap, key never exposed).",
+    "inputs": [{"name": "params", "type": "Json", "required": false}],
+    "outputs": [{"name": "response", "type": "Json"}],
+    "settings": {"type": "object", "properties": {
+      "connector_id": {"type": "string"}, "endpoint": {"type": "string"}}, "required": ["connector_id", "endpoint"]},
+    "badges": {"needs": ["connector"], "costs": "metered:call", "side_effects": ["archives the response", "counts against the connector budget"]},
+    "executor": {"type": "python", "ref": "api.executors:api_call"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  },
+  {
+    "id": "capability.request", "version": 1, "kind": "control", "group": "connect",
+    "title": "Add a data source",
+    "summary": "Identify an API a task needs, research its requirements from its documentation, draft a connector, and stop at a single human approval gate.",
+    "inputs": [{"name": "need", "type": "Text", "required": true}],
+    "outputs": [{"name": "request", "type": "Json"}],
+    "settings": {"type": "object", "properties": {}},
+    "badges": {"needs": ["network", "ollama"], "costs": "free", "side_effects": ["creates a capability request", "waits for human approval"]},
+    "executor": {"type": "python", "ref": "api.executors:capability_request"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  }
+]

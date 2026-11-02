@@ -1,0 +1,35 @@
+[
+  {
+    "id": "evidence.extract_claims", "version": 1, "kind": "model", "group": "check",
+    "title": "Extract claims",
+    "summary": "Ask a model for claims about a needed fact. Each claim is kept only if its quote appears verbatim in the source.",
+    "inputs": [{"name": "source", "type": "Source", "required": true}, {"name": "need", "type": "Text", "required": true}],
+    "outputs": [{"name": "claims", "type": "Claims"}],
+    "settings": {"type": "object", "properties": {"model": {"type": "string", "default": "", "description": "Empty uses the task default"}}},
+    "badges": {"needs": ["ollama"], "costs": "free", "side_effects": ["appends claims to the evidence store"]},
+    "executor": {"type": "python", "ref": "api.executors:extract_claims"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  },
+  {
+    "id": "evidence.check_support", "version": 1, "kind": "model", "group": "check",
+    "title": "Check claim support",
+    "summary": "Judge whether the quote supports the claim: supported, partially supported or not supported. Numbers and ids missing from the quote downgrade the verdict.",
+    "inputs": [{"name": "claim", "type": "Claim", "required": true}],
+    "outputs": [{"name": "verdict", "type": "Verdict"}],
+    "settings": {"type": "object", "properties": {"model": {"type": "string", "default": "", "description": "Empty uses the claim_support task model"}}},
+    "badges": {"needs": ["ollama"], "costs": "free", "side_effects": ["appends the verdict to the evidence store"]},
+    "executor": {"type": "python", "ref": "api.executors:check_support"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  },
+  {
+    "id": "evidence.relevance", "version": 1, "kind": "model", "group": "check",
+    "title": "Relevance gate",
+    "summary": "Decide whether a source is about the right subject before claims are taken from it.",
+    "inputs": [{"name": "source", "type": "Source", "required": true}, {"name": "need", "type": "Text", "required": true}],
+    "outputs": [{"name": "result", "type": "Json"}],
+    "settings": {"type": "object", "properties": {"model": {"type": "string", "default": ""}}},
+    "badges": {"needs": ["ollama"], "costs": "free", "side_effects": []},
+    "executor": {"type": "python", "ref": "api.executors:relevance"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  }
+]

@@ -1,0 +1,12 @@
+[
+  {"name": "Text",   "parent": null,   "widget": "text",        "label": "Text"},
+  {"name": "Query",  "parent": "Text", "widget": "query_input", "label": "Query"},
+  {"name": "URL",    "parent": "Text", "widget": "url_input",   "label": "URL"},
+  {"name": "Source", "parent": null,   "widget": "source_card", "label": "Source"},
+  {"name": "Claim",  "parent": null,   "widget": "claim_card",  "label": "Claim"},
+  {"name": "Claims", "parent": null,   "widget": "evidence_table", "label": "Claims"},
+  {"name": "Verdict","parent": null,   "widget": "verdict_badge", "label": "Verdict"},
+  {"name": "Model",  "parent": "Text", "widget": "model_picker", "label": "Model"},
+  {"name": "File",   "parent": null,   "widget": "file_drop",   "label": "File"},
+  {"name": "Json",   "parent": null,   "widget": "json_viewer", "label": "Json"}
+]

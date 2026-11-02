@@ -1,0 +1,39 @@
+[
+  {
+    "id": "search.web", "version": 1, "kind": "capability", "group": "find",
+    "title": "Web search",
+    "summary": "Search the web (SearXNG, plus Brave if enabled). Results are leads, not evidence: fetch a page before relying on it.",
+    "inputs": [{"name": "query", "type": "Query", "required": true}],
+    "outputs": [{"name": "results", "type": "Json"}],
+    "settings": {"type": "object", "properties": {
+      "max_results": {"type": "integer", "minimum": 1, "maximum": 30, "default": 10},
+      "recency": {"type": "string", "enum": ["", "day", "week", "month", "year"], "default": ""},
+      "site": {"type": "string", "default": "", "description": "Limit to one domain"}}},
+    "badges": {"needs": ["network", "searxng"], "costs": "free", "side_effects": ["logs the query in the search ledger"]},
+    "executor": {"type": "python", "ref": "api.executors:search_web"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  },
+  {
+    "id": "company.resolve_domain", "version": 1, "kind": "capability", "group": "find",
+    "title": "Find a company's website",
+    "summary": "Resolve a company name to its official domain, with the evidence for each candidate. Only a confirmed result counts as the company's own site.",
+    "inputs": [{"name": "company", "type": "Text", "required": true}],
+    "outputs": [{"name": "resolution", "type": "Json"}],
+    "settings": {"type": "object", "properties": {}},
+    "badges": {"needs": ["network"], "costs": "free", "side_effects": ["records the resolution in the evidence store"]},
+    "executor": {"type": "python", "ref": "api.executors:resolve_domain"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  },
+  {
+    "id": "company.discover_pages", "version": 1, "kind": "capability", "group": "find",
+    "title": "Discover company pages",
+    "summary": "List a company's own pages (pricing, about, blog, careers, press, docs) from sitemaps and feeds, honoring robots.txt.",
+    "inputs": [{"name": "domain", "type": "Text", "required": true}],
+    "outputs": [{"name": "pages", "type": "Json"}],
+    "settings": {"type": "object", "properties": {
+      "max_pages": {"type": "integer", "minimum": 1, "maximum": 100, "default": 40}}},
+    "badges": {"needs": ["network"], "costs": "free", "side_effects": []},
+    "executor": {"type": "python", "ref": "api.executors:discover_pages"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  }
+]

@@ -1,0 +1,35 @@
+[
+  {
+    "id": "web.fetch_url", "version": 1, "kind": "capability", "group": "read",
+    "title": "Fetch a page",
+    "summary": "Download a public URL, extract its text, and archive it by SHA-256 as a source.",
+    "inputs": [{"name": "url", "type": "URL", "required": true}],
+    "outputs": [{"name": "source", "type": "Source"}],
+    "settings": {"type": "object", "properties": {}},
+    "badges": {"needs": ["network"], "costs": "free", "side_effects": ["archives the page", "registers a source"]},
+    "executor": {"type": "python", "ref": "api.executors:fetch_url"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  },
+  {
+    "id": "web.render_url", "version": 1, "kind": "capability", "group": "read",
+    "title": "Render a page (JavaScript)",
+    "summary": "Load a page in a headless browser for sites that need JavaScript, then archive it as a source.",
+    "inputs": [{"name": "url", "type": "URL", "required": true}],
+    "outputs": [{"name": "source", "type": "Source"}],
+    "settings": {"type": "object", "properties": {}},
+    "badges": {"needs": ["network", "playwright"], "costs": "free", "side_effects": ["archives the page", "registers a source"]},
+    "executor": {"type": "python", "ref": "api.executors:render_url"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  },
+  {
+    "id": "evidence.ingest_file", "version": 1, "kind": "capability", "group": "read",
+    "title": "Read an uploaded file",
+    "summary": "Extract text from an uploaded PDF or text file and register it as a user-provided source.",
+    "inputs": [{"name": "file", "type": "File", "required": true}],
+    "outputs": [{"name": "source", "type": "Source"}],
+    "settings": {"type": "object", "properties": {}},
+    "badges": {"needs": [], "costs": "free", "side_effects": ["archives the file", "registers a source (tier user_provided)"]},
+    "executor": {"type": "python", "ref": "api.executors:ingest_file"},
+    "owner": "system", "permissions": {"roles": ["user", "admin"]}
+  }
+]
