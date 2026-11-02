@@ -1,5 +1,6 @@
 """Plain HTTP fetch with readable-text extraction. Fast; use for static pages and APIs."""
 
+import io
 from dataclasses import dataclass
 
 import httpx
@@ -60,6 +61,19 @@ def meta_block(html: str) -> str:
     return "\n".join(lines[:MAX_META])
 
 
+MAX_PDF_PAGES = 100
+
+
+def pdf_text(body: bytes) -> str:
+    """Text layer of a PDF (no OCR). Scanned documents give an empty string, which callers treat as unreadable."""
+    from pypdf import PdfReader
+    try:
+        reader = PdfReader(io.BytesIO(body))
+        return "\n".join((page.extract_text() or "") for page in reader.pages[:MAX_PDF_PAGES])
+    except Exception:
+        return ""
+
+
 def extract_text(body: bytes, content_type: str, encoding: str, url: str) -> tuple[str, str]:
     """(file suffix, readable text). The one extractor used for fetching AND for evidence ingestion."""
     if "html" in content_type:
@@ -67,12 +81,14 @@ def extract_text(body: bytes, content_type: str, encoding: str, url: str) -> tup
         text = trafilatura.extract(html, url=url, include_comments=False) or ""
         meta = meta_block(html)
         return ".html", f"{text}\n\n[Page metadata]\n{meta}" if meta else text
+    if content_type == "application/pdf" or body[:5] == b"%PDF-":
+        return ".pdf", pdf_text(body)
     if content_type.startswith("text/") or content_type.endswith("json"):
         return (".json" if content_type.endswith("json") else ".txt"), body.decode(encoding, errors="replace")
     return ".bin", ""
 
 
-EXTRACTOR = f"trafilatura {trafilatura.__version__} + meta-v1"
+EXTRACTOR = f"trafilatura {trafilatura.__version__} + meta-v1 + pypdf"
 
 
 def fetch_url(url: str, max_chars: int = 12_000, timeout: float = 20.0) -> dict:

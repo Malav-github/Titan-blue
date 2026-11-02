@@ -84,9 +84,9 @@ def _wikidata(params: dict) -> dict:
 def resolve_domain(company: str, limit: int = 5) -> dict:
     """Candidate official domains from Wikidata's 'official website' property, each with its evidence.
 
-    `confirmed` needs an exact label match, a homepage that mentions the company, and NO other
-    candidate passing the same checks. Several passing (e.g. two things called "Notion") are all
-    `ambiguous`; everything else is `needs_review`. A person or a later step must decide those.
+    `confirmed` needs an exact label match, a homepage that mentions the company, and no other
+    candidate passing the same checks on a DIFFERENT domain. Several passing on different domains
+    (e.g. two things called "Notion") are all `ambiguous`; everything else is `needs_review`. A person or a later step must decide those.
     """
     found = _wikidata({"action": "wbsearchentities", "search": company, "language": "en",
                        "type": "item", "limit": limit}).get("search", [])
@@ -121,10 +121,10 @@ def resolve_domain(company: str, limit: int = 5) -> dict:
             "status": "confirmed" if exact and mentions else "needs_review",
         })
     passing = [c for c in candidates if c["status"] == "confirmed"]
-    if len(passing) > 1:
+    if len({c["domain"] for c in passing}) > 1:  # several entities sharing ONE domain is not ambiguity
         for c in passing:
             c["status"] = "ambiguous"
-            c["evidence"].append(f"{len(passing)} entities with this name pass the checks; cannot tell which is meant")
+            c["evidence"].append(f"{len(passing)} entities with this name pass the checks on different domains; cannot tell which is meant")
     return {"company": company, "resolved_at": utc_now(), "candidates": candidates}
 
 

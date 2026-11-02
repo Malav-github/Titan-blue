@@ -48,6 +48,12 @@ RESEARCH_DEPTH = os.getenv("RESEARCH_DEPTH", "deep")
 # standard = open-source models via Ollama only; power = Anthropic for POWER_MODE_TASKS
 LLM_MODE = os.getenv("LLM_MODE", "standard").lower()
 LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "qwen3:8b")
+# Per-task local models, "task=model,task=model". Tasks not listed use LOCAL_LLM_MODEL. Chosen from `eval_models.py`:
+# a different model family as the claim-support checker caught an entity-link error the Qwen models missed.
+TASK_MODELS = {
+    k.strip(): v.strip() for k, v in (pair.split("=", 1) for pair in os.getenv("TASK_MODELS", "").split(",") if "=" in pair)
+    if k.strip() and v.strip()
+}
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 # Context the model actually gets; large values don't fit in 8GB VRAM
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
@@ -59,7 +65,7 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 POWER_MODE_TASKS = {
     t.strip() for t in os.getenv(
         "POWER_MODE_TASKS",
-        "text2sql,confidence_scoring,contradiction_detection,synthesis,claim_support",
+        "text2sql,confidence_scoring,contradiction_detection,synthesis,claim_support,capability",
     ).split(",") if t.strip()
 }
 

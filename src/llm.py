@@ -31,7 +31,7 @@ def get_chat_model(
         )
 
     return ChatOllama(
-        model=model or config.LOCAL_LLM_MODEL,
+        model=model or config.TASK_MODELS.get(task) or config.LOCAL_LLM_MODEL,
         base_url=config.OLLAMA_BASE_URL,
         temperature=temperature,
         num_ctx=config.OLLAMA_NUM_CTX,

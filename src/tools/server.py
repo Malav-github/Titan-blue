@@ -6,11 +6,14 @@ import anyio
 from mcp.server.fastmcp import FastMCP
 
 from tools import browser, primary, sandbox, web
+from connectors.caller import ConnectorError, call_api as guarded_call
+from connectors.registry import ConnectorRegistry
 from evidence import EvidenceStore
 from tools.search import search
 
 mcp = FastMCP("titan-tools")
 store = EvidenceStore()
+registry = ConnectorRegistry()
 
 
 def _with_source_id(result: dict) -> dict:
@@ -67,6 +70,29 @@ async def render_url(url: str, max_chars: int = 12000) -> dict:
     """Load a page in a headless browser so JavaScript runs. Slower than fetch_url. Archives the
     rendered HTML and a full-page screenshot, returning both hashes."""
     return _with_source_id(await anyio.to_thread.run_sync(partial(browser.render_url, url, max_chars=max_chars)))
+
+
+@mcp.tool()
+async def list_connectors() -> list[dict]:
+    """The approved data-source connectors (APIs) you can use with call_api: what each provides, its endpoints and
+    parameters (* = required). If none fits, say what data source is missing instead of guessing."""
+    def run() -> list[dict]:
+        return [{"connector": m.connector_id, "provides": m.description, "tier": m.tier, "endpoints": {
+            e.name: {"description": e.description, "params": [p.name + ("*" if p.required else "") for p in e.params]}
+            for e in m.endpoints}} for _, m in registry.list_active()]
+    return await anyio.to_thread.run_sync(run)
+
+
+@mcp.tool()
+async def call_api(connector: str, endpoint: str, params: dict[str, str] | None = None) -> dict:
+    """Call an approved connector endpoint (read-only). Returns the response text, its SHA-256 and a `source_id` to cite
+    with record_claim. Limits and budgets are enforced; a refusal explains why."""
+    def run() -> dict:
+        try:
+            return _with_source_id(guarded_call(registry, connector, endpoint, params))
+        except ConnectorError as exc:
+            return {"ok": False, "error": str(exc)}
+    return await anyio.to_thread.run_sync(run)
 
 
 @mcp.tool()

@@ -4,7 +4,7 @@ import logging
 import httpx
 
 from config import (
-    validate_config, EVIDENCE_DB_PATH, LOG_LEVEL, LLM_MODE, LOCAL_LLM_MODEL, OLLAMA_BASE_URL,
+    validate_config, EVIDENCE_DB_PATH, LOG_LEVEL, LLM_MODE, LOCAL_LLM_MODEL, OLLAMA_BASE_URL, TASK_MODELS,
 )
 from evidence import EvidenceStore
 
@@ -89,6 +89,9 @@ def main():
                 note = "" if LOCAL_LLM_MODEL in models else f"  (WARNING: {LOCAL_LLM_MODEL} not installed)"
                 print(f"OK   Ollama: {', '.join(models)}{note}")
             print(f"OK   Mode: {LLM_MODE}, default model {LOCAL_LLM_MODEL}")
+            for task, name in TASK_MODELS.items():
+                missing = models is not None and name not in models
+                print(f"{'FAIL' if missing else 'OK  '} Task model: {task} -> {name}" + ("  (not installed: ollama pull it)" if missing else ""))
             counts = app.store.counts()
             print(f"OK   Evidence store: {EVIDENCE_DB_PATH}")
             print(f"     {counts['sources']} sources, {counts['claims']} claims, "
@@ -101,7 +104,7 @@ def main():
             else:
                 print("OK   Audit: every stored claim re-verifies")
             print()
-            print("Not built yet: skills, workflow runner, reranker, evals")
+            print("Not built yet: skills loader, search reranker, backend API and frontend, A2A")
             print("Tools (fetch, browser, sandbox): run `uv run pytest` to verify")
     except Exception as e:
         print(f"FAIL Error: {e}")
