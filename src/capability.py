@@ -33,6 +33,7 @@ from connectors.registry import ConnectorRegistry
 from evidence import EvidenceStore, normalize, verify_quote
 from runs import RunStore
 from support import CONTEXT_CHARS, PROMPT as SUPPORT_PROMPT, SupportVerdict
+import policy
 from tools.archive import check_public_url, utc_now
 from tools.search.fusion import normalize_url
 from tools.web import fetch_url as default_fetch
@@ -511,6 +512,9 @@ class CapabilityManager:
                 if not host_fits_name(manifest.host, name):
                     raise ValueError(f"the API host {manifest.host} has nothing in common with the name {name!r}; "
                                      "refusing a manifest for a host that may belong to someone else")
+                rule_problems = policy.manifest_problems(manifest.host, manifest.auth.type, manifest.rate_limit.requests_per_minute)
+                if rule_problems:
+                    raise ValueError("breaks the provider's usage rules: " + "; ".join(rule_problems))
                 is_free, cost_label = self._cost(req)
                 drafts[name] = {"manifest": manifest.model_dump(by_alias=True), "is_free": is_free,
                                 "cost_label": cost_label, "manifest_source": source}

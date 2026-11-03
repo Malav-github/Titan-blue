@@ -455,3 +455,10 @@ def test_a_named_api_with_a_private_docs_url_is_refused(parts, monkeypatch):
     monkeypatch.setattr(capability, "check_public_url", refuse)
     result = manager(parts, World(APIS), handlers(APIS)).start("x", known_api={"name": "Local", "docs_url": "http://127.0.0.1/"})
     assert result["status"] == "failed" and "docs URL refused" in (result.get("outcome") or str(result))
+
+
+def test_a_draft_that_breaks_the_providers_usage_rules_is_refused_before_the_gate(parts):
+    apis = [("SEC EDGAR", "sec.gov", True)]          # the spec in this world asks for an API key header; sec.gov needs none
+    result = manager(parts, World(apis), handlers(apis)).start("company filings", known_api={"name": "SEC EDGAR", "docs_url": "https://docs.sec.gov/"})
+    assert result["status"] == "failed"
+    assert "usage rules" in result["problems"]["SEC EDGAR"] and "needs no API key" in result["problems"]["SEC EDGAR"]

@@ -1,0 +1,82 @@
+{
+  "id": "sec_edgar",
+  "name": "SEC EDGAR (sec.gov, www.sec.gov, data.sec.gov)",
+  "reviewed_on": "2026-11-03",
+  "hosts": ["sec.gov"],
+  "enforced": {
+    "max_requests_per_second": 8,
+    "cooldown_minutes_after_block": 15,
+    "block_statuses": [403, 429],
+    "require_contact_in_user_agent": true,
+    "accept_encoding": "gzip, deflate",
+    "allow_api_key": false,
+    "allow_crawling": false,
+    "allow_browser_rendering": false
+  },
+  "margins": "The SEC allows 10 requests per second and a 10 minute wait after being limited; Titan uses 8 and 15 so it stays clear of the line.",
+  "rules": [
+    {
+      "id": "rate_limit",
+      "summary": "No more than 10 requests per second in total, however many machines or connectors are used.",
+      "enforced_by": "code: one request budget shared by every process and code path (data/policy_state.db)",
+      "source_url": "https://www.sec.gov/about/developer-resources",
+      "quote": "Current guidelines limit each user to a total of no more than 10 requests per second, regardless of the number of machines used to submit requests."
+    },
+    {
+      "id": "cooldown",
+      "summary": "After being limited, wait until the request rate has stayed under the limit for 10 minutes.",
+      "enforced_by": "code: a 403 or 429 from sec.gov pauses all sec.gov requests for the cooldown",
+      "source_url": "https://www.sec.gov/about/privacy-information",
+      "quote": "Once the rate of requests has dropped below the threshold for 10 minutes, the user may resume accessing content on SEC.gov."
+    },
+    {
+      "id": "blocking",
+      "summary": "The SEC may block IP addresses that send excessive requests.",
+      "enforced_by": "code: see rate_limit and cooldown",
+      "source_url": "https://www.sec.gov/about/privacy-information",
+      "quote": "We reserve the right to block IP addresses that submit excessive requests."
+    },
+    {
+      "id": "declare_user_agent",
+      "summary": "Every request must declare who is calling: a name and a contact email in the User-Agent.",
+      "enforced_by": "code: requests to sec.gov are refused unless TITAN_CONTACT holds an email address",
+      "source_url": "https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data",
+      "quote": "Please declare your user agent in request headers:"
+    },
+    {
+      "id": "accept_encoding",
+      "summary": "The SEC's sample headers ask for gzip, deflate compression.",
+      "enforced_by": "code: Accept-Encoding is set to gzip, deflate on requests to sec.gov",
+      "source_url": "https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data",
+      "quote": "Accept-Encoding: | gzip, deflate"
+    },
+    {
+      "id": "no_crawling",
+      "summary": "Do not crawl the site with bots or automated tools.",
+      "enforced_by": "code: site discovery (sitemaps, link following) and browser rendering are refused for sec.gov; only named documents and the data.sec.gov APIs are fetched",
+      "source_url": "https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data",
+      "quote": "The SEC does not allow botnets or automated tools to crawl the site."
+    },
+    {
+      "id": "efficient_use",
+      "summary": "Download only what is needed, and prefer the bulk files for large amounts of data.",
+      "enforced_by": "guideline plus call budgets in the connector manifest (per run and per day); not a hard check",
+      "source_url": "https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data",
+      "quote": "Download only what you need and please moderate requests to minimize server load."
+    },
+    {
+      "id": "bulk_data",
+      "summary": "For large amounts of API data, use the nightly bulk ZIP files instead of many API calls.",
+      "enforced_by": "guideline",
+      "source_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+      "quote": "The most efficient means to fetch large amounts of API data is the bulk archive ZIP files, which are recompiled nightly."
+    },
+    {
+      "id": "no_key_needed",
+      "summary": "The data.sec.gov APIs need no key, so the connector must not send one.",
+      "enforced_by": "code: a manifest for a sec.gov host is refused unless its auth type is none and its rate limit is within the budget",
+      "source_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+      "quote": "These APIs do not require any authentication or API keys to access."
+    }
+  ]
+}

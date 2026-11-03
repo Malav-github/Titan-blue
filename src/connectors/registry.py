@@ -11,6 +11,7 @@ import time
 import uuid
 from contextlib import closing
 
+import policy
 from config import DATA_DIR
 from connectors.manifest import Manifest
 from tools.archive import utc_now
@@ -72,6 +73,9 @@ class ConnectorRegistry:
     # -- manifests and lifecycle ------------------------------------------------------------------
 
     def propose(self, manifest: Manifest, by: str = "capability-manager") -> int:
+        problems = policy.manifest_problems(manifest.host, manifest.auth.type, manifest.rate_limit.requests_per_minute)
+        if problems:
+            raise ValueError("; ".join(problems))      # the provider's own usage rules, enforced before anything is stored
         with closing(self._connect()) as db, db:
             row = db.execute("SELECT COALESCE(MAX(version), 0) FROM manifests WHERE connector_id = ?",
                              (manifest.connector_id,)).fetchone()

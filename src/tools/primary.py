@@ -13,6 +13,7 @@ from urllib.robotparser import RobotFileParser
 import httpx
 from bs4 import BeautifulSoup
 
+import policy
 from tools.archive import USER_AGENT, archive_bytes, check_public_url, utc_now
 from tools.web import download
 
@@ -153,6 +154,7 @@ def discover_pages(domain: str, max_pages: int = 40, per_category: int = 6) -> d
     """Find the company's own pages: sitemaps first, then homepage links, then a few guessed paths."""
     base = f"https://{domain}"
     check_public_url(base)
+    policy.before_request(base, kind="crawl")     # some sites forbid automated crawling outright
     archived: list[dict] = []
     notes: list[str] = []
 

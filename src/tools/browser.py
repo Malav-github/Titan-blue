@@ -2,12 +2,14 @@
 
 from playwright.sync_api import sync_playwright
 
+import policy
 from tools.archive import USER_AGENT, archive_bytes, check_public_url, clip, utc_now
 from tools.web import extract_text
 
 
 def render_url(url: str, max_chars: int = 12_000, wait_ms: int = 1500) -> dict:
     check_public_url(url)
+    policy.before_request(url, kind="browser")
     with sync_playwright() as p:
         browser = p.chromium.launch()
         try:
@@ -16,6 +18,7 @@ def render_url(url: str, max_chars: int = 12_000, wait_ms: int = 1500) -> dict:
             page.wait_for_timeout(wait_ms)
             final_url = page.url
             check_public_url(final_url)
+            policy.before_request(final_url, kind="browser")   # a redirect must not land on a site that forbids this
             html = page.content()
             screenshot = page.screenshot(full_page=True)
             status = resp.status if resp else None

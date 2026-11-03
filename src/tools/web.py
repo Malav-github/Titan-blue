@@ -7,6 +7,7 @@ import httpx
 import trafilatura
 from bs4 import BeautifulSoup
 
+import policy
 from tools.archive import USER_AGENT, archive_bytes, check_public_url, clip, utc_now
 
 MAX_BYTES = 5_000_000
@@ -26,12 +27,17 @@ def download(url: str, timeout: float = 20.0, max_bytes: int = MAX_BYTES) -> Dow
     """GET with the SSRF guard on every hop and a size cap. Returns bytes untouched."""
     def guard(request: httpx.Request) -> None:
         check_public_url(str(request.url))  # re-checked on every redirect hop
+        policy.before_request(str(request.url))                      # the site's usage rules, on every hop
+        request.headers.update(policy.request_headers(str(request.url)))
+
+    def after(response: httpx.Response) -> None:
+        policy.after_response(str(response.request.url), response.status_code)
 
     with httpx.Client(
         follow_redirects=True,
         timeout=timeout,
         headers={"User-Agent": USER_AGENT},
-        event_hooks={"request": [guard]},
+        event_hooks={"request": [guard], "response": [after]},
     ) as client:
         with client.stream("GET", url) as resp:
             chunks, size = [], 0

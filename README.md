@@ -21,6 +21,8 @@ Built and tested:
 
 - **Block registry and API** ([definitions/](definitions), [src/api/](src/api), [docs/block-spec.md](docs/block-spec.md)): every capability is a JSON block definition (typed ports, settings schema, needs and costs). `uv run python serve.py` starts a localhost-only API (session token in `data/api_token.txt`, header `X-Titan-Token`; foreign Host headers refused) with block listing and availability, models, health, single-block runs, run events (JSON and server-sent events), approval decisions and file uploads. One engine runs a single block and a graph of blocks; its history is the append-only run log, so a run waiting for approval survives a restart. Claims and sources can only be references to the evidence store. Uploaded files become sources with tier `user_provided`. `research.run` and `capability.request` are not wired to the engine yet (use the CLIs).
 
+- **Usage rules for outside sites** ([definitions/policies/](definitions/policies), [src/policy.py](src/policy.py), [docs/api-usage-rules.md](docs/api-usage-rules.md)): a provider's own rules (request limits, declared contact, no crawling, pauses after a refusal) are stored as data with their verbatim quotes and enforced in every request path, including a request budget shared across processes. `uv run python check_policies.py` re-checks that each quote is still on the provider's page. SEC EDGAR is the first policy.
+
 Not built yet: the frontend, templates, chat endpoint, evidence and connector endpoints, skills loader, search reranker, A2A, MCP-server integration.
 
 ## Requirements

@@ -15,6 +15,7 @@ from dotenv import dotenv_values
 from config import PROJECT_ROOT
 from connectors.manifest import Manifest
 from connectors.registry import ConnectorRegistry
+import policy
 from tools.archive import USER_AGENT, archive_bytes, check_public_url, clip, utc_now
 from tools.web import extract_text
 
@@ -121,11 +122,14 @@ def call_api(registry: ConnectorRegistry, connector_id: str, endpoint: str, para
 
     if transport is None:  # a real network call: the host must resolve to a public address
         check_public_url(full_url)
+    policy.before_request(full_url)               # the provider's usage rules (rate budget, declared contact, pauses)
+    headers.update(policy.request_headers(full_url))
     status, body, content_type, encoding = None, b"", "", "utf-8"
     try:
         with httpx.Client(timeout=timeout, follow_redirects=False, transport=transport) as client:
             with client.stream("GET", full_url, headers=headers) as resp:
                 status = resp.status_code
+                policy.after_response(full_url, status)
                 if 300 <= status < 400:
                     raise ConnectorError(f"{connector_id}: redirect to {resp.headers.get('location', '?')[:80]} not followed "
                                          "(the manifest must name the final host)")
