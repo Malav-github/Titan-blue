@@ -31,6 +31,15 @@ def base_url_from(doc: dict) -> str | None:
     return url if url and url.startswith("https://") and "{" not in url else None
 
 
+def drop_auth_param(endpoints: list[Endpoint], auth_type: str, auth_name: str | None) -> list[Endpoint]:
+    """Specs often list the API key as a required query parameter on every endpoint. The caller adds the key from
+    .env itself, so the endpoint must not also ask the user (or a model) to supply it."""
+    if auth_type == "query" and auth_name:
+        for e in endpoints:
+            e.params = [p for p in e.params if not (p.in_ == "query" and p.name == auth_name)]
+    return endpoints
+
+
 def endpoints_from(doc: dict) -> list[Endpoint]:
     """GET operations without a request body, as manifest endpoints (at most MAX_ENDPOINTS)."""
     found, names = [], set()

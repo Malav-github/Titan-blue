@@ -240,3 +240,21 @@ def test_openapi_conversion_keeps_only_readonly_endpoints():
     assert {p.name: p.type for p in eps[0].params} == {"search": "string", "per-page": "integer"}
     assert eps[1].params[0].in_ == "path" and eps[1].params[0].required
     assert not is_openapi({"swagger": "2.0"}) and base_url_from({"servers": [{"url": "http://x"}]}) is None
+
+
+def test_key_listed_as_a_required_parameter_is_dropped_so_a_smoke_test_exists():
+    """OpenAlex's spec lists api_key as a required query parameter on every endpoint; the caller adds the key itself."""
+    from capability import CapabilityManager
+    from connectors.openapi import drop_auth_param
+    spec = {"openapi": "3.1.0", "servers": [{"url": "https://api.example.org"}],
+            "paths": {"/works": {"get": {"operationId": "listWorks", "parameters": [
+                          {"name": "api_key", "in": "query", "required": True}, {"name": "search", "in": "query"}]}},
+                      "/works/{id}": {"get": {"operationId": "getWork", "parameters": [
+                          {"name": "id", "in": "path", "required": True}, {"name": "api_key", "in": "query", "required": True}]}}}}
+    assert CapabilityManager._smoke_from(endpoints_from(spec)) is None          # the bug: no endpoint without required params
+    eps = drop_auth_param(endpoints_from(spec), "query", "api_key")
+    assert [p.name for p in eps[0].params] == ["search"]
+    assert [p.name for p in eps[1].params] == ["id"]                              # other required params stay
+    assert CapabilityManager._smoke_from(eps) == {"endpoint": "listworks", "params": {}}
+    other = drop_auth_param(endpoints_from(spec), "bearer", None)               # only a query key is removed
+    assert "api_key" in [p.name for p in other[0].params]

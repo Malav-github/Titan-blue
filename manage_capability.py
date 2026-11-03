@@ -1,6 +1,8 @@
 """Find, vet and integrate a data-source API a task needs. You stay in the loop at one gate.
 
   uv run python manage_capability.py --need "patent family records" [--parent RUN_ID]
+  uv run python manage_capability.py --need "scholarly works" --api "OpenAlex" --docs https://help.openalex.org/
+                                                            # you name the API and its official docs: no guessing
   uv run python manage_capability.py --request REQUEST_ID      # pick up a request a run created
   uv run python manage_capability.py --list
 """
@@ -70,7 +72,8 @@ def drive(manager: CapabilityManager, result: dict) -> dict:
     return result
 
 
-def run_interactive(need: str, request_id: str | None = None, parent: str | None = None, runner=None) -> dict:
+def run_interactive(need: str, request_id: str | None = None, parent: str | None = None, runner=None,
+                    known_api: dict | None = None) -> dict:
     on_ready = None
     if runner is not None and parent:
         import run_research
@@ -83,7 +86,7 @@ def run_interactive(need: str, request_id: str | None = None, parent: str | None
 
     manager = CapabilityManager(on_ready=on_ready)
     waiting = manager.pending(request_id) if request_id else None   # already researched: go straight to the gate
-    return drive(manager, waiting or manager.start(need, parent_run_id=parent, request_id=request_id))
+    return drive(manager, waiting or manager.start(need, parent_run_id=parent, request_id=request_id, known_api=known_api))
 
 
 def main() -> int:
@@ -91,6 +94,8 @@ def main() -> int:
     ap.add_argument("--need")
     ap.add_argument("--parent", help="run to resume once the connector is ready")
     ap.add_argument("--request")
+    ap.add_argument("--api", help="name of the API, when you already know which one (needs --docs)")
+    ap.add_argument("--docs", help="the API's official documentation URL")
     ap.add_argument("--list", action="store_true")
     args = ap.parse_args()
     registry = ConnectorRegistry()
@@ -111,7 +116,10 @@ def main() -> int:
     if parent:
         from runner import Runner
         runner = Runner()
-    result = run_interactive(args.need, args.request, parent, runner)
+    if bool(args.api) != bool(args.docs):
+        ap.error("--api and --docs go together")
+    known = {"name": args.api, "docs_url": args.docs} if args.api else None
+    result = run_interactive(args.need, args.request, parent, runner, known)
     return 0 if result["status"] in ("done", "ready", "cancelled") else 1
 
 

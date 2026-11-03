@@ -108,6 +108,7 @@ class State(TypedDict, total=False):
     request_id: str
     need: str
     parent_run_id: str | None
+    known_api: dict | None      # {"name", "docs_url"}: the user named the API, so skip guessing candidates
     candidates: list[dict]
     research: dict
     drafts: dict
@@ -169,6 +170,27 @@ def slug(name: str) -> str:
     return s[:30].rstrip("_") or "api"
 
 
+def connector_slug(name: str) -> str:
+    """Connector id from a candidate's name. A trailing 'API' is dropped, so the key variable that is derived
+    from the id reads OPENALEX_API_KEY and not OPENALEX_API_API_KEY."""
+    name = re.sub(r"\(.*?\)|\bvia\b.*$", " ", name.lower())      # "OpenAlex API (via openalexR Package)" -> "openalex api"
+    words = re.sub(r"[^a-z0-9]+", " ", name).split() or ["api"]
+    while len(words) > 1 and words[-1] in ("api", "rest"):
+        words.pop()
+    return slug(" ".join(words))
+
+
+GENERIC_NAME_WORDS = {"api", "rest", "mcp", "server", "official", "the", "data", "web", "service", "services", "public", "open"}
+
+
+def host_fits_name(host: str, name: str) -> bool:
+    """Does an API host plausibly belong to the API named `name`? A blog or an aggregator hosting the docs does not
+    (a manifest for dev.to is not a manifest for OpenAlex). Needs a distinctive word of the name inside the host."""
+    words = [w for w in re.findall(r"[a-z0-9]+", name.lower()) if len(w) >= 3 and w not in GENERIC_NAME_WORDS]
+    host = host.lower()
+    return any(w in host for w in words) or bool(words and "".join(words) in host)
+
+
 def best_windows(text: str, terms: set[str], k: int = 2, size: int = 1800) -> list[str]:
     text = normalize(text)
     windows = [text[i:i + size] for i in range(0, max(len(text), 1), size - 200)]
@@ -196,10 +218,13 @@ class CapabilityManager:
 
     # -- public API ---------------------------------------------------------------------------------
 
-    def start(self, need: str, parent_run_id: str | None = None, request_id: str | None = None) -> dict:
+    def start(self, need: str, parent_run_id: str | None = None, request_id: str | None = None,
+              known_api: dict | None = None) -> dict:
+        """`known_api` = {"name": ..., "docs_url": ...} when the user already knows which API they want. Everything
+        after identification (quote-checked research, manifest, host check, gate, tests) still applies."""
         request_id = request_id or self.registry.create_request(parent_run_id, need, "requested directly")
         return self._drive(request_id, {"request_id": request_id, "need": need, "parent_run_id": parent_run_id,
-                                        "tests": [], "gate_note": ""})
+                                        "known_api": known_api, "tests": [], "gate_note": ""})
 
     def pending(self, request_id: str) -> dict | None:
         """The result shape of start/resume for a request already waiting at the gate, without running anything."""
@@ -286,6 +311,15 @@ class CapabilityManager:
 
     def n_identify(self, s: State) -> dict:
         self._event(s, "researching", {"need": s["need"]})
+        known = s.get("known_api")
+        if known:
+            try:
+                check_public_url(known["docs_url"])
+            except ValueError as exc:
+                return {"candidates": [], "outcome": f"docs URL refused: {exc}"}
+            cand = Cand(name=known["name"], docs_url=known["docs_url"], kind="rest", reason="named by the user").model_dump()
+            self._event(s, "candidates_found", {"candidates": [cand["name"]], "source": "named by the user"})
+            return {"candidates": [cand], "outcome": ""}
         q = self._ask(Queries, (
             f"A research task is blocked because it lacks this data source: {s['need']}\n"
             "Write up to 3 web search queries to find APIs (preferably free or open-data) that provide it, including "
@@ -308,8 +342,8 @@ class CapabilityManager:
         valid = {normalize_url(r["url"]) for r in shown}
         seen, cands = set(), []
         for c in (pick.candidates if pick else []):
-            if normalize_url(c.docs_url) in valid and slug(c.name) not in seen:
-                seen.add(slug(c.name))
+            if normalize_url(c.docs_url) in valid and connector_slug(c.name) not in seen:
+                seen.add(connector_slug(c.name))
                 item = c.model_dump()
                 if re.search(r"\bmcp\b", f"{c.name} {c.docs_url} {c.reason}", re.I):  # the model's kind label is unreliable
                     item["kind"] = "mcp"
@@ -427,31 +461,43 @@ class CapabilityManager:
         return None, "cost unknown"
 
     def _spec_from_pages(self, s: State, cand: dict, res: dict):
+        """An OpenAPI spec for this API: among the pages already read, else at standard paths on the hosts of those
+        pages. A spec is used only if its server host fits the API's name, so a docs link on someone else's site
+        can never supply the manifest."""
+        def usable(doc) -> bool:
+            base = openapi.base_url_from(doc) if openapi.is_openapi(doc) else None
+            return bool(base) and host_fits_name(urlparse(base).hostname or "", cand["name"])
+
         for p in res["pages"]:
             if "json" in p["content_type"]:
                 try:
                     doc = json.loads(Path(p["raw_path"]).read_text(encoding="utf-8"))
                 except (ValueError, OSError):
                     continue
-                if openapi.is_openapi(doc):
+                if usable(doc):
                     return doc
-        host = urlparse(cand["docs_url"]).hostname
-        for path in SPEC_PATHS:
-            page = self._fetch_page(s, f"https://{host}{path}")
-            if page and "json" in page["content_type"]:
-                try:
-                    doc = json.loads(Path(page["raw_path"]).read_text(encoding="utf-8"))
-                except (ValueError, OSError):
-                    continue
-                if openapi.is_openapi(doc):
-                    return doc
+        hosts = []
+        for url in [cand["docs_url"], *(p["url"] for p in res["pages"])]:
+            host = urlparse(url).hostname
+            if host and host not in hosts:
+                hosts.append(host)
+        for host in hosts[:4]:
+            for path in SPEC_PATHS:
+                page = self._fetch_page(s, f"https://{host}{path}")
+                if page and "json" in page["content_type"]:
+                    try:
+                        doc = json.loads(Path(page["raw_path"]).read_text(encoding="utf-8"))
+                    except (ValueError, OSError):
+                        continue
+                    if usable(doc):
+                        return doc
         return None
 
     def n_draft(self, s: State) -> dict:
         drafts = {}
         for cand in s["candidates"]:
             name, res = cand["name"], s["research"][cand["name"]]
-            cid = slug(name)
+            cid = connector_slug(name)
             if cand["kind"] != "rest":
                 drafts[name] = {"error": "MCP servers are not integrated yet: installing one runs third-party code and "
                                          "needs a pinned version, a code review and a sandboxed run"}
@@ -462,6 +508,9 @@ class CapabilityManager:
             req, terms = self._requirements(cand, res)
             try:
                 manifest, source = self._draft_manifest(s, cand, res, cid, req, terms)
+                if not host_fits_name(manifest.host, name):
+                    raise ValueError(f"the API host {manifest.host} has nothing in common with the name {name!r}; "
+                                     "refusing a manifest for a host that may belong to someone else")
                 is_free, cost_label = self._cost(req)
                 drafts[name] = {"manifest": manifest.model_dump(by_alias=True), "is_free": is_free,
                                 "cost_label": cost_label, "manifest_source": source}
@@ -484,6 +533,7 @@ class CapabilityManager:
                 auth = Auth(type="bearer")
             else:
                 auth = Auth()
+            endpoints = openapi.drop_auth_param(endpoints, auth.type, auth.name)
             smoke = self._smoke_from(endpoints)
             if base and endpoints and smoke:
                 return self._assemble(cid, cand, base, auth, endpoints, smoke, req, terms, s['need']), "openapi"
@@ -535,28 +585,28 @@ class CapabilityManager:
         order = sorted(usable, key=rank)
         default = order[0]
         summary = "\n".join(
-            f"- {n} (id {slug(n)}): free={usable[n]['is_free']}; verified facts: "
+            f"- {n} (id {connector_slug(n)}): free={usable[n]['is_free']}; verified facts: "
             + "; ".join(f"{e['field']}={e['value']}" for e in s["research"][n]["evidence"]) + f"; unverified: {s['research'][n]['unverified']}"
             for n in order)
         rec = self._ask(Recommendation, (
             f"NEED: {s['need']}\nCandidates:\n{summary}\n\nRecommend one by connector id. Free options are the default; recommend a "
             "paid or unknown-cost one over a verified-free one only if it is clearly better for this need, and then fill "
             "paid_justification. Be honest about weaknesses and about what is unverified."), s)
-        choice, note, justification = slug(default), "", None
+        choice, note, justification = connector_slug(default), "", None
         if rec:
-            ids = {slug(n): n for n in usable}
-            wanted = ids.get(rec.choice) or ids.get(slug(rec.choice))
+            ids = {connector_slug(n): n for n in usable}
+            wanted = ids.get(rec.choice) or ids.get(connector_slug(rec.choice))
             if wanted:
                 better_free_exists = usable[order[0]]["is_free"] is True and usable[wanted]["is_free"] is not True
                 if better_free_exists and not rec.paid_justification:
                     note = f"The model preferred {wanted}, but gave no reason for choosing it over the free option; defaulting to the free one."
                 else:
-                    choice, justification = slug(wanted), rec.paid_justification
-        if choice == slug(default):
+                    choice, justification = connector_slug(wanted), rec.paid_justification
+        if choice == connector_slug(default):
             justification = None   # nothing to justify: this is the cost-ranked default, not a departure from it
         reasoning = rec.reasoning if rec else "No model opinion available; ranked free options first."
         recommendation = {"choice": choice, "reasoning": reasoning, "paid_justification": justification, "note": note,
-                          "order": [slug(n) for n in order]}
+                          "order": [connector_slug(n) for n in order]}
         self._event(s, "recommended", {"choice": choice})
         return {"recommendation": recommendation}
 
@@ -564,7 +614,7 @@ class CapabilityManager:
         candidates = []
         for cand in s["candidates"]:
             name, res, draft = cand["name"], s["research"][cand["name"]], s["drafts"][cand["name"]]
-            item = {"name": name, "connector_id": slug(name), "kind": cand["kind"], "docs_url": cand["docs_url"],
+            item = {"name": name, "connector_id": connector_slug(name), "kind": cand["kind"], "docs_url": cand["docs_url"],
                     "why_considered": cand["reason"], "verified_facts": res["evidence"], "unverified": res["unverified"],
                     "facts_rejected": len(res.get("rejected", []))}
             if "manifest" in draft:
@@ -599,7 +649,7 @@ class CapabilityManager:
         if not decision.get("approve"):
             return {"decision": decision, "gate_note": "", "outcome": "cancelled by user"}
         cid = decision["approve"]
-        draft = next((d for n, d in s["drafts"].items() if slug(n) == cid and "manifest" in d), None)
+        draft = next((d for n, d in s["drafts"].items() if connector_slug(n) == cid and "manifest" in d), None)
         if draft is None:
             return {"decision": decision, "gate_note": f"{cid!r} is not an integrable candidate; choose one listed."}
         if decision.get("terms_ok") is not True:
@@ -611,7 +661,7 @@ class CapabilityManager:
 
     def n_register(self, s: State) -> dict:
         cid = s["decision"]["approve"]
-        draft = next(d for n, d in s["drafts"].items() if slug(n) == cid and "manifest" in d)
+        draft = next(d for n, d in s["drafts"].items() if connector_slug(n) == cid and "manifest" in d)
         data = draft["manifest"]
         if overrides := s["decision"].get("budget"):
             data = {**data, "budget": {**data["budget"], **overrides}}

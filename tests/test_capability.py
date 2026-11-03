@@ -5,7 +5,7 @@ import pytest
 
 import capability
 from capability import (Candidates, Cand, DraftEndpoint, DraftManifest, Fact, FactList, CapabilityManager, Queries,
-                        Recommendation, slug)
+                        Recommendation, connector_slug, slug)
 from connectors.registry import ConnectorRegistry
 from evidence import EvidenceStore
 from runs import RunStore
@@ -96,7 +96,7 @@ def handlers(world_apis, recommend=None, **override):
             Cand(name="Invented", docs_url="https://not-in-results.example/", reason="hallucinated url")]),
         "FactList": facts,
         "SupportVerdict": lambda p: SupportVerdict(verdict="supported", reasoning="the quote states it"),
-        "Recommendation": lambda p: Recommendation(choice=recommend or slug(world_apis[0][0]), reasoning="best fit"),
+        "Recommendation": lambda p: Recommendation(choice=recommend or connector_slug(world_apis[0][0]), reasoning="best fit"),
     }
     h.update(override)
     return h
@@ -401,3 +401,57 @@ def test_normalize_draft_repairs_what_models_actually_got_wrong():
     assert next(p for p in norm["endpoints"][1]["params"] if p["name"] == "id")["in"] == "path"
     from connectors.manifest import Manifest
     Manifest.model_validate({"connector_id": "records", "name": "R", "description": "d", "topics": ["t"], **norm})
+
+
+def test_connector_ids_drop_a_trailing_api_word_so_key_names_read_naturally():
+    from connectors.manifest import Manifest  # noqa: F401  (key_env is derived from the id)
+    assert connector_slug("OpenAlex API") == "openalex"
+    assert connector_slug("PatentsView REST API") == "patentsview"
+    assert connector_slug("API") == "api"                        # never reduced to nothing
+    assert connector_slug("SerpApi") == "serpapi" and connector_slug("EPO OPS") == "epo_ops"
+    assert f"{connector_slug('OpenAlex API').upper()}_API_KEY" == "OPENALEX_API_KEY"
+
+
+def test_host_must_fit_the_api_name():
+    from capability import host_fits_name
+    for host, name in [("api.openalex.org", "OpenAlex API"), ("ops.epo.org", "EPO OPS"), ("data.sec.gov", "SEC EDGAR"),
+                       ("api.crossref.org", "Crossref API"), ("serpapi.com", "SerpApi"), ("api.uspto.gov", "USPTO ODP API")]:
+        assert host_fits_name(host, name), (host, name)
+    for host, name in [("dev.to", "OpenAlex API"), ("medium.com", "Crossref API"), ("api.example.org", "OpenAlex API"),
+                       ("github.com", "SEC EDGAR")]:
+        assert not host_fits_name(host, name), (host, name)
+    assert not host_fits_name("api.openalex.org", "API")      # a name made only of generic words fits nothing
+
+
+def test_connector_id_ignores_parenthetical_and_via_clauses():
+    assert connector_slug("OpenAlex API (via openalexR Package)") == "openalex"
+    assert connector_slug("OpenAlex API via the R package") == "openalex"
+    assert connector_slug("(only parentheses)") == "api"
+
+
+def test_via_only_matches_as_a_whole_word():
+    assert connector_slug("Pavia Open Data") == "pavia_open_data"
+
+
+def test_a_named_api_skips_candidate_guessing_but_not_the_vetting(parts):
+    world = World(APIS)
+    searched = []
+    original = world.search
+    world.search = lambda q, max_results=8: searched.append(q) or original(q, max_results)
+    hs = handlers(APIS)
+    hs["Candidates"] = lambda p: (_ for _ in ()).throw(AssertionError("the model must not be asked for candidates"))
+    result = manager(parts, world, hs).start("patent data", known_api={"name": "PatentX API", "docs_url": "https://docs.patentx.example/"})
+    assert result["status"] == "awaiting_user"
+    cands = result["gate"]["candidates"]
+    assert [c["name"] for c in cands] == ["PatentX API"]               # exactly the named API; no MCP, no extras
+    assert cands[0]["connector_id"] == "patentx"
+    assert cands[0]["integration_plan"]["key_env"] in (None, "PATENTX_API_KEY")
+    assert not any("patent data API documentation" == q for q in searched)   # the identification search never ran
+
+
+def test_a_named_api_with_a_private_docs_url_is_refused(parts, monkeypatch):
+    def refuse(url):
+        raise ValueError("Refusing non-public address 127.0.0.1")
+    monkeypatch.setattr(capability, "check_public_url", refuse)
+    result = manager(parts, World(APIS), handlers(APIS)).start("x", known_api={"name": "Local", "docs_url": "http://127.0.0.1/"})
+    assert result["status"] == "failed" and "docs URL refused" in (result.get("outcome") or str(result))
