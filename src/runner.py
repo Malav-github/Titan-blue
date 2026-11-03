@@ -13,12 +13,12 @@ import re
 import sqlite3
 import uuid
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import ClassVar, Literal, TypedDict
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 import tracing
 from config import DATA_DIR, LLM_MODE
@@ -85,6 +85,27 @@ class ExtractedClaim(BaseModel):
 
 class Extraction(BaseModel):
     claims: list[ExtractedClaim] = Field(default_factory=list)
+    _dropped: ClassVar[int] = 0      # malformed claims dropped since the last take_dropped() (telemetry only)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _keep_well_formed(cls, data):
+        """One malformed claim (say, a missing field) must not cost the whole batch, as it did on a real patent page.
+        The malformed claim is dropped, never repaired or guessed; the rest still face every later check."""
+        if isinstance(data, dict) and isinstance(data.get("claims"), list):
+            good = []
+            for item in data["claims"]:
+                try:
+                    good.append(ExtractedClaim.model_validate(item))
+                except ValidationError:
+                    cls._dropped += 1
+            data = {**data, "claims": good}
+        return data
+
+    @classmethod
+    def take_dropped(cls) -> int:
+        n, cls._dropped = cls._dropped, 0
+        return n
 
 
 class FollowUps(BaseModel):
@@ -544,7 +565,10 @@ class Runner:
             text = normalize(Path(source["text_path"]).read_text(encoding="utf-8"))
             for chunk in top_chunks(text, terms, b["max_chunks_per_source"]):
                 prompt = extraction_prompt(s["question"], needed, source["final_url"], chunk)
+                Extraction.take_dropped()
                 extraction = self._ask("extract", Extraction, prompt, rid, "extract")
+                if dropped := Extraction.take_dropped():
+                    self.runs.emit(rid, "extract", "claims_malformed", {"count": dropped, "source_url": source["final_url"]})
                 for c in (extraction.claims if extraction else [])[:5]:
                     key = (sha, normalize(c.quote))
                     if key in seen:

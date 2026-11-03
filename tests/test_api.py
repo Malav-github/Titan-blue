@@ -176,3 +176,21 @@ def test_token_is_generated_and_persisted(tmp_path, monkeypatch):
     assert len(first) >= 32 and server.load_token() == first
     monkeypatch.setenv("TITAN_API_TOKEN", "from-env")
     assert server.load_token() == "from-env"
+
+
+def test_wsl_keep_alive_starts_a_sleeping_process_and_tolerates_a_missing_wsl():
+    from api.wsl import keep_awake
+    seen = []
+
+    class Proc:
+        def terminate(self):
+            seen.append("terminated")
+
+    started = keep_awake(popen=lambda cmd, **kw: seen.append(cmd) or Proc())
+    assert seen[0] == ["wsl", "-e", "sleep", "infinity"]
+    started.terminate()
+    assert seen[-1] == "terminated"
+
+    def missing(cmd, **kw):
+        raise FileNotFoundError("wsl")
+    assert keep_awake(popen=missing) is None

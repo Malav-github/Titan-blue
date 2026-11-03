@@ -20,6 +20,7 @@ class Template(BaseModel):
     kind: Literal["research", "capability"]
     inputs: dict
     result: list[str]
+    order: int = 100            # position on the Home screen, lowest first
     owner: str = "system"
     permissions: dict = {}
 
@@ -43,4 +44,4 @@ def load_templates(directory: Path = TEMPLATES_DIR) -> dict[str, Template]:
         if t.id in out:
             raise ValueError(f"duplicate template {t.id}")
         out[t.id] = t
-    return out
+    return dict(sorted(out.items(), key=lambda kv: (kv[1].order, kv[0])))

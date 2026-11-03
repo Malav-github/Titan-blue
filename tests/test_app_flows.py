@@ -290,3 +290,7 @@ def test_the_built_app_is_served_with_the_token_and_cannot_escape_its_folder(par
     assert c.get("/api/nothing", headers=H).status_code == 404                   # unknown API paths are not the page
     assert c.get("/api/nothing").status_code == 401
     assert c.get("/", headers={"host": "evil.example"}).status_code == 400        # the token is never served to another host
+
+
+def test_templates_appear_in_the_order_they_ask_for(client):
+    assert [t["id"] for t in client.get("/api/templates", headers=H).json()] == ["research-company", "add-data-source"]

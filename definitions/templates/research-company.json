@@ -1,6 +1,7 @@
 {
   "id": "research-company",
   "version": 1,
+  "order": 1,
   "title": "Research a company",
   "summary": "Finds the company's own pages and other sources, extracts facts, and keeps only those whose quote appears word for word in the archived page. You approve the plan first. Every claim is shown with its quote, source and a support verdict.",
   "kind": "research",

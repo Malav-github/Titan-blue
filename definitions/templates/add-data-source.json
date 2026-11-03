@@ -1,6 +1,7 @@
 {
   "id": "add-data-source",
   "version": 1,
+  "order": 2,
   "title": "Add a data source (API)",
   "summary": "Researches an API's requirements from its own documentation, shows only facts backed by a quote, and stops at one approval gate where you read the provider's terms and decide. It activates the connector only if all tests pass.",
   "kind": "capability",

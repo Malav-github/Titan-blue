@@ -1,3 +1,5 @@
+import pytest
+from pydantic import ValidationError
 from tools import primary
 from tools.web import extract_text, meta_block
 
@@ -55,3 +57,33 @@ def test_entities_sharing_one_domain_are_not_ambiguous(monkeypatch):
     monkeypatch.setattr(primary, "download", lambda url, timeout=20.0, max_bytes=0: Resp())
     statuses = [c["status"] for c in primary.resolve_domain("Acme")["candidates"]]
     assert statuses == ["confirmed", "confirmed"]
+
+
+# --- one malformed claim must not cost the batch (seen on a real patent page: a missing needed_fact) ---
+
+GOOD = {"predicate": "p", "value": "v", "claim": "The plant has a capacity of 50,000 tons.", "quote": "capacity of 50,000 metric tons per year", "needed_fact": 1}
+
+
+def test_a_malformed_claim_is_dropped_and_the_rest_of_the_batch_survives():
+    from runner import Extraction
+    Extraction.take_dropped()
+    bad_missing = {k: v for k, v in GOOD.items() if k != "needed_fact"}
+    bad_type = {**GOOD, "needed_fact": "first"}
+    out = Extraction.model_validate({"claims": [GOOD, bad_missing, {**GOOD, "claim": "Another fact stated in full."}, bad_type, "not even a dict"]})
+    assert [c.claim for c in out.claims] == [GOOD["claim"], "Another fact stated in full."]
+    assert Extraction.take_dropped() == 3
+    assert Extraction.take_dropped() == 0                       # reading resets the count
+
+
+def test_nothing_is_repaired_or_invented_when_dropping():
+    from runner import Extraction
+    out = Extraction.model_validate({"claims": [{k: v for k, v in GOOD.items() if k != "quote"}]})
+    assert out.claims == []                                      # a claim without a quote is gone, not filled in
+    with pytest.raises(ValidationError):                         # only malformed items are tolerated; a malformed whole is still an error
+        Extraction.model_validate({"claims": "garbage"})
+    Extraction.take_dropped()
+
+
+def test_the_prompt_and_schema_are_unchanged_for_the_model():
+    from runner import Extraction
+    assert set(Extraction.model_json_schema()["properties"]) == {"claims"}       # no extra field is shown to the model
