@@ -1,0 +1,40 @@
+{
+  "base_url": "https://data.sec.gov",
+  "auth": {"type": "none"},
+  "endpoints": [
+    {
+      "name": "submissions",
+      "path": "/submissions/CIK{cik}.json",
+      "description": "A company's filing history and metadata (name, tickers, exchanges). cik is the 10-digit CIK with leading zeros.",
+      "params": [{"name": "cik", "in": "path", "required": true, "type": "string", "description": "10-digit CIK, leading zeros included"}]
+    },
+    {
+      "name": "company_concept",
+      "path": "/api/xbrl/companyconcept/CIK{cik}/{taxonomy}/{tag}.json",
+      "description": "All XBRL disclosures of one company for one concept, for example us-gaap / AccountsPayableCurrent. Small and focused: prefer this over company_facts.",
+      "params": [
+        {"name": "cik", "in": "path", "required": true, "type": "string", "description": "10-digit CIK, leading zeros included"},
+        {"name": "taxonomy", "in": "path", "required": true, "type": "string", "description": "us-gaap, ifrs-full, dei or srt"},
+        {"name": "tag", "in": "path", "required": true, "type": "string", "description": "Concept name, for example AccountsPayableCurrent"}
+      ]
+    },
+    {
+      "name": "company_facts",
+      "path": "/api/xbrl/companyfacts/CIK{cik}.json",
+      "description": "Every XBRL concept for one company in one file. Can be several MB for large companies; Titan refuses responses over 5 MB, so use company_concept when you know the concept.",
+      "params": [{"name": "cik", "in": "path", "required": true, "type": "string", "description": "10-digit CIK, leading zeros included"}]
+    },
+    {
+      "name": "frames",
+      "path": "/api/xbrl/frames/{taxonomy}/{tag}/{unit}/{period}.json",
+      "description": "One fact per reporting company for a calendar period, for comparing companies. period is CY2019, CY2019Q1 or CY2019Q1I (instantaneous).",
+      "params": [
+        {"name": "taxonomy", "in": "path", "required": true, "type": "string", "description": "us-gaap, ifrs-full, dei or srt"},
+        {"name": "tag", "in": "path", "required": true, "type": "string", "description": "Concept name, for example AccountsPayableCurrent"},
+        {"name": "unit", "in": "path", "required": true, "type": "string", "description": "Unit of measure, for example USD or USD-per-shares"},
+        {"name": "period", "in": "path", "required": true, "type": "string", "description": "CY2019, CY2019Q1 or CY2019Q1I"}
+      ]
+    }
+  ],
+  "smoke_test": {"endpoint": "submissions", "params": {"cik": "0000320193"}}
+}

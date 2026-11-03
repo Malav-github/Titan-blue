@@ -181,6 +181,18 @@ def connector_slug(name: str) -> str:
     return slug(" ".join(words))
 
 
+def site_of(url_or_host: str) -> str:
+    """The site a URL belongs to, roughly its registered domain: help.openalex.org and api.openalex.org are one site."""
+    host = (urlparse(url_or_host).hostname if "/" in url_or_host else url_or_host) or ""
+    return ".".join(host.lower().split(".")[-2:])
+
+
+def tag_sources(evidence: list[dict], *own_hosts: str) -> list[dict]:
+    """Mark each verified fact `official` when its quote comes from the provider's own site (the docs link or the API host)."""
+    own = {site_of(h) for h in own_hosts if h}
+    return [{**e, "official": site_of(e["source_url"]) in own} for e in evidence]
+
+
 GENERIC_NAME_WORDS = {"api", "rest", "mcp", "server", "official", "the", "data", "web", "service", "services", "public", "open"}
 
 
@@ -319,6 +331,8 @@ class CapabilityManager:
             except ValueError as exc:
                 return {"candidates": [], "outcome": f"docs URL refused: {exc}"}
             cand = Cand(name=known["name"], docs_url=known["docs_url"], kind="rest", reason="named by the user").model_dump()
+            if known.get("manifest"):
+                cand["manifest"] = known["manifest"]     # {"base_url", "auth", "endpoints", "smoke_test"} written by a person
             self._event(s, "candidates_found", {"candidates": [cand["name"]], "source": "named by the user"})
             return {"candidates": [cand], "outcome": ""}
         q = self._ask(Queries, (
@@ -524,7 +538,12 @@ class CapabilityManager:
         return {"drafts": drafts}
 
     def _draft_manifest(self, s: State, cand: dict, res: dict, cid: str, req: Requirements, terms: Terms) -> tuple[Manifest, str]:
-        """(manifest, source): "openapi" when parsed from the API's own spec, "model" when the model read the docs."""
+        """(manifest, source): "provided" when a person wrote the technical part, "openapi" when parsed from the
+        API's own spec, "model" when the model read the docs."""
+        given = cand.get("manifest")
+        if given:
+            return Manifest.model_validate(self._manifest_dict(
+                cid, cand, given["base_url"], given["auth"], given["endpoints"], given["smoke_test"], req, terms, s["need"])), "provided"
         spec = self._spec_from_pages(s, cand, res)
         if spec:
             base = openapi.base_url_from(spec)
@@ -619,11 +638,20 @@ class CapabilityManager:
         for cand in s["candidates"]:
             name, res, draft = cand["name"], s["research"][cand["name"]], s["drafts"][cand["name"]]
             item = {"name": name, "connector_id": connector_slug(name), "kind": cand["kind"], "docs_url": cand["docs_url"],
-                    "why_considered": cand["reason"], "verified_facts": res["evidence"], "unverified": res["unverified"],
+                    "why_considered": cand["reason"], "verified_facts": tag_sources(res["evidence"], cand["docs_url"]),
+                    "unverified": res["unverified"],
                     "facts_rejected": len(res.get("rejected", []))}
             if "manifest" in draft:
                 m = Manifest.model_validate(draft["manifest"])
                 warnings = []
+                item["verified_facts"] = tag_sources(res["evidence"], cand["docs_url"], m.host)
+                outside = [f for f in item["verified_facts"] if not f["official"]]
+                if outside:
+                    sites = sorted({site_of(f["source_url"]) for f in outside})
+                    warnings.append(f"{len(outside)} of {len(item['verified_facts'])} verified facts are quoted from sites that are "
+                                    f"not the provider's own ({', '.join(sites)}): the quotes are real, but treat them as secondary.")
+                if draft.get("manifest_source") == "provided":
+                    warnings.append("The endpoints were written by hand, not read from the docs: check them against the provider's documentation.")
                 if draft.get("manifest_source") == "model":
                     warnings.append("Manifest was drafted by the model from the docs, not an official spec: check the host and endpoints yourself.")
                 if "auth" in res["unverified"]:

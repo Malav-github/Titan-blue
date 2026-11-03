@@ -3,6 +3,8 @@
   uv run python manage_capability.py --need "patent family records" [--parent RUN_ID]
   uv run python manage_capability.py --need "scholarly works" --api "OpenAlex" --docs https://help.openalex.org/
                                                             # you name the API and its official docs: no guessing
+  uv run python manage_capability.py --need "..." --api "SEC EDGAR" --docs URL --manifest definitions/connector_drafts/sec_edgar.json
+                                                            # when the docs have no spec and the model cannot read them
   uv run python manage_capability.py --request REQUEST_ID      # pick up a request a run created
   uv run python manage_capability.py --list
 """
@@ -30,7 +32,8 @@ def show_gate(gate: dict) -> None:
             print(f"  cannot integrate: {c['cannot_integrate']}")
             continue
         for e in c["verified_facts"]:
-            print(f"  verified  {e['field']}: {e['value']}\n            \"{e['quote'][:110]}\" ({e['source_url'][:60]})")
+            tag = "" if e.get("official", True) else "  [THIRD-PARTY SITE]"
+            print(f"  verified{tag}  {e['field']}: {e['value']}\n            \"{e['quote'][:110]}\" ({e['source_url'][:60]})")
         print(f"  UNVERIFIED (no quote found): {', '.join(c['unverified']) or 'none'}"
               + (f"  | facts the quotes did not actually support: {c['facts_rejected']}" if c.get("facts_rejected") else ""))
         for w in c.get("warnings", []):
@@ -96,6 +99,7 @@ def main() -> int:
     ap.add_argument("--request")
     ap.add_argument("--api", help="name of the API, when you already know which one (needs --docs)")
     ap.add_argument("--docs", help="the API's official documentation URL")
+    ap.add_argument("--manifest", help="JSON file with the hand-written base_url, auth, endpoints and smoke_test (needs --api)")
     ap.add_argument("--list", action="store_true")
     args = ap.parse_args()
     registry = ConnectorRegistry()
@@ -119,6 +123,10 @@ def main() -> int:
     if bool(args.api) != bool(args.docs):
         ap.error("--api and --docs go together")
     known = {"name": args.api, "docs_url": args.docs} if args.api else None
+    if args.manifest:
+        if not known:
+            ap.error("--manifest needs --api and --docs")
+        known["manifest"] = json.loads(open(args.manifest, encoding="utf-8").read())
     result = run_interactive(args.need, args.request, parent, runner, known)
     return 0 if result["status"] in ("done", "ready", "cancelled") else 1
 

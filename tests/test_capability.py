@@ -462,3 +462,54 @@ def test_a_draft_that_breaks_the_providers_usage_rules_is_refused_before_the_gat
     result = manager(parts, World(apis), handlers(apis)).start("company filings", known_api={"name": "SEC EDGAR", "docs_url": "https://docs.sec.gov/"})
     assert result["status"] == "failed"
     assert "usage rules" in result["problems"]["SEC EDGAR"] and "needs no API key" in result["problems"]["SEC EDGAR"]
+
+
+def test_a_hand_written_technical_part_replaces_the_model_draft_but_not_the_vetting(parts):
+    apis = [("PatentX", "patentx.example", True)]
+    hs = handlers(apis)
+    hs["DraftManifest"] = lambda p: (_ for _ in ()).throw(AssertionError("the model must not draft when a manifest is provided"))
+    given = {"base_url": "https://api.patentx.example", "auth": {"type": "none"},
+             "endpoints": [{"name": "one", "path": "/patents/{number}", "description": "One patent",
+                            "params": [{"name": "number", "in": "path", "required": True}]}],
+             "smoke_test": {"endpoint": "one", "params": {"number": "WO2021037851"}}}
+    result = manager(parts, World(apis), hs).start("patents", known_api={"name": "PatentX", "docs_url": "https://docs.patentx.example/", "manifest": given})
+    assert result["status"] == "awaiting_user"
+    cand = result["gate"]["candidates"][0]
+    assert cand["manifest_source"] == "provided" and cand["integration_plan"]["endpoints"] == {"one": "/patents/{number}"}
+    assert any("written by hand" in w for w in cand["warnings"])
+    assert cand["verified_facts"]                                  # research and quote checks still ran
+
+
+def test_a_hand_written_manifest_still_has_to_pass_the_host_and_usage_rules(parts):
+    given = {"base_url": "https://dev.to", "auth": {"type": "none"},
+             "endpoints": [{"name": "one", "path": "/x", "description": "x"}], "smoke_test": {"endpoint": "one", "params": {}}}
+    apis = [("PatentX", "patentx.example", True)]
+    result = manager(parts, World(apis), handlers(apis)).start("patents", known_api={"name": "PatentX", "docs_url": "https://docs.patentx.example/", "manifest": given})
+    assert result["status"] == "failed" and "nothing in common" in result["problems"]["PatentX"]
+
+
+def test_the_shipped_edgar_draft_is_a_valid_compliant_manifest():
+    from connectors.manifest import Manifest
+    from policy import manifest_problems
+    given = json.loads(open("definitions/connector_drafts/sec_edgar.json", encoding="utf-8").read())
+    m = Manifest.model_validate({**given, "connector_id": "sec_edgar", "name": "SEC EDGAR", "description": "Filings", "topics": ["filings"], "tier": "regulatory"})
+    assert m.host == "data.sec.gov" and manifest_problems(m.host, m.auth.type, m.rate_limit.requests_per_minute) == []
+    assert {e.name for e in m.endpoints} == {"submissions", "company_concept", "company_facts", "frames"}
+
+
+def test_facts_quoted_from_other_sites_are_labelled_secondary():
+    from capability import site_of, tag_sources
+    assert site_of("https://help.openalex.org/api/x") == site_of("api.openalex.org") == "openalex.org"
+    facts = [{"field": "free_tier", "source_url": "https://help.openalex.org/pricing"},
+             {"field": "rate_limit", "source_url": "https://edgarscout.com/edgar-api/"}]
+    tagged = tag_sources(facts, "https://www.openalex.org/docs", "api.openalex.org")
+    assert [f["official"] for f in tagged] == [True, False]
+
+
+def test_the_gate_warns_when_verified_facts_come_from_outside_the_providers_site(parts):
+    apis = [("PatentX", "patentx.example", True)]
+    world = World(apis)
+    result = manager(parts, world, handlers(apis)).start("patent data", known_api={"name": "PatentX", "docs_url": "https://docs.patentx.example/"})
+    cand = result["gate"]["candidates"][0]
+    assert all(f["official"] for f in cand["verified_facts"])           # everything here is quoted from patentx.example
+    assert not any("not the provider's own" in w for w in cand["warnings"])
