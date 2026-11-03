@@ -22,11 +22,13 @@ const DESCRIBE: Record<string, [string, Fmt]> = {
   source_rendered: ['Read a page in the browser', (p) => short(p.url, 70)],
   source_failed: ['Could not read a page', (p) => `${short(p.url, 60)}: ${short(p.error, 80)}`],
   claim_recorded: ['Recorded a claim', (p) => `#${p.claim_id} ${short(p.claim, 100)}`],
+  claims_malformed: ['Dropped a malformed claim', (p) => `${p.count} from ${short(p.source_url, 60)}: the model left out a required field`],
   claim_rejected: ['Rejected a claim', (p) => `${p.reason}: “${short(p.quote, 60)}”`],
   support_checked: ['Checked a claim against its quote', (p) => `claim #${p.claim_id}: ${String(p.verdict).replace('_', ' ')}`],
   relevance_checked: ['Checked relevance', (p) => `claim #${p.claim_id}: ${p.addresses ? 'answers a needed fact' : 'does not answer a needed fact'}`],
   coverage_assessed: ['Assessed coverage', (p) => `round ${p.iteration}: ${(p.gaps ?? []).length} facts still missing`],
   api_called: ['Called a connector', (p) => `${p.connector}.${p.endpoint}`],
+  api_skipped: ['Skipped a connector call', (p) => `${p.connector}.${p.endpoint}: ${short(p.reason, 120)}`],
   api_failed: ['A connector call failed', (p) => `${p.connector}.${p.endpoint}: ${short(p.error, 80)}`],
   capability_needed: ['Needs a data source', (p) => short(p.need, 120)],
   report_ready: ['Report written', () => ''],
@@ -43,7 +45,7 @@ export function describeEvent(e: RunEvent): { label: string; detail: string; ton
   const [label, fmt] = DESCRIBE[e.type] ?? [e.type.replace(/_/g, ' '), (p: RunEvent['payload']) => short(JSON.stringify(p), 120)]
   const tone = ['run_finished', 'approved', 'claim_recorded'].includes(e.type) ? 'ok'
     : ['run_failed', 'node_failed', 'source_failed', 'claim_rejected', 'llm_failed', 'api_failed'].includes(e.type) ? 'bad'
-    : ['awaiting_approval', 'capability_needed', 'domain_unconfirmed'].includes(e.type) ? 'warn'
+    : ['awaiting_approval', 'capability_needed', 'domain_unconfirmed', 'api_skipped', 'claims_malformed'].includes(e.type) ? 'warn'
     : ['run_started', 'resumed'].includes(e.type) ? 'info' : 'neutral'
   return { label, detail: fmt(e.payload), tone }
 }

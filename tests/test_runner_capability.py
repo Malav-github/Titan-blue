@@ -118,3 +118,37 @@ def test_a_refused_connector_call_is_logged_not_fatal(env):
                         ApiPlan=lambda p: ApiPlan(calls=[ApiCall(connector="patentx", endpoint="search")]))))
     result = runner.start("q", budgets={"max_iterations": 1})
     assert result["status"] == "finished" and "api_failed" in types(env, result["run_id"])
+
+
+# --- identifiers the model was never given are never used ---
+
+def test_invented_identifiers_are_found_and_real_ones_are_not():
+    from runner import invented_values
+    q = "What is the fiscal year end of the company with SEC CIK 0000320193? Paper published in 2017."
+    assert invented_values({"cik": "0000320193"}, q) == []                  # given in the question
+    assert invented_values({"cik": "320193"}, q) == []                      # leading zeros do not matter
+    assert invented_values({"cik": "0000096660"}, q) == ["0000096660"]      # a made-up CIK (seen in a real run)
+    assert invented_values({"id": "W123456789"}, q) == ["W123456789"]       # a made-up OpenAlex id (seen in a real run)
+    assert invented_values({"q": "Dropbox", "entity_type": "organization"}, q) == []     # words are not identifiers
+    assert invented_values({"year": 2017}, q) == [] and invented_values({"year": 2021}, q) == ["2021"]
+    assert invented_values(None, q) == [] and invented_values({"cik": "0000096660"}, "see also 96660") == []
+
+
+def test_a_call_with_a_made_up_id_is_skipped_and_not_counted(env):
+    calls = []
+
+    def fake_call(registry, connector, endpoint, params, run_id=None):
+        calls.append(params)
+        return api_result(PAGE_TEXT)
+
+    activate(env["registry"], manifest())
+    runner = Runner(store=env["store"], runs=env["runs"], checkpoint_path=env["ckpt"], registry=env["registry"],
+                    call_api_fn=fake_call, search_fn=env["world"].search, fetch_fn=env["world"].fetch,
+                    llm_factory=lambda task: ScriptedLLM(default_handlers(
+                        ApiPlan=lambda p: ApiPlan(calls=[ApiCall(connector="patentx", endpoint="search", params={"q": "A-99871"}),
+                                                         ApiCall(connector="patentx", endpoint="search", params={"q": "acme"})]))))
+    result = runner.start("What does Acme charge?", budgets={"max_iterations": 1})
+    assert calls == [{"q": "acme"}]                                          # the guessed id never reached the connector
+    skipped = [e for e in env["runs"].events(result["run_id"]) if e["type"] == "api_skipped"]
+    assert len(skipped) == 1 and "A-99871" in skipped[0]["payload"]["reason"]
+    assert result["status"] == "finished"

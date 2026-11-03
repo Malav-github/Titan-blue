@@ -113,8 +113,10 @@ class FollowUps(BaseModel):
 
 
 class Relevance(BaseModel):
-    addresses: bool = Field(description="True only if the claim itself states the needed fact (or a direct part of it)")
-    reason: str = Field(description="One sentence")
+    # `reason` comes first on purpose: a model fills the fields in order, and one that has to commit to true/false
+    # before explaining contradicted itself ("directly provides the needed fact" -> addresses: false).
+    reason: str = Field(description="One sentence: what the claim states, and whether that is the needed fact or a direct part of it")
+    addresses: bool = Field(description="True only if the claim itself states the needed fact (or a direct part of it); must agree with the reason")
 
 
 NON_FACT = re.compile(r"^\s*(the\s+)?(passage|text|quote|excerpt|page|document|article|source)\b|^\s*quote\s*:|"
@@ -194,6 +196,19 @@ def _dedupe(items: list[str]) -> list[str]:
             seen.add(key)
             out.append(normalize(item))
     return out
+
+
+def invented_values(params: dict | None, *texts: str) -> list[str]:
+    """Identifier-like parameter values (anything with a digit: an id, a CIK, a year) that appear nowhere in the question
+    or checklist. A model that was not given an identifier makes one up (a real run used CIK 0000096660 for Dropbox and
+    OpenAlex id W123456789), and a made-up id can fetch a real but unrelated record. Leading zeros do not matter."""
+    haystack = normalize(" ".join(texts)).lower()
+    bad = []
+    for value in (params or {}).values():
+        v = normalize(str(value)).lower()
+        if any(ch.isdigit() for ch in v) and v not in haystack and v.lstrip("0") not in haystack:
+            bad.append(str(value))
+    return bad
 
 
 def _terms(*texts: str) -> set[str]:
@@ -361,8 +376,10 @@ class Runner:
             f"company's own website matters, else null); page_categories (company pages worth reading, from "
             f"{list(CATEGORY_NAMES)}; empty if no company); queries (up to {b['max_queries_per_iter']} distinct "
             f"web search queries using exact names and distinguishing terms; search operators work, e.g. "
-            f"site:patents.google.com, site:sec.gov, or a company's own domain); checklist (3 to 6 specific facts "
-            f"that, once established, would fully answer the question)."
+            f"site:patents.google.com, site:sec.gov, or a company's own domain); checklist (as few facts as fully "
+            f"answer the question, at most 6; one is right for a one-fact question). Each checklist item must be a fact a "
+            f"web page could state directly: a name, number, date or place. Never add steps such as verifying, "
+            f"cross-checking or confirming sources; the system does that itself."
         )
         plan = self._ask("plan", Plan, prompt, rid, "plan")
         warnings = list(s.get("warnings", []))
@@ -521,6 +538,12 @@ class Runner:
             "endpoints and parameters, with concrete values taken from the question. Return no calls if none help."), rid, "api_lookup")
         new_sources, used = list(s["new_sources"]), s["api_calls_used"]
         for call in (plan.calls if plan else [])[:min(room, 3)]:
+            invented = invented_values(call.params, s["question"], " ".join(s["checklist"]))
+            if invented:                                   # never spend a call (or trust a record) on a guessed identifier
+                self.runs.emit(rid, "api_lookup", "api_skipped", {
+                    "connector": call.connector, "endpoint": call.endpoint, "params": call.params,
+                    "reason": f"{', '.join(invented)} is not in the question; identifiers are never guessed"})
+                continue
             used += 1
             try:
                 result = self.call_api_fn(self.registry, call.connector, call.endpoint, call.params, run_id=rid)
