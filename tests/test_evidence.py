@@ -262,3 +262,39 @@ def test_model_not_supported_verdict_stands_and_checks_are_append_only(store, so
     with pytest.raises(sqlite3.DatabaseError, match="append-only"):
         db.execute("UPDATE support_checks SET verdict = 'supported'")
     db.close()
+
+
+# --- widening a short but verbatim quote (a key and value in an API response) ---
+
+from evidence import widen_quote  # noqa: E402
+from tools.archive import archive_bytes  # noqa: E402
+
+JSON_TEXT = '{"cik":"0000320193","name":"Apple Inc.","tickers":["AAPL"],"exchanges":["Nasdaq"],"fiscalYearEnd":"0926","state":"CA","name":"Other Co"}'
+
+
+def test_a_short_unique_quote_is_widened_with_its_own_neighbouring_text():
+    wider = widen_quote(JSON_TEXT, '"tickers":["AAPL"]')
+    assert wider is not None and '"tickers":["AAPL"]' in wider and len(wider) >= 20
+    assert wider in normalize(JSON_TEXT)                         # still word for word in the source
+    assert verify_quote(JSON_TEXT, wider)["ok"]
+
+
+def test_widening_never_guesses():
+    assert widen_quote(JSON_TEXT, "DIS") is None                  # too thin to widen
+    assert widen_quote(JSON_TEXT, '"name":"Apple Inc."') is not None
+    assert widen_quote(JSON_TEXT + JSON_TEXT, '"tickers":["AAPL"]') is None                 # twice in the source: ambiguous
+    assert widen_quote(JSON_TEXT, '"tickers":["MSFT"]') is None                             # not in the source at all
+    assert widen_quote(JSON_TEXT, '"fiscalYearEnd":"0926"') is None                        # already long enough: left alone
+    assert widen_quote("short", "short text here") is None
+
+
+def test_the_widened_quote_is_what_the_store_checks_so_a_wrong_claim_still_cannot_pass(tmp_path, monkeypatch):
+    monkeypatch.setattr("tools.archive.ARCHIVE_DIR", tmp_path / "archive")
+    store = EvidenceStore(tmp_path / "e.db")
+    sha, path = archive_bytes(JSON_TEXT.encode(), ".json")
+    src = store.ingest({"url": "https://data.sec.gov/x.json", "final_url": "https://data.sec.gov/x.json", "content_type": "application/json",
+                        "encoding": "utf-8", "method": "api", "fetched_at": "2026-11-04T00:00:00+00:00", "sha256": sha, "archive_path": path})
+    eid = store.add_entity("Apple")
+    assert store.add_claim(eid, "p", "", "The ticker is AAPL.", src, '"tickers":["AAPL"]')["ok"] is False        # the raw short quote is still refused
+    wider = widen_quote(JSON_TEXT, '"tickers":["AAPL"]')
+    assert store.add_claim(eid, "p", "", "The ticker is AAPL.", src, wider)["ok"] is True

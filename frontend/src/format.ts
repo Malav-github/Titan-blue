@@ -23,6 +23,7 @@ const DESCRIBE: Record<string, [string, Fmt]> = {
   source_failed: ['Could not read a page', (p) => `${short(p.url, 60)}: ${short(p.error, 80)}`],
   claim_recorded: ['Recorded a claim', (p) => `#${p.claim_id} ${short(p.claim, 100)}`],
   claims_malformed: ['Dropped a malformed claim', (p) => `${p.count} from ${short(p.source_url, 60)}: the model left out a required field`],
+  quote_widened: ['Extended a short quote', (p) => `“${short(p.from, 40)}” → “${short(p.to, 70)}” (same source text, so it is still word for word)`],
   claim_rejected: ['Rejected a claim', (p) => `${p.reason}: “${short(p.quote, 60)}”`],
   support_checked: ['Checked a claim against its quote', (p) => `claim #${p.claim_id}: ${String(p.verdict).replace('_', ' ')}`],
   relevance_checked: ['Checked relevance', (p) => `claim #${p.claim_id}: ${p.addresses ? 'answers a needed fact' : 'does not answer a needed fact'}`],

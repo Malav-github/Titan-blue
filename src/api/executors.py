@@ -13,7 +13,7 @@ from typing import Callable
 from pydantic import BaseModel
 
 import config
-from evidence import UPLOAD_SCHEME, EvidenceStore, normalize
+from evidence import MIN_QUOTE_CHARS, UPLOAD_SCHEME, EvidenceStore, normalize, widen_quote
 from tools import primary, sandbox, web
 from tools.archive import archive_bytes, utc_now
 
@@ -143,7 +143,11 @@ def extract_claims(ctx: Context, inputs: dict, settings: dict) -> dict:
                 ctx.emit("claim_rejected", {"claim": c.claim, "quote": c.quote, "reason": "not a statement of the needed fact"})
                 continue
             value = c.value if normalize(c.value) and normalize(c.value) in normalize(f"{c.quote} {c.claim}") else ""
-            r = ctx.store.add_claim(entity_id, c.predicate, value, c.claim, sha, c.quote, created_by=f"block:{ctx.run_id[:8]}")
+            quote = c.quote
+            if len(normalize(quote)) < MIN_QUOTE_CHARS and (wider := widen_quote(text, quote)):
+                ctx.emit("quote_widened", {"from": normalize(quote), "to": wider, "source_url": source["final_url"]})
+                quote = wider
+            r = ctx.store.add_claim(entity_id, c.predicate, value, c.claim, sha, quote, created_by=f"block:{ctx.run_id[:8]}")
             if r["ok"]:
                 ids.append(r["claim_id"])
                 ctx.emit("claim_recorded", {"claim_id": r["claim_id"], "claim": c.claim, "quote": normalize(c.quote),

@@ -152,3 +152,23 @@ def test_a_call_with_a_made_up_id_is_skipped_and_not_counted(env):
     skipped = [e for e in env["runs"].events(result["run_id"]) if e["type"] == "api_skipped"]
     assert len(skipped) == 1 and "A-99871" in skipped[0]["payload"]["reason"]
     assert result["status"] == "finished"
+
+
+def test_an_all_zero_identifier_is_never_accepted():
+    from runner import invented_values
+    assert invented_values({"cik": "0000000000"}, "What is the CIK 0000320193 company?") == ["0000000000"]   # seen in a real run
+    assert invented_values({"cik": "0"}, "anything") == ["0"]
+    assert invented_values({"cik": "0000320193"}, "CIK 0000320193") == []
+
+
+def test_the_plan_prompt_forbids_answers_and_process_steps_in_the_checklist(env):
+    seen = []
+
+    def plan(prompt):
+        seen.append(prompt)
+        return Plan(subject="Acme", queries=["acme pricing"], checklist=["Starter plan price"])
+
+    make_runner(env, Plan=plan).start("What does Acme charge?", budgets={"max_iterations": 1})
+    text = seen[0]
+    assert "Never write the answer or any value" in text and "Never add steps such as verifying" in text
+    assert "at most 6" in text and "3 to 6" not in text        # no longer forced to pad a one-fact question

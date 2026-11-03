@@ -121,6 +121,32 @@ def verify_quote(text: str, quote: str) -> dict:
     return {"ok": False, "reason": "quote not found verbatim in the source text", "closest_passage": hint}
 
 
+MIN_WIDEN_FROM = 8            # shorter quotes are too thin to widen; they stay rejected
+MAX_WIDEN_CHARS = 60          # never widen a quote into more than this much surrounding text
+
+
+def widen_quote(text: str, quote: str, min_chars: int = MIN_QUOTE_CHARS) -> str | None:
+    """A quote that is verbatim but under the minimum length (`"tickers":["AAPL"]` in an API response, a key and its
+    value) is extended with the text next to it in the source, so the quote stays word for word and gains context.
+    Only when the short quote occurs exactly once in the source: if it could point at several places, or at nothing,
+    it stays rejected. The extended quote still has to pass the support check like any other.
+    Returns the longer quote, or None when it cannot be widened safely."""
+    t, q = normalize(text), normalize(quote)
+    if len(q) >= min_chars or len(q) < MIN_WIDEN_FROM or t.count(q) != 1:
+        return None
+    start = t.index(q)
+    end = start + len(q)
+    stop = " ,;]}"
+    while end - start < min_chars and end < len(t):
+        end += 1
+    while end < len(t) and t[end - 1] not in stop and end - start < MAX_WIDEN_CHARS:
+        end += 1                                          # finish the word or field rather than cut it in half
+    while end - start < min_chars and start > 0:
+        start -= 1
+    wider = t[start:end].strip()
+    return wider if min_chars <= len(wider) <= MAX_WIDEN_CHARS and q in wider else None
+
+
 def _sha256_file(path: str) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 

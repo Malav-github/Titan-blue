@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 
 import tracing
 from config import DATA_DIR, LLM_MODE
-from evidence import EvidenceStore, normalize
+from evidence import MIN_QUOTE_CHARS, EvidenceStore, normalize, widen_quote
 from runs import RunStore
 from connectors.caller import ConnectorError, call_api
 from connectors.registry import ConnectorRegistry
@@ -206,7 +206,10 @@ def invented_values(params: dict | None, *texts: str) -> list[str]:
     bad = []
     for value in (params or {}).values():
         v = normalize(str(value)).lower()
-        if any(ch.isdigit() for ch in v) and v not in haystack and v.lstrip("0") not in haystack:
+        if not any(ch.isdigit() for ch in v):
+            continue
+        stripped = v.lstrip("0")                         # "0000320193" is "320193"; "0000000000" is nothing at all
+        if v not in haystack and not (stripped and stripped in haystack):
             bad.append(str(value))
     return bad
 
@@ -377,8 +380,10 @@ class Runner:
             f"{list(CATEGORY_NAMES)}; empty if no company); queries (up to {b['max_queries_per_iter']} distinct "
             f"web search queries using exact names and distinguishing terms; search operators work, e.g. "
             f"site:patents.google.com, site:sec.gov, or a company's own domain); checklist (as few facts as fully "
-            f"answer the question, at most 6; one is right for a one-fact question). Each checklist item must be a fact a "
-            f"web page could state directly: a name, number, date or place. Never add steps such as verifying, "
+            f"answer the question, at most 6; one is right for a one-fact question). Write each checklist item as a short "
+            f"label for a fact a web page could state directly (a name, number, date or place), for example 'Year Dropbox was "
+            f"founded' or 'Legal name of the company with CIK 0000320193'. Never write the answer or any value, even if you "
+            f"think you know it: your guess may be wrong and would mislead the search. Never add steps such as verifying, "
             f"cross-checking or confirming sources; the system does that itself."
         )
         plan = self._ask("plan", Plan, prompt, rid, "plan")
@@ -609,7 +614,12 @@ class Runner:
                         continue
                     # `value` is metadata the model often fills badly; blank it rather than lose a verifiable claim
                     value = c.value if normalize(c.value) and normalize(c.value) in normalize(f"{c.quote} {c.claim}") else ""
-                    r = self.store.add_claim(s["entity_id"], c.predicate, value, c.claim, sha, c.quote,
+                    quote = c.quote
+                    if len(normalize(quote)) < MIN_QUOTE_CHARS and (wider := widen_quote(text, quote)):
+                        self.runs.emit(rid, "extract", "quote_widened", {"from": normalize(quote), "to": wider,
+                                                                         "source_url": source["final_url"]})
+                        quote = wider
+                    r = self.store.add_claim(s["entity_id"], c.predicate, value, c.claim, sha, quote,
                                              created_by=f"runner:{rid[:8]}")
                     if r["ok"]:
                         new_ids.append(r["claim_id"])
