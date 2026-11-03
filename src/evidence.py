@@ -301,6 +301,36 @@ class EvidenceStore:
                 " WHERE lower(e.name) = lower(?) ORDER BY c.claim_id", (name,)).fetchall()
         return [dict(r) for r in rows]
 
+    def list_claims(self, entity: str | None = None, limit: int = 100, offset: int = 0, include_inactive: bool = False) -> list[dict]:
+        """Newest first, each with its source and its latest support verdict (None if never checked)."""
+        view = "claims" if include_inactive else "current_claims"
+        where, args = ("WHERE lower(e.name) = lower(?)", [entity]) if entity else ("", [])
+        with closing(self._connect()) as db:
+            rows = db.execute(
+                f"SELECT c.claim_id, c.predicate, c.value, c.claim_text, c.quote, c.source_tier, c.source_sha256, c.created_at,"
+                " e.name AS entity, s.final_url AS source_url,"
+                " (SELECT verdict FROM support_checks k WHERE k.claim_id = c.claim_id ORDER BY check_id DESC LIMIT 1) AS verdict"
+                f" FROM {view} c JOIN entities e USING (entity_id) JOIN sources s ON s.source_sha256 = c.source_sha256"
+                f" {where} ORDER BY c.claim_id DESC LIMIT ? OFFSET ?", (*args, limit, offset)).fetchall()
+        return [dict(r) for r in rows]
+
+    def claim_detail(self, claim_id: int, context: int = 300) -> dict | None:
+        """One claim with the text around its quote and every support check, so a reader can judge it."""
+        claim = self.get_claim(claim_id)
+        if claim is None:
+            return None
+        source = self.get_source(claim["source_sha256"])
+        text = normalize(Path(source["text_path"]).read_text(encoding="utf-8"))
+        with closing(self._connect()) as db:
+            entity = db.execute("SELECT name, domain, domain_status FROM entities WHERE entity_id = ?", (claim["entity_id"],)).fetchone()
+            events = db.execute("SELECT event, reason, created_at FROM claim_events WHERE claim_id = ?", (claim_id,)).fetchall()
+        lo, hi = claim["quote_start"], claim["quote_end"]
+        return {**{k: claim[k] for k in ("claim_id", "predicate", "value", "claim_text", "quote", "source_tier", "source_sha256",
+                                         "text_sha256", "as_of", "created_at", "created_by")},
+                "entity": dict(entity), "source_url": source["final_url"], "fetched_at": source["first_fetched_at"],
+                "before": text[max(0, lo - context):lo], "after": text[hi:hi + context],
+                "support_checks": self.support_checks_for(claim_id), "status": [dict(e) for e in events]}
+
     def counts(self) -> dict:
         with closing(self._connect()) as db:
             return {t: db.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in TABLES}

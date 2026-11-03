@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+/* Design tokens. Components use these names only, so light and dark themes, and later user themes, are a swap of values. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #eef0f4;
+  --line: #d9dde5;
+  --fg: #171a21;
+  --muted: #5a6272;
+  --accent: #2557d6;
+  --accent-fg: #ffffff;
+  --ok: #17753a;      --ok-bg: #e2f4e8;
+  --warn: #8a5300;    --warn-bg: #fdf0d5;
+  --bad: #b3261e;     --bad-bg: #fbe4e2;
+  --info: #1d4fa8;    --info-bg: #e3ecfb;
+  --mark: #fff0a8;
+  /* one color per block group: the block canvas of a later stage reads these */
+  --g-find: #2563eb; --g-read: #0d9488; --g-check: #7c3aed; --g-compute: #d97706;
+  --g-connect: #db2777; --g-model: #16a34a; --g-control: #475569;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1218;
+    --surface: #171b24;
+    --surface-2: #1f2430;
+    --line: #2d3342;
+    --fg: #e7eaf0;
+    --muted: #9aa3b5;
+    --accent: #7aa2ff;
+    --accent-fg: #0b1020;
+    --ok: #6fd391;      --ok-bg: #123322;
+    --warn: #f0b95a;    --warn-bg: #3a2a0c;
+    --bad: #ff8f86;     --bad-bg: #3d1816;
+    --info: #8db4ff;    --info-bg: #14274a;
+    --mark: #5a4b00;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-bad: var(--bad);
+  --color-bad-bg: var(--bad-bg);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --font-sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+html { color-scheme: light dark; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); line-height: 1.5; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+mark { background: var(--mark); color: inherit; padding: 0 2px; border-radius: 2px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

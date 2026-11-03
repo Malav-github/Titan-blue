@@ -23,7 +23,9 @@ Built and tested:
 
 - **Usage rules for outside sites** ([definitions/policies/](definitions/policies), [src/policy.py](src/policy.py), [docs/api-usage-rules.md](docs/api-usage-rules.md)): a provider's own rules (request limits, declared contact, no crawling, pauses after a refusal) are stored as data with their verbatim quotes and enforced in every request path, including a request budget shared across processes. `uv run python check_policies.py` re-checks that each quote is still on the provider's page. SEC EDGAR is the first policy.
 
-Not built yet: the frontend, templates, chat endpoint, evidence and connector endpoints, skills loader, search reranker, A2A, MCP-server integration.
+- **Web app** ([frontend/](frontend)): React, TypeScript, Tailwind. Home (ready-made apps drawn from [definitions/templates/](definitions/templates)), Runs (live step-by-step history, plan approval, the result with each claim's quote and source), Data sources (the approval gate, with the provider's terms linked and facts from third-party sites labelled), Evidence (every claim with its quote in its page), Health. Build once with `cd frontend && npm install && npm run build`, then `uv run python serve.py` and open http://127.0.0.1:8000/. For development run `npm run dev` in `frontend/` (it proxies to the API and adds the session token itself). Browser tests: `uv run pytest tests/test_e2e.py`.
+
+Not built yet: Lab (run any single block), Models and Chat screens, more templates, the block canvas, templates, chat endpoint, evidence and connector endpoints, skills loader, search reranker, A2A, MCP-server integration.
 
 ## Requirements
 

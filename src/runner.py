@@ -214,9 +214,9 @@ class Runner:
 
     def start(self, question: str, subject: str | None = None, require_approval: bool = False,
               pause_after: list[str] | None = None, budgets: dict | None = None,
-              allow_capabilities: bool = False) -> dict:
+              allow_capabilities: bool = False, run_id: str | None = None) -> dict:
         """`allow_capabilities`: let the run pause and ask for a new data source (API) when ordinary pages are not enough."""
-        run_id = uuid.uuid4().hex
+        run_id = run_id or uuid.uuid4().hex     # a caller (the API) may pick the id so it can hand it back at once
         merged = {**DEFAULT_BUDGETS, **(budgets or {})}
         self.runs.emit(run_id, "runner", "run_started", {
             "question": question, "subject": subject, "require_approval": require_approval,

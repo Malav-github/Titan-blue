@@ -30,7 +30,7 @@ BEGIN SELECT RAISE(ABORT, 'run_events is append-only'); END;
 
 # Event type -> run status it implies. Other event types do not change the status.
 STATUS_BY_EVENT = {
-    "run_started": "running", "resumed": "running", "awaiting_approval": "awaiting_approval",
+    "queued": "queued", "run_started": "running", "resumed": "running", "awaiting_approval": "awaiting_approval",
     "paused": "paused", "capability_needed": "needs_capability", "run_finished": "finished", "run_stopped": "stopped", "run_failed": "failed",
 }
 
@@ -75,9 +75,15 @@ class RunStore:
         return STATUS_BY_EVENT[row["type"]] if row else None
 
     def runs(self, limit: int = 50) -> list[dict]:
-        """Newest runs first, with question and derived status."""
+        """Newest runs first, with question and derived status. A run that is only queued is listed too."""
         with closing(self._connect()) as db:
-            started = db.execute("SELECT run_id, ts, payload FROM run_events WHERE type = 'run_started'"
-                                 " ORDER BY event_id DESC LIMIT ?", (limit,)).fetchall()
-        return [{"run_id": r["run_id"], "started_at": r["ts"], "status": self.status(r["run_id"]),
-                 "question": json.loads(r["payload"]).get("question")} for r in started]
+            rows = db.execute("SELECT run_id, ts, type, payload FROM run_events WHERE type IN ('queued', 'run_started')"
+                              " ORDER BY event_id").fetchall()
+        found: dict[str, dict] = {}
+        for r in rows:
+            payload = json.loads(r["payload"])
+            entry = found.setdefault(r["run_id"], {"run_id": r["run_id"], "started_at": r["ts"], "question": None, "kind": None})
+            entry["question"] = payload.get("question") or entry["question"]
+            entry["kind"] = ("block" if "graph" in payload else "research") if r["type"] == "run_started" else payload.get("kind", entry["kind"])
+        newest = list(found.values())[::-1][:limit]
+        return [{**e, "status": self.status(e["run_id"])} for e in newest]

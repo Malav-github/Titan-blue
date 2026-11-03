@@ -114,7 +114,9 @@ def test_hostname_parsing():
 
 def test_docs_and_openapi_are_not_exposed(client):
     for path in ("/docs", "/redoc", "/openapi.json"):
-        assert client.get(path).status_code == 404
+        r = client.get(path)            # 404, or the app's own page when the frontend is built: never the API's schema or docs UI
+        assert r.status_code in (200, 404)
+        assert "swagger" not in r.text.lower() and '"openapi"' not in r.text and '"paths"' not in r.text
 
 
 # --- endpoints ---
