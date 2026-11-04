@@ -21,8 +21,9 @@ from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 import tracing
-from skills.temporal import clock as tclock, intent as tintent
+from skills.temporal import clock as tclock, freshness, intent as tintent, setting as temporal_setting
 from skills.temporal.display import short_date
+from skills.temporal.extract import DateFact, best_date, parse_date
 from config import DATA_DIR, LLM_MODE
 from evidence import MIN_QUOTE_CHARS, EvidenceStore, normalize, widen_quote
 from runs import RunStore
@@ -557,11 +558,28 @@ class Runner:
                 self.runs.emit(rid, "fetch", "source_failed", {"url": url, "error": f"{type(exc).__name__}: {exc}"})
                 continue
             new_sources.append(sha)
-            self.runs.emit(rid, "fetch", "source_fetched", {"url": url, "source_sha256": sha, "tier": cand["tier"],
-                           "readable_chars": len(text)})
+            self._record_hit_date(sha, cand.get("published"))
+            facts = self._source_dates(sha)
+            best = best_date(facts)
+            self.runs.emit(rid, "fetch", "source_fetched", {
+                "url": url, "source_sha256": sha, "tier": cand["tier"], "readable_chars": len(text),
+                "dates": [{"kind": f.kind, "value": f.value, "origin": f.origin} for f in facts][:8],
+                "best_date": best.value if best else None, "best_date_kind": best.kind if best else None})
         failed = len(s["selected"]) - len(new_sources)
         return {"new_sources": new_sources, "fetches_used": fetches, "fetched_keys": keys, "warnings": warnings,
                 "fetch_failures": s["fetch_failures"] + failed}
+
+    def _source_dates(self, sha: str) -> list[DateFact]:
+        return [DateFact(d["kind"], d["value"], d["precision"], d["raw"], d["origin"], bool(d["relative"]))
+                for d in self.store.source_dates(sha)]
+
+    def _record_hit_date(self, sha: str, published) -> None:
+        """The date a search engine showed for this page is one more signal about it, kept with its origin."""
+        if not published:
+            return
+        parsed = parse_date(published, tclock.now(self.now_fn).utc)
+        if parsed:
+            self.store.record_source_dates(sha, [DateFact("search_result", parsed[0], parsed[1], str(published)[:120], "search", parsed[2])])
 
     def n_api_lookup(self, s: State) -> dict:
         """Ask the model which approved connector calls would help, then make them through the guarded path."""
@@ -733,9 +751,11 @@ class Runner:
         for cid in s["all_claim_ids"]:
             claim = self.store.get_claim(cid)
             source = self.store.get_source(claim["source_sha256"])
+            best = best_date(self._source_dates(claim["source_sha256"]))
             row = {"claim_id": cid, "claim": claim["claim_text"], "value": claim["value"], "quote": claim["quote"],
                    "source_url": source["final_url"], "source_sha256": claim["source_sha256"],
-                   "source_tier": claim["source_tier"], "as_of": claim["as_of"]}
+                   "source_tier": claim["source_tier"], "as_of": claim["as_of"],
+                   "source_date": best.value if best else None, "source_date_kind": best.kind if best else None}
             checks = self.store.support_checks_for(cid)
             if checks:
                 row["why"] = checks[-1]["reasoning"]
@@ -744,6 +764,12 @@ class Runner:
                 verdict = "off_topic"  # true to its source, but does not answer a needed fact
             rows[verdict].append(row)
         gaps = [t for i, t in enumerate(s["checklist"]) if i not in s["covered"]]
+
+        # how old is what the answer rests on? (established claims first; partial ones only if nothing is established)
+        basis = rows["supported"] or rows["partially_supported"]
+        timing = freshness.assess({r["source_sha256"]: self._source_dates(r["source_sha256"]) for r in basis},
+                                  s.get("time_scope") or {}, tclock.now(self.now_fn), temporal_setting("latest_max_age_days"))
+        time_warning = freshness.warning(timing)
 
         summary, dropped = "", []
         allowed = {r["claim_id"] for r in rows["supported"]}
@@ -762,7 +788,8 @@ class Runner:
             "established": rows["supported"], "partial": rows["partially_supported"],
             "not_supported": len(rows["not_supported"]), "unchecked": len(rows["unchecked"]),
             "off_topic": len(rows["off_topic"]),
-            "gaps": gaps, "rejected_quotes": s["rejected"], "warnings": s.get("warnings", []),
+            "gaps": gaps, "rejected_quotes": s["rejected"], "warnings": s.get("warnings", []) + ([time_warning] if time_warning else []),
+            "time": timing,
             "budget_used": {"searches": s["searches_used"], "fetches": s["fetches_used"], "iterations": s["iteration"]},
             "domain": s.get("domain"),
         }

@@ -3,6 +3,7 @@
 from playwright.sync_api import sync_playwright
 
 import policy
+from skills.temporal.extract import collect_dates
 from tools.archive import USER_AGENT, archive_bytes, check_public_url, clip, utc_now
 from tools.web import extract_text
 
@@ -32,6 +33,7 @@ def render_url(url: str, max_chars: int = 12_000, wait_ms: int = 1500) -> dict:
     return {
         "url": url,
         "final_url": final_url,
+        "dates": [d.as_dict() for d in collect_dates(html, None, final_url)],
         "status": status,
         "fetched_at": utc_now(),
         "content_type": "text/html",

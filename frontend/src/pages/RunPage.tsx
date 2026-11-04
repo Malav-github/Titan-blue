@@ -13,6 +13,9 @@ function ClaimCard({ claim, caution }: { claim: ReportClaim; caution?: boolean }
       <blockquote className="mt-2 border-l-4 border-line pl-3 text-sm italic text-muted">“{claim.quote}”</blockquote>
       <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
         <TierBadge tier={claim.source_tier} />
+        <Badge tone={claim.source_date ? 'neutral' : 'warn'}>
+          {claim.source_date ? `Dated ${claim.source_date.slice(0, 10)}${claim.source_date_kind ? ` (${claim.source_date_kind.replace('_', ' ')})` : ''}` : 'No date found'}
+        </Badge>
         <ExternalLink href={claim.source_url}>{claim.source_url}</ExternalLink>
       </p>
       {claim.why && <p className="mt-2 text-sm text-muted">Why: {claim.why}</p>}
@@ -25,6 +28,18 @@ function ReportView({ report }: { report: Report }) {
   return (
     <section aria-labelledby="report-h" className="flex flex-col gap-4">
       <h2 id="report-h" className="text-xl font-semibold">Result</h2>
+      {report.time && (
+        <p className="text-sm text-muted">
+          As of <strong>{report.time.today}</strong>
+          {report.time.scope ? <> · time scope: {report.time.scope.replace('_', ' ')}</> : null}
+          {report.time.newest_source_date ? <> · newest source dated {report.time.newest_source_date.slice(0, 10)}{report.time.age_days !== null ? ` (${report.time.age_days} days old)` : ''}</> : <> · no source carries a date</>}
+        </p>
+      )}
+      {report.time?.stale && (
+        <div role="alert" className="rounded-md border border-warn bg-warn-bg p-3 text-sm text-warn">
+          This question asks for the current state, but the sources behind the answer are old or undated. Treat it as possibly out of date.
+        </div>
+      )}
       {report.summary ? (
         <Card><p className="whitespace-pre-line">{report.summary}</p>
           <p className="mt-2 text-xs text-muted">Written by a model from the verified claims below only; each [claim:N] points to one of them.</p></Card>

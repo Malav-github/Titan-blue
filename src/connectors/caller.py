@@ -7,7 +7,7 @@ everything stored. Every response is archived under its SHA-256 like any other e
 """
 
 import time
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 
 import httpx
 from dotenv import dotenv_values
@@ -16,6 +16,7 @@ from config import PROJECT_ROOT
 from connectors.manifest import Manifest
 from connectors.registry import ConnectorRegistry
 import policy
+from skills.temporal.extract import collect_dates
 from tools.archive import USER_AGENT, archive_bytes, check_public_url, clip, utc_now
 from tools.web import extract_text
 
@@ -125,11 +126,13 @@ def call_api(registry: ConnectorRegistry, connector_id: str, endpoint: str, para
     policy.before_request(full_url)               # the provider's usage rules (rate budget, declared contact, pauses)
     headers.update(policy.request_headers(full_url))
     status, body, content_type, encoding = None, b"", "", "utf-8"
+    time_headers: dict = {}
     try:
         with httpx.Client(timeout=timeout, follow_redirects=False, transport=transport) as client:
             with client.stream("GET", full_url, headers=headers) as resp:
                 status = resp.status_code
                 policy.after_response(full_url, status)
+                time_headers = {k: resp.headers[k] for k in ("last-modified", "date") if k in resp.headers}
                 if 300 <= status < 400:
                     raise ConnectorError(f"{connector_id}: redirect to {resp.headers.get('location', '?')[:80]} not followed "
                                          "(the manifest must name the final host)")
@@ -160,6 +163,7 @@ def call_api(registry: ConnectorRegistry, connector_id: str, endpoint: str, para
     text, truncated = clip(text, 2000)
     return {
         "ok": ok, "url": display_url, "final_url": display_url, "status": status, "content_type": content_type,
+        "dates": [d.as_dict() for d in collect_dates(None, time_headers, urlparse(display_url).path)],
         "encoding": encoding, "method": "api", "fetched_at": utc_now(), "sha256": sha256, "archive_path": path,
         "text": text if ok else text[:300], "truncated": truncated, "connector_id": connector_id,
         "connector_version": version, "source_tier": manifest.tier, "key_redacted_from_response": redacted,

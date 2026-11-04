@@ -26,7 +26,7 @@ UPLOAD_SCHEME = "upload://"   # URL given to sources that came from a user-uploa
 MIN_QUOTE_CHARS = 20
 HINT_CONTEXT = 60
 
-TABLES = ["sources", "fetches", "entities", "claims", "rejected_claims", "claim_events", "contradictions",
+TABLES = ["sources", "fetches", "entities", "claims", "rejected_claims", "claim_events", "contradictions", "source_dates",
           "support_checks"]
 
 SCHEMA = """
@@ -95,6 +95,18 @@ CREATE TABLE IF NOT EXISTS support_checks (   -- does the quote actually back th
     unsupported_parts TEXT NOT NULL,       -- JSON list
     missing_tokens TEXT NOT NULL,          -- JSON list: numbers/identifiers in the claim absent from the quote
     checker TEXT NOT NULL, prompt_version TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS source_dates (   -- the dates a page carried when it was fetched, each with where it came from
+    date_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_sha256 TEXT NOT NULL REFERENCES sources(source_sha256),
+    kind TEXT NOT NULL,                    -- published | modified | created | event_start | event_end | time_element | url_date | search_result | server_date
+    value TEXT NOT NULL,                   -- YYYY, YYYY-MM, YYYY-MM-DD or an ISO datetime
+    precision TEXT NOT NULL CHECK (precision IN ('year', 'month', 'day', 'datetime')),
+    raw TEXT NOT NULL,                     -- the text it was read from
+    origin TEXT NOT NULL,                  -- meta:..., jsonld:..., text:byline, http:..., url, search
+    relative INTEGER NOT NULL DEFAULT 0,   -- 1 if it was worked out from words like "3 days ago"
+    collected_at TEXT NOT NULL,
+    UNIQUE (source_sha256, kind, value, origin)
 );
 CREATE VIEW IF NOT EXISTS current_claims AS
     SELECT * FROM claims WHERE claim_id NOT IN (SELECT claim_id FROM claim_events);
@@ -192,7 +204,32 @@ class EvidenceStore:
             )
             db.execute("INSERT INTO fetches (source_sha256, url, fetched_at) VALUES (?,?,?)",
                        (sha, fetched["url"], fetched["fetched_at"]))
+            self._insert_dates(db, sha, fetched.get("dates") or [])
         return sha
+
+    @staticmethod
+    def _insert_dates(db, sha: str, dates: list) -> int:
+        added = 0
+        for d in dates:
+            d = d if isinstance(d, dict) else d.as_dict()
+            cur = db.execute(
+                "INSERT OR IGNORE INTO source_dates (source_sha256, kind, value, precision, raw, origin, relative, collected_at)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (sha, d["kind"], d["value"], d["precision"], d["raw"], d["origin"], int(bool(d.get("relative"))), utc_now()))
+            added += cur.rowcount
+        return added
+
+    def record_source_dates(self, source_sha256: str, dates: list) -> int:
+        """Add dates found for a source after it was ingested (for example the date a search engine showed for it).
+        Existing rows are never changed; a date already recorded is skipped. Returns how many were new."""
+        with closing(self._connect()) as db, db:
+            return self._insert_dates(db, source_sha256, dates)
+
+    def source_dates(self, source_sha256: str) -> list[dict]:
+        with closing(self._connect()) as db:
+            return [dict(r) for r in db.execute(
+                "SELECT kind, value, precision, raw, origin, relative FROM source_dates WHERE source_sha256 = ? ORDER BY date_id",
+                (source_sha256,))]
 
     def get_source(self, source_sha256: str) -> sqlite3.Row | None:
         with closing(self._connect()) as db:
@@ -355,7 +392,8 @@ class EvidenceStore:
                                          "text_sha256", "as_of", "created_at", "created_by")},
                 "entity": dict(entity), "source_url": source["final_url"], "fetched_at": source["first_fetched_at"],
                 "before": text[max(0, lo - context):lo], "after": text[hi:hi + context],
-                "support_checks": self.support_checks_for(claim_id), "status": [dict(e) for e in events]}
+                "support_checks": self.support_checks_for(claim_id), "status": [dict(e) for e in events],
+                "source_dates": self.source_dates(claim["source_sha256"])}
 
     def counts(self) -> dict:
         with closing(self._connect()) as db:

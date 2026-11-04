@@ -1,13 +1,14 @@
 """Plain HTTP fetch with readable-text extraction. Fast; use for static pages and APIs."""
 
 import io
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 import trafilatura
 from bs4 import BeautifulSoup
 
 import policy
+from skills.temporal.extract import collect_dates
 from tools.archive import USER_AGENT, archive_bytes, check_public_url, clip, utc_now
 
 MAX_BYTES = 5_000_000
@@ -21,6 +22,7 @@ class Download:
     final_url: str
     content_type: str
     encoding: str
+    headers: dict = field(default_factory=dict)      # only Last-Modified and Date, lower-case keys
 
 
 def download(url: str, timeout: float = 20.0, max_bytes: int = MAX_BYTES) -> Download:
@@ -48,7 +50,7 @@ def download(url: str, timeout: float = 20.0, max_bytes: int = MAX_BYTES) -> Dow
                 chunks.append(chunk)
             content_type = resp.headers.get("content-type", "").split(";")[0].strip().lower()
             return Download(b"".join(chunks), resp.status_code, str(resp.url), content_type,
-                            resp.encoding or "utf-8")
+                            resp.encoding or "utf-8", {k: resp.headers[k] for k in ("last-modified", "date") if k in resp.headers})
 
 
 META_KEYS = ("dc.", "citation_", "og:", "description", "twitter:title", "article:")
@@ -102,6 +104,8 @@ def fetch_url(url: str, max_chars: int = 12_000, timeout: float = 20.0) -> dict:
     body, content_type, final_url, encoding = dl.body, dl.content_type, dl.final_url, dl.encoding
 
     suffix, text = extract_text(body, content_type, encoding, final_url)
+    html = body.decode(encoding, errors="replace") if "html" in content_type else None
+    dates = collect_dates(html, dl.headers, final_url)                # what the page says about when it was written
 
     sha256, path = archive_bytes(body, suffix)
     text, truncated = clip(text, max_chars)
@@ -111,6 +115,7 @@ def fetch_url(url: str, max_chars: int = 12_000, timeout: float = 20.0) -> dict:
         "status": dl.status,
         "content_type": content_type,
         "encoding": encoding,
+        "dates": [d.as_dict() for d in dates],
         "fetched_at": utc_now(),
         "sha256": sha256,
         "archive_path": path,

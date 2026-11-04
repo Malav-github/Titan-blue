@@ -81,6 +81,8 @@ export interface ReportClaim {
   source_url: string
   source_sha256: string
   source_tier: string
+  source_date?: string | null
+  source_date_kind?: string | null
   why?: string
 }
 export interface Report {
@@ -96,6 +98,15 @@ export interface Report {
   rejected_quotes: number
   warnings: string[]
   budget_used: { searches: number; fetches: number; iterations: number }
+  time?: {
+    today: string
+    scope: string | null
+    applies: boolean
+    newest_source_date: string | null
+    age_days: number | null
+    undated_sources: number
+    stale: boolean
+  }
 }
 export interface RunDetail {
   run_id: string
@@ -189,6 +200,7 @@ export interface ClaimDetail {
   created_at: string
   created_by: string
   support_checks: { verdict: string; reasoning: string; checker: string; created_at: string; unsupported_parts: string; missing_tokens: string }[]
+  source_dates?: { kind: string; value: string; precision: string; raw: string; origin: string; relative: number }[]
 }
 export interface Health {
   mode: string

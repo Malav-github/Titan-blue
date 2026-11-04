@@ -21,6 +21,18 @@ export function ClaimPage() {
           <p className="mt-3 flex flex-wrap items-center gap-2 text-sm"><TierBadge tier={c.source_tier} /> <ExternalLink href={c.source_url}>{c.source_url}</ExternalLink></p>
         </Card>
         <Card>
+          <h2 className="font-semibold">Dates this page carried</h2>
+          {(c.source_dates ?? []).length === 0 && <p className="mt-1 text-sm text-muted">No date was found on this page.</p>}
+          <ul className="mt-2 flex flex-col gap-1 text-sm">
+            {(c.source_dates ?? []).map((d, i) => (
+              <li key={i}>
+                <strong>{d.kind.replace('_', ' ')}</strong>: {d.value} <span className="text-muted">({d.precision}{d.relative ? ', worked out from "' + d.raw + '"' : ''} · from {d.origin})</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-muted">HTTP header dates say when the server answered, not when the page was written, so they are never used as the page's date.</p>
+        </Card>
+        <Card>
           <h2 className="font-semibold">Support checks</h2>
           {c.support_checks.length === 0 && <p className="mt-1 text-sm text-muted">This claim has not been checked yet.</p>}
           <ul className="mt-2 flex flex-col gap-2">

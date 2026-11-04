@@ -34,9 +34,13 @@ class RealisticRunner(FakeRunner):
         return {"values": {"report": {
             "question": "What does the Starter plan cost?", "subject": "Acme", "summary": f"The Starter plan costs $29 per month. [claim:{c['claim_id']}]",
             "established": [{"claim_id": c["claim_id"], "claim": c["claim_text"], "value": c["value"], "quote": c["quote"],
-                             "source_url": c["source_url"], "source_sha256": c["source_sha256"], "source_tier": c["source_tier"], "why": "the quote states the price"}],
+                             "source_url": c["source_url"], "source_sha256": c["source_sha256"], "source_tier": c["source_tier"], "why": "the quote states the price",
+                             "source_date": "2024-05-03", "source_date_kind": "published"}],
             "partial": [], "not_supported": 0, "unchecked": 0, "off_topic": 0, "gaps": ["Team plan price"], "rejected_quotes": 1,
-            "warnings": [], "budget_used": {"searches": 2, "fetches": 3, "iterations": 1}}}}
+            "warnings": ["The newest dated source behind this answer is from 2024-05-03 (915 days before today, 2026-11-04); the question asks for the current state, so the answer may be out of date."],
+            "time": {"today": "2026-11-04", "scope": "latest", "applies": True, "newest_source_date": "2024-05-03", "age_days": 915,
+                     "undated_sources": 0, "stale": True},
+            "budget_used": {"searches": 2, "fetches": 3, "iterations": 1}}}}
 
 
 class RealisticManager(FakeManager):
@@ -74,7 +78,9 @@ def base_url(tmp_path_factory):
     runs, connectors, store = RunStore(str(tmp / "runs.db")), ConnectorRegistry(tmp / "c.db"), EvidenceStore(tmp / "e.db")
     sha, path = archive_bytes(PAGE.encode(), ".html")
     src = store.ingest({"url": "https://acme.com/pricing", "final_url": "https://acme.com/pricing", "content_type": "text/html", "encoding": "utf-8",
-                        "method": "http", "fetched_at": "2026-11-03T00:00:00+00:00", "sha256": sha, "archive_path": path})
+                        "method": "http", "fetched_at": "2026-11-03T00:00:00+00:00", "sha256": sha, "archive_path": path,
+                        "dates": [{"kind": "published", "value": "2024-05-03", "precision": "day", "raw": "May 3, 2024",
+                                   "origin": "meta:article:published_time", "relative": False}]})
     eid = store.add_entity("Acme", domain="acme.com", domain_status="confirmed")
     cid = store.add_claim(eid, "pricing.starter", "$29", "The Starter plan costs $29 per month.", src, QUOTE)["claim_id"]
     store.record_support_check(cid, "supported", "The quote states the price.", [], [], "gemma4:e4b", "v1")
@@ -139,6 +145,10 @@ def test_research_from_form_to_verified_claim(page: Page):
     expect(page.get_by_role("heading", name="Result")).to_be_visible()
     expect(page.get_by_text("“The Starter plan costs $29 per month, billed annually.”")).to_be_visible()   # the quote is shown
     expect(page.get_by_text("Primary source")).to_be_visible()
+    expect(page.get_by_text("Dated 2024-05-03 (published)")).to_be_visible()                                 # each source's date is shown
+    expect(page.get_by_text("As of 2026-11-04")).to_be_visible()
+    expect(page.get_by_text("newest source dated 2024-05-03 (915 days old)")).to_be_visible()
+    expect(page.get_by_text("Treat it as possibly out of date.")).to_be_visible()                           # an old answer is flagged, not hidden
     expect(page.get_by_text("Not established")).to_be_visible()                                              # gaps are not hidden
     expect(page.get_by_text("Run started")).to_be_visible()                                                 # the history is shown
     expect(page.get_by_text("Continued", exact=True)).to_be_visible()
@@ -147,6 +157,9 @@ def test_research_from_form_to_verified_claim(page: Page):
     expect(page.locator("mark")).to_have_text("The Starter plan costs $29 per month, billed annually.")
     expect(page.get_by_text("Supported", exact=True).first).to_be_visible()
     expect(page.get_by_text("Proof it has not changed")).to_be_visible()
+    expect(page.get_by_text("Dates this page carried")).to_be_visible()
+    expect(page.get_by_text("2024-05-03").first).to_be_visible()
+    expect(page.get_by_text("from meta:article:published_time")).to_be_visible()
 
 
 def test_runs_page_shows_the_run_and_evidence_lists_the_claim(page: Page):
