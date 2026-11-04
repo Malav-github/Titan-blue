@@ -38,11 +38,11 @@ if "%NEEDBUILD%"=="1" (
 
 if /i "%1"=="dev" start "Titan app (development)" cmd /k "cd /d %~dp0frontend && npm run dev"
 
-rem open the browser a few seconds from now, once the server is listening
+rem open the browser once the server is answering (waking WSL for search can take a while, so a fixed wait is not enough)
 if /i "%1"=="dev" (
-  start "" cmd /c "timeout /t 5 /nobreak >nul & start http://127.0.0.1:5173/"
+  start "" powershell -NoProfile -WindowStyle Hidden -Command "for($i=0;$i -lt 180;$i++){try{Invoke-WebRequest 'http://127.0.0.1:5173/' -UseBasicParsing -TimeoutSec 2 | Out-Null;Start-Process 'http://127.0.0.1:5173/';break}catch{Start-Sleep 1}}"
 ) else (
-  start "" cmd /c "timeout /t 5 /nobreak >nul & start http://127.0.0.1:8000/"
+  start "" powershell -NoProfile -WindowStyle Hidden -Command "for($i=0;$i -lt 180;$i++){try{Invoke-WebRequest 'http://127.0.0.1:8000/' -UseBasicParsing -TimeoutSec 2 | Out-Null;Start-Process 'http://127.0.0.1:8000/';break}catch{Start-Sleep 1}}"
 )
 
 echo Titan is starting. Close this window, or press Ctrl+C, to stop it.
