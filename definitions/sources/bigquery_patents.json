@@ -1,0 +1,13 @@
+{
+  "id": "bigquery_patents",
+  "kind": "connector",
+  "status": "planned",
+  "title": "Google Patents Public Data on BigQuery (free tier)",
+  "covers": ["worldwide patent publications with full text and citations"],
+  "query_style": "SQL over public tables; a bytes-scanned guard keeps queries inside the free tier.",
+  "weak_at": ["anything that is not a patent document"],
+  "time_behavior": "Publication and filing dates as columns; refresh cadence is the dataset's.",
+  "evidence_tier": "secondary (aggregator)",
+  "limits": "1 TB of queries a month free; needs a bytes-scanned guard.",
+  "route_when": null
+}

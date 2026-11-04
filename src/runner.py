@@ -26,6 +26,7 @@ from skills.temporal.display import short_date
 from skills.temporal import periods as tperiods
 from skills.temporal.extract import DateFact, best_date, parse_date
 import corroboration
+import sources
 from config import DATA_DIR, LLM_MODE
 from evidence import MIN_QUOTE_CHARS, EvidenceStore, normalize, widen_quote
 from runs import RunStore
@@ -398,6 +399,7 @@ class Runner:
             "You plan web research that must be backed by quoted evidence.\n"
             f"TODAY: {now.describe()}. Your training data is older than today, so never assume what the current year is.\n"
             f"TIME SCOPE (worked out from the question): {scope.guidance(now)}\n"
+            f"SEARCH ADVICE: {sources.search_advice()}\n"
             f"QUESTION: {s['question']}\n\n"
             f"Return: subject (what the question is about); company (the official company name only if the "
             f"company's own website matters, else null); page_categories (company pages worth reading, from "
@@ -589,6 +591,11 @@ class Runner:
         active = self.registry.list_active()
         room = b["max_api_calls"] - s["api_calls_used"]
         if not active or room <= 0:
+            return {}
+        routed = sources.route([m.connector_id for _, m in active], s["question"], " ".join(s["checklist"]))
+        self.runs.emit(rid, "api_lookup", "sources_routed", routed)
+        active = [(v, m) for v, m in active if m.connector_id in routed["offered"]]
+        if not active:     # no approved connector fits this question: skip the model call, the web search carries on
             return {}
         docs = "\n".join(
             f"{m.connector_id}: {m.description}\n" + "\n".join(

@@ -1,0 +1,13 @@
+{
+  "id": "epo",
+  "kind": "connector",
+  "status": "planned",
+  "title": "European Patent Office Open Patent Services",
+  "covers": ["European and international patent publications, families and legal status"],
+  "query_style": "Publication number or applicant plus year; results arrive as XML.",
+  "weak_at": ["anything that is not a patent document"],
+  "time_behavior": "Filing, priority and publication dates are separate and all matter.",
+  "evidence_tier": "regulatory (primary)",
+  "limits": "Needs the user's developer-portal registration and token; fair-use quota.",
+  "route_when": null
+}

@@ -1,0 +1,13 @@
+{
+  "id": "sec_edgar",
+  "kind": "connector",
+  "status": "active",
+  "title": "SEC EDGAR (filings and XBRL financial facts)",
+  "covers": ["US public companies' 10-K, 10-Q and 8-K filings", "reported financials with their exact period (start, end, fiscal year, fiscal period, form, filing date)", "company identifiers (CIK, ticker, fiscal year end)"],
+  "query_style": "Needs a CIK or ticker named in the question; never guessed. Ask for one concept (revenue, net income) and the fiscal year or period.",
+  "weak_at": ["private companies", "companies outside the US filing system", "opinions, leadership news, product details", "anything not yet filed"],
+  "time_behavior": "Every fact carries its own period and filing date. Fiscal years differ by company (Apple ends in September, Microsoft in June).",
+  "evidence_tier": "regulatory (primary): the company's own filing",
+  "limits": "Declared contact in the User-Agent and a shared request budget (see docs/api-usage-rules.md). No crawling of sec.gov.",
+  "route_when": "\\b(10-?K|10-?Q|8-?K|SEC|EDGAR|CIK|filings?|filed|fiscal|revenues?|net sales|net income|earnings|EPS|shares outstanding|balance sheet|annual report|quarterly report|total assets|ticker)\\b"
+}

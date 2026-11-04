@@ -1,0 +1,13 @@
+{
+  "id": "web",
+  "kind": "search",
+  "status": "active",
+  "title": "Web search (SearXNG + Brave) and page fetch",
+  "covers": ["current events and news", "company facts such as founding, leadership, products and pricing", "definitions and background", "documentation and release notes"],
+  "query_style": "Plain words with the exact names and the year when the question is about the current state. Short queries beat long ones. One fact per query.",
+  "weak_at": ["exact figures that sit in tables (recall is unreliable)", "private-company financials", "anything that must be exact to the digit without a primary page"],
+  "time_behavior": "Pages carry publish dates (collected by the temporal skill); search can be limited to day, week, month or year.",
+  "evidence_tier": "secondary, or primary when the page is on the company's own domain",
+  "limits": "Politeness limits per host; some sites block automated fetches (HTTP 403).",
+  "route_when": null
+}

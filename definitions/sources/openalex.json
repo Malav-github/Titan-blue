@@ -1,0 +1,13 @@
+{
+  "id": "openalex",
+  "kind": "connector",
+  "status": "active",
+  "title": "OpenAlex (scholarly works, authors, institutions)",
+  "covers": ["papers: title, year, authors, venue, DOI, citation counts", "authors and their affiliations", "institutions and research topics"],
+  "query_style": "A paper title in quotes, an author name, or a DOI. Free-text title search first, then fetch the record by its OpenAlex id.",
+  "weak_at": ["news and anything recent that is not a publication", "exact submission days (the arXiv page states them)", "companies, products, people outside research"],
+  "time_behavior": "Gives publication year and date; a preprint and its journal version can carry different years.",
+  "evidence_tier": "secondary (an aggregator of publisher records)",
+  "limits": "Free daily quota tied to the API key; polite request rate.",
+  "route_when": "\\b(papers?|study|studies|authors?|co-?authors?|cited|citations?|journal|arXiv|DOI|researchers?|research|publications?|published in|peer[- ]reviewed|preprint|dissertation|h-index|institutions?)\\b"
+}
