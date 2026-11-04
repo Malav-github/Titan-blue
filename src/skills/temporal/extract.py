@@ -111,8 +111,11 @@ _META_KINDS = {
     "og:article:modified_time": "modified", "datemodified": "modified", "last-modified": "modified",
     "dcterms.modified": "modified", "dc.date.modified": "modified",
 }
-_JSONLD_KINDS = {"datePublished": "published", "uploadDate": "published", "dateCreated": "created", "dateModified": "modified",
+_JSONLD_KINDS = {"datePublished": "published", "uploadDate": "media_upload", "dateCreated": "created", "dateModified": "modified",
                  "startDate": "event_start", "endDate": "event_end"}
+# Dates inside these objects describe the object (an embedded video's upload date), not the page that carries them.
+_JSONLD_SKIP_TYPES = {"VideoObject", "AudioObject", "ImageObject", "MediaObject", "Comment", "Review", "Person", "Organization",
+                      "Product", "Offer", "Rating", "Question", "Answer"}
 _BYLINE = re.compile(
     r"(?P<verb>published|posted|released|filed|submitted on|last updated|updated|last modified|last revised|last edited on|revised)"
     r"\s*(?:on|:|-)?\s*(?P<date>(?:[A-Z][a-z]{2,8}\.? \d{1,2}(?:st|nd|rd|th)?,? \d{4})|(?:\d{1,2}(?:st|nd|rd|th)? [A-Z][a-z]{2,8}\.?,? \d{4})|"
@@ -124,10 +127,17 @@ _URL_DAY = re.compile(r"/((?:19|20)\d{2})[/-](\d{1,2})[/-](\d{1,2})(?:/|-|$|\.)"
 _URL_MONTH = re.compile(r"/((?:19|20)\d{2})/(\d{2})/")
 
 
+def _types(node: dict) -> set[str]:
+    t = node.get("@type")
+    return {t} if isinstance(t, str) else {x for x in t if isinstance(x, str)} if isinstance(t, list) else set()
+
+
 def _walk(node, found: list, depth: int = 0) -> None:
     if depth > 6 or len(found) >= MAX_PER_PAGE:
         return
     if isinstance(node, dict):
+        if _types(node) & _JSONLD_SKIP_TYPES:
+            return
         for key, value in node.items():
             if key in _JSONLD_KINDS and isinstance(value, str):
                 found.append((_JSONLD_KINDS[key], value, f"jsonld:{key}"))
@@ -200,6 +210,15 @@ def collect_dates(html: str | None = None, headers: dict | None = None, url: str
 CONTENT_KINDS = ("published", "created", "modified", "event_start", "event_end", "time_element", "url_date", "search_result")
 _DISPLAY_ORDER = ("published", "created", "search_result", "url_date", "time_element", "modified")
 _PRECISION_RANK = {"datetime": 3, "day": 2, "month": 1, "year": 0}
+# Most authoritative first. A page's own structured "published" statement outranks a byline, which outranks weaker signals.
+_ORIGIN_ORDER = ("jsonld:datePublished", "meta:article:published_time", "meta:og:article:published_time", "meta:datepublished",
+                 "meta:publishdate", "meta:publish_date", "meta:pubdate", "meta:publication_date", "meta:citation_publication_date",
+                 "meta:citation_date", "meta:dc.date.issued", "meta:dcterms.issued", "meta:dc.date", "meta:date", "text:byline",
+                 "meta:citation_online_date")
+
+
+def _origin_rank(origin: str) -> int:
+    return _ORIGIN_ORDER.index(origin) if origin in _ORIGIN_ORDER else len(_ORIGIN_ORDER)
 
 
 def is_content_date(fact: DateFact) -> bool:
@@ -209,11 +228,11 @@ def is_content_date(fact: DateFact) -> bool:
 
 def best_date(facts: list[DateFact]) -> DateFact | None:
     """The date to show as 'this source is dated': a published date if there is one, then weaker signals. Within a kind,
-    the most precise date, then the earliest."""
+    the most authoritative origin wins; only then the most precise date, then the earliest."""
     for kind in _DISPLAY_ORDER:
         same = [f for f in facts if f.kind == kind and is_content_date(f)]
         if same:
-            return sorted(same, key=lambda f: (-_PRECISION_RANK[f.precision], f.value))[0]
+            return sorted(same, key=lambda f: (_origin_rank(f.origin), -_PRECISION_RANK[f.precision], f.value))[0]
     return None
 
 

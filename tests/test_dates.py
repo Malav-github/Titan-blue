@@ -307,3 +307,37 @@ def test_a_fixed_fact_is_never_called_stale_however_old_its_source(env):
     assert report["time"]["applies"] is False and report["time"]["stale"] is False
     assert not any("out of date" in w for w in report["warnings"])
     assert report["established"][0]["source_date"] == "2001-01-01T00:00:00"      # but the date is still shown
+
+
+# --- a real failure: an embedded video's upload date was taken as the page's published date --------------------------
+
+CNBC_STYLE = """<html><head>
+<meta property="article:published_time" content="2026-05-26T13:15:01+0000">
+<meta property="article:modified_time" content="2026-05-26T17:27:27+0000">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[
+ {"@type":"NewsArticle","datePublished":"2026-05-26T13:15:01+0000","dateCreated":"2026-05-26T13:15:01+0000","dateModified":"2026-05-26T17:27:27+0000",
+  "video":{"@type":"VideoObject","uploadDate":"2023-06-21T18:20:56+0000","datePublished":"2023-06-21T18:20:56+0000"}},
+ {"@type":"VideoObject","uploadDate":"2023-06-21T18:20:56+0000"}]}</script></head>
+<body><time datetime="2026-05-26T13:15:01+0000">May 26</time></body></html>"""
+
+
+def test_dates_of_an_embedded_video_are_not_the_dates_of_the_page():
+    facts = collect_dates(CNBC_STYLE, None, "https://www.cnbc.com/2026/05/26/dropbox-ceo.html", retrieved_at=ANCHOR)
+    assert not any(f.value.startswith("2023-06-21") for f in facts)                 # nothing from inside the VideoObject
+    assert best_date(facts).value == "2026-05-26T13:15:01+00:00" and best_date(facts).origin == "jsonld:datePublished"
+    assert newest_content_date(facts).value.startswith("2026-05-26")                # age is judged by day, so same-day times tie
+
+
+def test_an_upload_date_found_at_the_top_level_is_kept_but_never_taken_as_the_page_date():
+    html = '<script type="application/ld+json">{"uploadDate":"2023-06-21"}</script>'
+    facts = collect_dates(html, None, "", retrieved_at=ANCHOR)
+    assert [(f.kind, f.value) for f in facts] == [("media_upload", "2023-06-21")]
+    assert best_date(facts) is None and not is_content_date(facts[0])
+
+
+def test_the_most_authoritative_origin_wins_over_an_earlier_but_weaker_date():
+    facts = [DateFact("published", "2010-01-01", "day", "", "text:byline"), DateFact("published", "2026-05-26", "day", "", "jsonld:datePublished"),
+             DateFact("published", "2009-01-01", "day", "", "meta:citation_online_date")]
+    assert best_date(facts).value == "2026-05-26"                                    # not simply the earliest
+    arxiv = collect_dates(ARXIV, None, "", retrieved_at=ANCHOR)
+    assert best_date(arxiv).origin == "meta:citation_date" and best_date(arxiv).value == "2017-06-12"
