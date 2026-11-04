@@ -32,4 +32,5 @@ def test_openalex_list_works_is_archived_and_never_contains_the_key(openalex, tm
     store = EvidenceStore(tmp_path / "e.db")
     sha = store.ingest(fetched)
     text = Path(store.get_source(sha)["text_path"]).read_text(encoding="utf-8")
-    assert len(json.loads(text)["results"]) == 2
+    assert text.startswith("OpenAlex works") and "Work 2:" in text           # claims are quoted from the readable form
+    assert len(json.loads(Path(fetched["archive_path"]).read_text(encoding="utf-8"))["results"]) == 2   # the raw response is what is archived

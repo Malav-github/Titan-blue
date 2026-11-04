@@ -25,6 +25,7 @@ const DESCRIBE: Record<string, [string, Fmt]> = {
   sources_routed: ['Chose data sources', (p) => `offered: ${(p.offered ?? []).join(', ') || 'none'}${(p.hidden ?? []).length ? ` · skipped: ${p.hidden.map((h: { id: string }) => h.id).join(', ')}` : ''}`],
   claim_time_recorded: ['Read when it holds', (p) => `#${p.claim_id} ${(p.items ?? []).map((i: { kind: string; value: string }) => `${i.kind} ${i.value}`.trim()).join(', ')}`],
   claims_malformed: ['Dropped a malformed claim', (p) => `${p.count} from ${short(p.source_url, 50)}: ${short(p.examples?.[0]?.problem ?? 'the model left out a required field', 90)}`],
+  quote_narrowed: ['Shortened a long quote', (p) => `${p.from_chars} characters → “${short(p.to, 80)}” (same source text, so it is still word for word)`],
   quote_widened: ['Extended a short quote', (p) => `“${short(p.from, 40)}” → “${short(p.to, 70)}” (same source text, so it is still word for word)`],
   claim_rejected: ['Rejected a claim', (p) => `${p.reason}: “${short(p.quote, 60)}”`],
   support_checked: ['Checked a claim against its quote', (p) => `claim #${p.claim_id}: ${String(p.verdict).replace('_', ' ')}`],

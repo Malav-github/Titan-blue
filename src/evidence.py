@@ -172,6 +172,30 @@ def widen_quote(text: str, quote: str, min_chars: int = MIN_QUOTE_CHARS) -> str 
     return wider if min_chars <= len(wider) <= MAX_WIDEN_CHARS and q in wider else None
 
 
+MAX_QUOTE_CHARS = 400         # longer quotes bury the fact in text that confuses the support check
+NARROW_TO = 300
+
+
+def narrow_quote(quote: str, claim_text: str, value: str = "", limit: int = NARROW_TO) -> str | None:
+    """An over-long quote (a whole author block pasted for "first author") is cut down to a window of the same words, centred
+    on where the claim's own terms appear in it, so the support check sees the fact and not four thousand characters around it.
+    The result is a substring of the original, so it is still verbatim. Returns None when the quote needs no narrowing."""
+    q = normalize(quote)
+    if len(q) <= MAX_QUOTE_CHARS:
+        return None
+    words = sorted({w for w in re.findall(r"[\w@.\-]+", f"{value} {claim_text}") if len(w) >= 4}, key=len, reverse=True)
+    low = q.lower()
+    anchor = next((low.find(w.lower()) for w in words if w.lower() in low), 0)
+    start = max(0, anchor - 40)
+    if start:
+        start = q.find(" ", start) + 1 or start             # begin at a word boundary
+    end = min(len(q), start + limit)
+    if end < len(q) and (cut := q.rfind(" ", start, end)) > start:
+        end = cut                                           # end at a word boundary
+    narrowed = q[start:end].strip()
+    return narrowed if MIN_QUOTE_CHARS <= len(narrowed) < len(q) else None
+
+
 def _sha256_file(path: str) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 

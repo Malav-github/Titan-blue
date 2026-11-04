@@ -28,7 +28,7 @@ from skills.temporal.extract import DateFact, best_date, parse_date
 import corroboration
 import sources
 from config import DATA_DIR, LLM_MODE
-from evidence import MIN_QUOTE_CHARS, EvidenceStore, normalize, widen_quote
+from evidence import MIN_QUOTE_CHARS, EvidenceStore, narrow_quote, normalize, widen_quote
 from runs import RunStore
 from connectors.caller import ConnectorError, call_api
 from connectors.registry import ConnectorRegistry
@@ -680,6 +680,10 @@ class Runner:
                     # `value` is metadata the model often fills badly; blank it rather than lose a verifiable claim
                     value = c.value if normalize(c.value) and normalize(c.value) in normalize(f"{c.quote} {c.claim}") else ""
                     quote = c.quote
+                    if narrowed := narrow_quote(quote, c.claim, value):
+                        self.runs.emit(rid, "extract", "quote_narrowed", {"from_chars": len(normalize(quote)), "to": narrowed,
+                                                                           "source_url": source["final_url"]})
+                        quote = narrowed
                     if len(normalize(quote)) < MIN_QUOTE_CHARS and (wider := widen_quote(text, quote)):
                         self.runs.emit(rid, "extract", "quote_widened", {"from": normalize(quote), "to": wider,
                                                                          "source_url": source["final_url"]})

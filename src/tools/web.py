@@ -8,6 +8,7 @@ import trafilatura
 from bs4 import BeautifulSoup
 
 import policy
+from connectors.render import render_json
 from skills.temporal.extract import collect_dates
 from tools.archive import USER_AGENT, archive_bytes, check_public_url, clip, utc_now
 
@@ -92,11 +93,14 @@ def extract_text(body: bytes, content_type: str, encoding: str, url: str) -> tup
     if content_type == "application/pdf" or body[:5] == b"%PDF-":
         return ".pdf", pdf_text(body)
     if content_type.startswith("text/") or content_type.endswith("json"):
-        return (".json" if content_type.endswith("json") else ".txt"), body.decode(encoding, errors="replace")
+        text = body.decode(encoding, errors="replace")
+        if content_type.endswith("json") and (readable := render_json(url, text)):
+            return ".json", readable        # the raw JSON stays archived and hashed; claims are quoted from this readable form
+        return (".json" if content_type.endswith("json") else ".txt"), text
     return ".bin", ""
 
 
-EXTRACTOR = f"trafilatura {trafilatura.__version__} + meta-v1 + pypdf"
+EXTRACTOR = f"trafilatura {trafilatura.__version__} + meta-v1 + pypdf + json-render-v1"
 
 
 def fetch_url(url: str, max_chars: int = 12_000, timeout: float = 20.0) -> dict:
