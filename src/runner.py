@@ -368,12 +368,12 @@ class Runner:
             g.add_node(name, getattr(self, f"n_{name}"))
         g.add_edge(START, "plan")
         g.add_edge("plan", "approve")
-        g.add_conditional_edges("approve", lambda s: "discover" if s.get("approved") else END)
+        g.add_conditional_edges("approve", lambda s: "discover" if s.get("approved") else END, {"discover": "discover", END: END})
         for a, b in (("discover", "select"), ("select", "fetch"), ("fetch", "api_lookup"), ("api_lookup", "extract"),
                      ("extract", "check"), ("check", "assess")):
             g.add_edge(a, b)
-        g.add_conditional_edges("assess", self._more_or_report)
-        g.add_conditional_edges("capability", lambda s: "discover" if s.get("capability_id") else "report")
+        g.add_conditional_edges("assess", self._more_or_report, {"capability": "capability", "discover": "discover", "report": "report"})
+        g.add_conditional_edges("capability", lambda s: "discover" if s.get("capability_id") else "report", {"discover": "discover", "report": "report"})
         g.add_edge("report", END)
         return g.compile(checkpointer=checkpointer)
 

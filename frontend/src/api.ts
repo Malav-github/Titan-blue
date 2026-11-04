@@ -232,9 +232,14 @@ export interface Models {
   tasks: { task: string; model: string; installed: boolean }[]
 }
 
+export interface HarnessNode { id: string; label: string; col: number; row: number; does: string }
+export interface HarnessEdge { from: string; to: string; label?: string; bend?: number; via?: [number, number][] }
+export interface Harness { id: string; title: string; nodes: HarnessNode[]; edges: HarnessEdge[] }
+
 // ---- calls -------------------------------------------------------------------------------------
 
 export const api = {
+  harness: () => request<Harness>('/api/harness/research'),
   templates: () => request<Template[]>('/api/templates'),
   runTemplate: (id: string, inputs: Record<string, unknown>) =>
     post<{ kind: 'research' | 'capability'; run_id?: string; request_id?: string }>(`/api/templates/${id}/run`, { inputs }),

@@ -13,6 +13,7 @@ import { RequestPage } from './pages/RequestPage'
 import { Evidence } from './pages/Evidence'
 import { ClaimPage } from './pages/ClaimPage'
 import { HealthPage } from './pages/HealthPage'
+import { HowItWorks } from './pages/HowItWorks'
 import { PageHeader } from './ui'
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } } })
@@ -35,6 +36,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="connectors/requests/:id" element={<RequestPage />} />
             <Route path="evidence" element={<Evidence />} />
             <Route path="evidence/:id" element={<ClaimPage />} />
+            <Route path="how-it-works" element={<HowItWorks />} />
             <Route path="health" element={<HealthPage />} />
             <Route path="*" element={<NotFound />} />
           </Route>

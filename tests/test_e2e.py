@@ -162,6 +162,29 @@ def test_research_from_form_to_verified_claim(page: Page):
     expect(page.get_by_text("from meta:article:published_time")).to_be_visible()
 
 
+def test_the_flowchart_shows_every_step_and_explains_one_on_click(page: Page):
+    page.goto("/how-it-works")
+    steps = ["Plan", "Your approval", "Search", "Choose pages", "Read pages", "Data sources", "Extract claims", "Check claims",
+             "Assess coverage", "Ask for a data source", "Report"]
+    for name in steps:
+        expect(page.get_by_role("button", name=name).first).to_be_visible()
+    page.get_by_role("button", name="Assess coverage").click()
+    expect(page.get_by_text("Code, not a model, decides which facts are established.")).to_be_visible()
+
+
+def test_a_run_page_lights_up_the_flowchart(page: Page):
+    page.goto("/apps/research-company")
+    page.get_by_label("Company or subject").fill("Acme")
+    page.get_by_label("What do you want to know?").fill("What does the Starter plan cost?")
+    page.get_by_role("button", name="Start research").click()
+    expect(page.get_by_role("heading", name="Approve the plan")).to_be_visible()
+    expect(page.get_by_role("button", name="Your approval: waiting for you")).to_be_visible()      # the pause is visible on the chart
+    page.get_by_role("button", name="Approve and run").click()
+    expect(page.locator("header").get_by_text("Finished", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Plan: done")).to_be_visible()
+    expect(page.get_by_role("button", name="Report: done")).to_be_visible()
+
+
 def test_runs_page_shows_the_run_and_evidence_lists_the_claim(page: Page):
     page.goto("/runs")
     expect(page.get_by_role("link", name="What does the Starter plan cost?").first).to_be_visible()

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { api, type Approval, type Report, type ReportClaim, type RunDetail, type RunEvent } from '../api'
 import { ACTIVE, describeEvent, lines, time } from '../format'
+import { Flow } from '../Flow'
 import { useRunEvents } from '../useRunEvents'
 import { Badge, Button, Card, ErrorNote, ExternalLink, Loading, Mono, PageHeader, StatusBadge, TierBadge, timeChips } from '../ui'
 
@@ -203,6 +204,7 @@ export function RunPage() {
           </div>
         )}
         {data.status === 'stopped' && <Card><p className="text-sm">This run was stopped before doing any research.</p></Card>}
+        <Flow events={events} status={data.status} />
         {data.report && <ReportView report={data.report} />}
         <Timeline events={events} working={working} />
       </div>

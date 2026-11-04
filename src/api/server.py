@@ -23,6 +23,7 @@ from api.executors import MAX_UPLOAD_BYTES, save_upload
 from api.jobs import Jobs, run_kind
 from api.registry import BlockDef, Registry
 from api.templates import Template, load_templates
+import harness
 import policy as usage_policy
 from app import ollama_models
 from evidence import EvidenceStore
@@ -149,6 +150,11 @@ def create_app(registry: Registry | None = None, token: str | None = None,
                     reasons.append(results[key])
             out[b.id] = {"available": not reasons, "reasons": reasons}
         return out
+
+    @app.get("/api/harness/research")
+    def research_harness():
+        """The research pipeline as nodes and edges, for the flowchart."""
+        return harness.research()
 
     @app.get("/api/port-types")
     def port_types():

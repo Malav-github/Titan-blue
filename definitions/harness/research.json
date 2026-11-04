@@ -1,0 +1,142 @@
+{
+  "id": "research",
+  "title": "How a research run works",
+  "nodes": {
+    "plan": {
+      "label": "Plan",
+      "col": 0,
+      "row": 0,
+      "does": "Works out today's date and the time frame of the question, then drafts the web searches and the list of facts that must be established."
+    },
+    "approve": {
+      "label": "Your approval",
+      "col": 1,
+      "row": 0,
+      "does": "Pauses so you can edit the searches and the fact list, or reject the run. Nothing is searched before you approve."
+    },
+    "discover": {
+      "label": "Search",
+      "col": 2,
+      "row": 0,
+      "does": "Runs the web searches (limited to recent pages for questions about the current state) and finds the company's own pages. Every search records its exact time."
+    },
+    "select": {
+      "label": "Choose pages",
+      "col": 3,
+      "row": 0,
+      "does": "Picks which results are worth reading, shown each page's date and today's date."
+    },
+    "fetch": {
+      "label": "Read pages",
+      "col": 4,
+      "row": 0,
+      "does": "Downloads each page, archives the exact bytes with a hash, collects every date the page carries, and falls back to a browser for pages that need one."
+    },
+    "api_lookup": {
+      "label": "Data sources",
+      "col": 4,
+      "row": 1,
+      "does": "A deterministic router offers only the approved connectors that fit the question; the model picks calls from those, and identifiers it was never given are refused."
+    },
+    "extract": {
+      "label": "Extract claims",
+      "col": 3,
+      "row": 1,
+      "does": "A model proposes claims with word-for-word quotes. Code rejects any quote not found in the archived page, shortens over-long ones, and reads each claim's period and event dates."
+    },
+    "check": {
+      "label": "Check claims",
+      "col": 2,
+      "row": 1,
+      "does": "A second check judges whether the quote really supports the claim and whether it answers the needed fact. Code downgrades a claim whose numbers or period are not in the quote."
+    },
+    "assess": {
+      "label": "Assess coverage",
+      "col": 1,
+      "row": 1,
+      "does": "Code, not a model, decides which facts are established. It loops back to search while facts are missing and budget remains."
+    },
+    "capability": {
+      "label": "Ask for a data source",
+      "col": 1,
+      "row": 2,
+      "does": "When pages are mostly unusable or the plan needs structured data, the run pauses and asks you to add a connector or carry on without."
+    },
+    "report": {
+      "label": "Report",
+      "col": 0,
+      "row": 1,
+      "does": "Writes a short answer from the verified claims only, labels how well each fact is backed, flags disagreements and stale sources, and lists what was not established."
+    }
+  },
+  "edges": [
+    {
+      "from": "plan",
+      "to": "approve"
+    },
+    {
+      "from": "approve",
+      "to": "discover",
+      "label": "approved"
+    },
+    {
+      "from": "discover",
+      "to": "select"
+    },
+    {
+      "from": "select",
+      "to": "fetch"
+    },
+    {
+      "from": "fetch",
+      "to": "api_lookup"
+    },
+    {
+      "from": "api_lookup",
+      "to": "extract"
+    },
+    {
+      "from": "extract",
+      "to": "check"
+    },
+    {
+      "from": "check",
+      "to": "assess"
+    },
+    {
+      "from": "assess",
+      "to": "discover",
+      "label": "gaps remain"
+    },
+    {
+      "from": "assess",
+      "to": "capability",
+      "label": "pages unusable"
+    },
+    {
+      "from": "assess",
+      "to": "report",
+      "label": "done"
+    },
+    {
+      "from": "capability",
+      "to": "discover",
+      "label": "source added",
+      "via": [
+        [
+          2.5,
+          2
+        ],
+        [
+          2.5,
+          0.55
+        ]
+      ]
+    },
+    {
+      "from": "capability",
+      "to": "report",
+      "label": "carry on"
+    }
+  ]
+}
