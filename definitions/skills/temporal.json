@@ -1,0 +1,9 @@
+{
+  "name": "temporal",
+  "version": 1,
+  "summary": "Time awareness for planning, search and data collection: today's date, the time scope of a question, the dates sources carry, reporting periods, and event timelines.",
+  "settings": {
+    "latest_max_age_days": 548,
+    "default_recency_for_latest": "year"
+  }
+}

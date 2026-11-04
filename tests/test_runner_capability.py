@@ -170,5 +170,6 @@ def test_the_plan_prompt_forbids_answers_and_process_steps_in_the_checklist(env)
 
     make_runner(env, Plan=plan).start("What does Acme charge?", budgets={"max_iterations": 1})
     text = seen[0]
-    assert "Never write the answer or any value" in text and "Never add steps such as verifying" in text
-    assert "at most 6" in text and "3 to 6" not in text        # no longer forced to pad a one-fact question
+    assert "never the answer or any value" in text and "Never add steps such as verifying" in text
+    assert "ONE item for each distinct fact the question itself asks for" in text and "Never add related facts" in text
+    assert "3 to 6" not in text                                   # a real model padded one-fact questions to six items

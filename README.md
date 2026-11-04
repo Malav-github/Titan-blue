@@ -25,6 +25,8 @@ Built and tested:
 
 - **Web app** ([frontend/](frontend)): React, TypeScript, Tailwind. Home (ready-made apps drawn from [definitions/templates/](definitions/templates)), Runs (live step-by-step history, plan approval, the result with each claim's quote and source), Data sources (the approval gate, with the provider's terms linked and facts from third-party sites labelled), Evidence (every claim with its quote in its page), Health. Build once with `cd frontend && npm install && npm run build`, then `uv run python serve.py` and open http://127.0.0.1:8000/. For development run `npm run dev` in `frontend/` (it proxies to the API and adds the session token itself). Browser tests: `uv run pytest tests/test_e2e.py`.
 
+- **Temporal skill, phase 1** ([src/skills/temporal/](src/skills/temporal), [definitions/skills/temporal.json](definitions/skills/temporal.json)): planning is told today's date and time zone (`TITAN_TIMEZONE`, default this computer's), a deterministic classifier works out the time scope of each question (fixed past fact, named date, latest, reporting period, timeline), queries get today's year and a recency window when the question is about the current state, every search records its exact time, and the page chooser sees each page's date. Later phases (date collection, reporting periods, timelines) follow the plan in the project notes.
+
 Not built yet: Lab (run any single block), Models and Chat screens, more templates, the block canvas, templates, chat endpoint, evidence and connector endpoints, skills loader, search reranker, A2A, MCP-server integration.
 
 ## Requirements

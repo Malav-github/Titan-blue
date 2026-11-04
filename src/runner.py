@@ -21,6 +21,8 @@ from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 import tracing
+from skills.temporal import clock as tclock, intent as tintent
+from skills.temporal.display import short_date
 from config import DATA_DIR, LLM_MODE
 from evidence import MIN_QUOTE_CHARS, EvidenceStore, normalize, widen_quote
 from runs import RunStore
@@ -55,7 +57,7 @@ class Plan(BaseModel):
     company: str | None = Field(None, description="Official company name if its own website matters, else null")
     page_categories: list[Literal[CATEGORY_NAMES]] = Field(default_factory=list)
     queries: list[str] = Field(description="Distinct web search queries")
-    checklist: list[str] = Field(description="3 to 6 specific facts that would fully answer the question")
+    checklist: list[str] = Field(description="One short label per distinct fact the question itself asks for (1 to 6), nothing more")
     needs_data_source: str | None = Field(
         None, description="If answering needs structured data from a particular kind of source that ordinary web pages "
                           "cannot give (e.g. patent family records, SEC filings), name it; otherwise null")
@@ -139,6 +141,7 @@ class Summary(BaseModel):
 class State(TypedDict, total=False):
     run_id: str
     question: str
+    time_scope: dict           # what time frame the question is about (skills.temporal.intent.TimeScope.as_dict())
     subject: str
     company: str | None
     entity_name: str
@@ -242,7 +245,8 @@ def top_chunks(text: str, terms: set[str], k: int) -> list[str]:
 class Runner:
     def __init__(self, store: EvidenceStore | None = None, runs: RunStore | None = None,
                  checkpoint_path: str | None = None, llm_factory=None, search_fn=None, fetch_fn=None,
-                 render_fn=None, registry=None, call_api_fn=None):
+                 render_fn=None, registry=None, call_api_fn=None, now_fn=None):
+        self.now_fn = now_fn                  # replaceable clock (tests, replays); None means the real one
         self.store = store or EvidenceStore()
         self.runs = runs or RunStore()
         self.registry = registry or ConnectorRegistry()
@@ -385,19 +389,24 @@ class Runner:
 
     def n_plan(self, s: State) -> dict:
         rid, b = s["run_id"], s["budgets"]
+        now = tclock.now(self.now_fn)
+        scope = tintent.classify(s["question"], now)
         prompt = (
             "You plan web research that must be backed by quoted evidence.\n"
+            f"TODAY: {now.describe()}. Your training data is older than today, so never assume what the current year is.\n"
+            f"TIME SCOPE (worked out from the question): {scope.guidance(now)}\n"
             f"QUESTION: {s['question']}\n\n"
             f"Return: subject (what the question is about); company (the official company name only if the "
             f"company's own website matters, else null); page_categories (company pages worth reading, from "
             f"{list(CATEGORY_NAMES)}; empty if no company); queries (up to {b['max_queries_per_iter']} distinct "
             f"web search queries using exact names and distinguishing terms; search operators work, e.g. "
-            f"site:patents.google.com, site:sec.gov, or a company's own domain); checklist (as few facts as fully "
-            f"answer the question, at most 6; one is right for a one-fact question). Write each checklist item as a short "
-            f"label for a fact a web page could state directly (a name, number, date or place), for example 'Year Dropbox was "
-            f"founded' or 'Legal name of the company with CIK 0000320193'. Never write the answer or any value, even if you "
-            f"think you know it: your guess may be wrong and would mislead the search. Never add steps such as verifying, "
-            f"cross-checking or confirming sources; the system does that itself."
+            f"site:patents.google.com, site:sec.gov, or a company's own domain); checklist: ONE item for each distinct fact "
+            f"the question itself asks for, and nothing more. A question that asks one thing gets exactly ONE item; a question "
+            f"that asks for a name, a ticker and a date gets THREE. Never add related facts the question did not ask for "
+            f"(headquarters, funding, history, sources). Write each item as a short label for the fact (for example 'Year "
+            f"Dropbox was founded'), never the answer or any value, even if you think you know it: your guess may be wrong and "
+            f"would mislead the search. Never add steps such as verifying, cross-checking or confirming sources; the system "
+            f"does that itself."
         )
         plan = self._ask("plan", Plan, prompt, rid, "plan")
         warnings = list(s.get("warnings", []))
@@ -407,14 +416,16 @@ class Runner:
         subject = s.get("subject") or plan.subject
         entity_name = plan.company or subject
         queries = _dedupe(plan.queries)[:b["max_queries_per_iter"]] or [s["question"]]
+        queries = _dedupe(tintent.apply_year_terms(queries, scope, now))[:b["max_queries_per_iter"]]
         checklist = _dedupe(plan.checklist)[:6] or [s["question"]]
         categories = [c for c in plan.page_categories if plan.company]
         entity_id = self.store.add_entity(entity_name, kind="subject")
         self.runs.emit(rid, "plan", "plan_ready", {"subject": subject, "company": plan.company,
-                       "page_categories": categories, "queries": queries, "checklist": checklist})
+                       "page_categories": categories, "queries": queries, "checklist": checklist,
+                       "today": now.as_dict(), "time_scope": scope.as_dict()})
         return {"subject": subject, "company": plan.company, "entity_name": entity_name, "entity_id": entity_id,
                 "page_categories": categories, "queries": queries, "checklist": checklist, "warnings": warnings,
-                "data_need": plan.needs_data_source}
+                "data_need": plan.needs_data_source, "time_scope": scope.as_dict()}
 
     def n_approve(self, s: State) -> dict:
         if not s.get("require_approval") or s.get("approved"):
@@ -465,7 +476,9 @@ class Runner:
             if searches >= b["max_searches"]:
                 self.runs.emit(rid, "discover", "budget_reached", {"budget": "max_searches"})
                 break
-            result = self.search_fn(query, max_results=8)
+            recency = (s.get("time_scope") or {}).get("recency")
+            result = self.search_fn(query, max_results=8, **({"recency": recency} if recency else {}))
+            searched_at = tclock.now(self.now_fn).as_dict()
             searches += 1
             for hit in result["results"]:
                 key = normalize_url(hit["url"])
@@ -473,10 +486,12 @@ class Runner:
                 known = found.get(key)
                 if known is None or (known["tier"] != "primary" and official):
                     found[key] = {"url": hit["url"], "title": hit["title"], "snippet": hit["snippet"],
-                                  "score": hit["score"], "tier": "primary" if official else "secondary"}
+                                  "score": hit["score"], "tier": "primary" if official else "secondary",
+                                  "published": hit.get("published")}
             self.runs.emit(rid, "discover", "search_done", {
                 "query": query, "results": len(result["results"]), "search_id": result["search_id"],
-                "providers": result["providers"], "warnings": result["warnings"]})
+                "providers": result["providers"], "warnings": result["warnings"],
+                "searched_at": searched_at, "recency": recency})
             warnings += [f"search '{query}': {w}" for w in result["warnings"]]
 
         fetched = set(s["fetched_keys"])
@@ -493,9 +508,18 @@ class Runner:
             self.runs.emit(rid, "select", "sources_selected", {"urls": [], "reason": "nothing to fetch or budget spent"})
             return {"selected": []}
         shown = cands[:15]
-        listing = "\n".join(f"{i}. [{c['tier']}] {c['title'][:90]} - {c['url']}\n   {c['snippet'][:160]!r}"
-                            for i, c in enumerate(shown, 1))
-        prompt = (f"QUESTION: {s['question']}\nFACTS NEEDED: {s['checklist']}\n\nCandidate pages:\n{listing}\n\n"
+        now = tclock.now(self.now_fn)
+        scope = s.get("time_scope") or {}
+        listing = "\n".join(
+            f"{i}. [{c['tier']}] {c['title'][:90]} - {c['url']}"
+            f"{' (dated ' + short_date(c.get('published')) + ')' if short_date(c.get('published')) else ' (no date shown)'}"
+            f"\n   {c['snippet'][:160]!r}" for i, c in enumerate(shown, 1))
+        timing = ""
+        if scope:
+            ts = tintent.TimeScope(scope["intent"], scope["recent"], scope["recency"], tuple(scope["years"]), scope["window_start"],
+                                   scope["window_end"], scope["period_sensitive"], tuple(scope["reasons"]))
+            timing = f"TODAY: {now.describe()}.\nTIME SCOPE: {ts.guidance(now)}\n"
+        prompt = (f"{timing}QUESTION: {s['question']}\nFACTS NEEDED: {s['checklist']}\n\nCandidate pages:\n{listing}\n\n"
                   f"Choose up to {n} pages most likely to state the needed facts. Prefer the organisation's own "
                   f"pages and primary documents (patent records, filings) over commentary. Return their numbers, best first.")
         choice = self._ask("select", Selection, prompt, rid, "select")

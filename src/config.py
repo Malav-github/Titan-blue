@@ -29,6 +29,9 @@ SEARXNG_URL = os.getenv("SEARXNG_URL", "http://127.0.0.1:8080")
 BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "")
 SEARCH_TIMEOUT = float(os.getenv("SEARCH_TIMEOUT", "20"))
 
+# Time zone used to tell planning what today is (an IANA name such as Asia/Kolkata); empty means this computer's own zone
+TIMEZONE = os.getenv("TITAN_TIMEZONE", "").strip()
+
 # Identifies Titan to sites it fetches from (email or URL). Wikimedia and some other sites reject bots without one.
 TITAN_CONTACT = os.getenv("TITAN_CONTACT", "").strip()
 
@@ -96,6 +99,13 @@ def validate_config():
         errors.append(f"LLM_MODE must be 'standard' or 'power', got '{LLM_MODE}'")
     if LLM_MODE == "power" and not ANTHROPIC_API_KEY.startswith("sk-"):
         errors.append("LLM_MODE=power requires ANTHROPIC_API_KEY in .env")
+
+    if TIMEZONE:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            ZoneInfo(TIMEZONE)
+        except (ZoneInfoNotFoundError, ValueError):
+            errors.append(f"TITAN_TIMEZONE={TIMEZONE!r} is not a time zone name (use for example Asia/Kolkata); the computer's zone is used")
 
     unknown = set(SEARCH_PROVIDERS) - {"searxng", "brave", "brave_context"}
     if unknown:
