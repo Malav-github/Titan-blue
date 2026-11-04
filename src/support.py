@@ -14,6 +14,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from evidence import EvidenceStore, normalize
+from skills.temporal.periods import period_conflicts
 
 PROMPT_VERSION = "support-v1"
 CONTEXT_CHARS = 700
@@ -88,6 +89,12 @@ def check_claim(store: EvidenceStore, claim_id: int, llm=None, checker: str | No
         verdict = "partially_supported"
         unsupported.append(f"not in the quote: {', '.join(missing)}")
         reasoning += " [Downgraded by code: the claim contains tokens absent from the quote.]"
+
+    if mismatch := period_conflicts(claim["claim_text"], claim["quote"]):   # a claim about one period cannot rest on a quote about another
+        unsupported += mismatch
+        if verdict == "supported":
+            verdict = "partially_supported"
+            reasoning += " [Downgraded by code: the claim's period differs from the quote's.]"
 
     check_id = store.record_support_check(claim_id, verdict, reasoning, unsupported, missing, str(checker), PROMPT_VERSION)
     return {"check_id": check_id, "claim_id": claim_id, "verdict": verdict, "reasoning": reasoning,

@@ -22,6 +22,7 @@ const DESCRIBE: Record<string, [string, Fmt]> = {
   source_rendered: ['Read a page in the browser', (p) => short(p.url, 70)],
   source_failed: ['Could not read a page', (p) => `${short(p.url, 60)}: ${short(p.error, 80)}`],
   claim_recorded: ['Recorded a claim', (p) => `#${p.claim_id} ${short(p.claim, 100)}`],
+  claim_time_recorded: ['Read when it holds', (p) => `#${p.claim_id} ${(p.items ?? []).map((i: { kind: string; value: string }) => `${i.kind} ${i.value}`.trim()).join(', ')}`],
   claims_malformed: ['Dropped a malformed claim', (p) => `${p.count} from ${short(p.source_url, 50)}: ${short(p.examples?.[0]?.problem ?? 'the model left out a required field', 90)}`],
   quote_widened: ['Extended a short quote', (p) => `“${short(p.from, 40)}” → “${short(p.to, 70)}” (same source text, so it is still word for word)`],
   claim_rejected: ['Rejected a claim', (p) => `${p.reason}: “${short(p.quote, 60)}”`],

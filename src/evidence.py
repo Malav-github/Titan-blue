@@ -27,7 +27,7 @@ MIN_QUOTE_CHARS = 20
 HINT_CONTEXT = 60
 
 TABLES = ["sources", "fetches", "entities", "claims", "rejected_claims", "claim_events", "contradictions", "source_dates",
-          "support_checks"]
+          "support_checks", "claim_time"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -107,6 +107,19 @@ CREATE TABLE IF NOT EXISTS source_dates (   -- the dates a page carried when it 
     relative INTEGER NOT NULL DEFAULT 0,   -- 1 if it was worked out from words like "3 days ago"
     collected_at TEXT NOT NULL,
     UNIQUE (source_sha256, kind, value, origin)
+);
+CREATE TABLE IF NOT EXISTS claim_time (     -- when a claim holds: its period, and the dates of the events it describes
+    time_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    claim_id INTEGER NOT NULL REFERENCES claims(claim_id),
+    kind TEXT NOT NULL,                    -- period | announced | effective | filed | closed | completed | as_of | start | end | round_date | pending
+    value TEXT NOT NULL,                   -- a date, or a period label; '' for pending
+    precision TEXT NOT NULL,               -- year | month | day | datetime | period | ''
+    raw TEXT NOT NULL,                     -- the words it was read from
+    origin TEXT NOT NULL,                  -- quote | context | source_date | edgar_xbrl
+    derived INTEGER NOT NULL DEFAULT 0,    -- 1 if taken from another date (e.g. "announced today" dated by the page)
+    detail TEXT NOT NULL DEFAULT '',       -- JSON: basis, span, fiscal_year, quarter, start, end, comparison, change
+    created_at TEXT NOT NULL, created_by TEXT NOT NULL,
+    UNIQUE (claim_id, kind, value, origin)
 );
 CREATE VIEW IF NOT EXISTS current_claims AS
     SELECT * FROM claims WHERE claim_id NOT IN (SELECT claim_id FROM claim_events);
@@ -349,6 +362,29 @@ class EvidenceStore:
             db.execute("INSERT INTO claim_events (claim_id, event, related_claim_id, reason, created_at, created_by)"
                        " VALUES (?,?,?,?,?,?)", (claim_id, event, related, reason, utc_now(), created_by))
 
+    def record_claim_time(self, claim_id: int, items: list, created_by: str = "agent") -> int:
+        """Attach time attributes (a period, event dates) to a claim after it was recorded. Rows are never changed; an
+        attribute already recorded is skipped. Items are TimeItem objects or their `as_row()` dicts. Returns how many were new."""
+        added = 0
+        with closing(self._connect()) as db, db:
+            for it in items:
+                r = it if isinstance(it, dict) else it.as_row()
+                added += db.execute(
+                    "INSERT OR IGNORE INTO claim_time (claim_id, kind, value, precision, raw, origin, derived, detail,"
+                    " created_at, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (claim_id, r["kind"], r["value"], r["precision"], r["raw"], r["origin"], int(r.get("derived", 0)),
+                     r.get("detail", ""), utc_now(), created_by)).rowcount
+        return added
+
+    def claim_times(self, claim_id: int) -> list[dict]:
+        with closing(self._connect()) as db:
+            rows = [dict(r) for r in db.execute(
+                "SELECT kind, value, precision, raw, origin, derived, detail FROM claim_time WHERE claim_id = ? ORDER BY time_id",
+                (claim_id,))]
+        for r in rows:
+            r["detail"] = json.loads(r["detail"]) if r["detail"] else {}
+        return rows
+
     def flag_contradiction(self, claim_a: int, claim_b: int, note: str, created_by: str = "agent") -> None:
         a, b = sorted((claim_a, claim_b))
         with closing(self._connect()) as db, db:
@@ -393,7 +429,14 @@ class EvidenceStore:
                 "entity": dict(entity), "source_url": source["final_url"], "fetched_at": source["first_fetched_at"],
                 "before": text[max(0, lo - context):lo], "after": text[hi:hi + context],
                 "support_checks": self.support_checks_for(claim_id), "status": [dict(e) for e in events],
-                "source_dates": self.source_dates(claim["source_sha256"])}
+                "source_dates": self.source_dates(claim["source_sha256"]), "times": self.claim_times(claim_id),
+                "conflicts": self.conflicts_for(claim_id)}
+
+    def conflicts_for(self, claim_id: int) -> list[dict]:
+        with closing(self._connect()) as db:
+            return [dict(r) for r in db.execute(
+                "SELECT CASE WHEN claim_a = ? THEN claim_b ELSE claim_a END AS other_claim, note FROM contradictions"
+                " WHERE claim_a = ? OR claim_b = ? ORDER BY contradiction_id", (claim_id, claim_id, claim_id))]
 
     def counts(self) -> dict:
         with closing(self._connect()) as db:

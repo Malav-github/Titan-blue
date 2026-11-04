@@ -19,6 +19,20 @@ export function Badge({ tone = 'neutral', children }: { tone?: Tone; children: R
   return <span className={cx('inline-block rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap', TONES[tone])}>{children}</span>
 }
 
+/** Short chips for a claim's time attributes: its period, event dates, and a note when the statement is about the future. */
+export function timeChips(times: { kind: string; value: string; derived: number; detail: { change?: string; comparison?: string; end?: string } }[] = []) {
+  const chips: { text: string; tone: Tone }[] = []
+  for (const t of times) {
+    if (t.kind === 'period') {
+      const cmp = t.detail.change ? ` · ${t.detail.change}${t.detail.comparison ? ' ' + t.detail.comparison.toUpperCase() : ''}` : ''
+      chips.push({ text: `Period: ${t.value}${t.detail.end && !t.value.includes(t.detail.end) ? ` (to ${t.detail.end})` : ''}${cmp}`, tone: 'info' })
+    } else if (t.kind === 'pending') chips.push({ text: 'Describes a planned change', tone: 'warn' })
+    else chips.push({ text: `${t.kind.replace('_', ' ')} ${t.value}${t.derived ? ' (from the page date)' : ''}`, tone: 'neutral' })
+  }
+  if (times.some((t) => t.kind === 'pending') && !times.some((t) => t.kind === 'effective')) chips.push({ text: 'No effective date stated', tone: 'warn' })
+  return chips
+}
+
 const STATUS: Record<string, [Tone, string]> = {
   queued: ['neutral', 'Queued'], running: ['info', 'Running'], awaiting_approval: ['warn', 'Needs your approval'],
   needs_capability: ['warn', 'Needs a data source'], finished: ['ok', 'Finished'], stopped: ['neutral', 'Stopped'],

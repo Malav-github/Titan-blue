@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom'
 import { api, type Approval, type Report, type ReportClaim, type RunDetail, type RunEvent } from '../api'
 import { ACTIVE, describeEvent, lines, time } from '../format'
 import { useRunEvents } from '../useRunEvents'
-import { Badge, Button, Card, ErrorNote, ExternalLink, Loading, Mono, PageHeader, StatusBadge, TierBadge } from '../ui'
+import { Badge, Button, Card, ErrorNote, ExternalLink, Loading, Mono, PageHeader, StatusBadge, TierBadge, timeChips } from '../ui'
 
 function ClaimCard({ claim, caution }: { claim: ReportClaim; caution?: boolean }) {
   return (
@@ -16,8 +16,12 @@ function ClaimCard({ claim, caution }: { claim: ReportClaim; caution?: boolean }
         <Badge tone={claim.source_date ? 'neutral' : 'warn'}>
           {claim.source_date ? `Dated ${claim.source_date.slice(0, 10)}${claim.source_date_kind ? ` (${claim.source_date_kind.replace('_', ' ')})` : ''}` : 'No date found'}
         </Badge>
+        {claim.corroboration && <Badge tone={claim.corroboration === 'sources disagree' ? 'bad' : claim.corroboration === 'single source, unconfirmed' ? 'warn' : 'ok'}>{claim.corroboration}</Badge>}
         <ExternalLink href={claim.source_url}>{claim.source_url}</ExternalLink>
       </p>
+      {timeChips(claim.times).length > 0 && (
+        <p className="mt-2 flex flex-wrap gap-2">{timeChips(claim.times).map((c, i) => <Badge key={i} tone={c.tone}>{c.text}</Badge>)}</p>
+      )}
       {claim.why && <p className="mt-2 text-sm text-muted">Why: {claim.why}</p>}
       <p className="mt-2 text-sm"><Link className="text-accent underline" to={`/evidence/${claim.claim_id}`}>Open claim #{claim.claim_id} with the quote in context</Link></p>
     </li>
@@ -38,6 +42,11 @@ function ReportView({ report }: { report: Report }) {
       {report.time?.stale && (
         <div role="alert" className="rounded-md border border-warn bg-warn-bg p-3 text-sm text-warn">
           This question asks for the current state, but the sources behind the answer are old or undated. Treat it as possibly out of date.
+        </div>
+      )}
+      {(report.conflicts ?? []).length > 0 && (
+        <div role="alert" className="rounded-md border border-bad bg-bad-bg p-3 text-sm text-bad">
+          Sources disagree: {(report.conflicts ?? []).map((c) => c.note).join('; ')}. Both are shown below; neither was chosen for you.
         </div>
       )}
       {report.summary ? (

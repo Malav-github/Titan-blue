@@ -83,7 +83,19 @@ export interface ReportClaim {
   source_tier: string
   source_date?: string | null
   source_date_kind?: string | null
+  times?: ClaimTime[]
+  corroboration?: string
+  as_of?: string | null
   why?: string
+}
+export interface ClaimTime {
+  kind: string
+  value: string
+  precision: string
+  raw: string
+  origin: string
+  derived: number
+  detail: { label?: string; basis?: string; span?: string; fiscal_year?: number; quarter?: number; half?: number; start?: string; end?: string; comparison?: string; change?: string; form?: string }
 }
 export interface Report {
   question: string
@@ -94,6 +106,7 @@ export interface Report {
   not_supported: number
   unchecked: number
   off_topic: number
+  conflicts?: { claims: number[]; note: string }[]
   gaps: string[]
   rejected_quotes: number
   warnings: string[]
@@ -200,6 +213,8 @@ export interface ClaimDetail {
   created_at: string
   created_by: string
   support_checks: { verdict: string; reasoning: string; checker: string; created_at: string; unsupported_parts: string; missing_tokens: string }[]
+  times?: ClaimTime[]
+  conflicts?: { other_claim: number; note: string }[]
   source_dates?: { kind: string; value: string; precision: string; raw: string; origin: string; relative: number }[]
 }
 export interface Health {

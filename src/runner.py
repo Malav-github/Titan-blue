@@ -23,7 +23,9 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 import tracing
 from skills.temporal import clock as tclock, freshness, intent as tintent, setting as temporal_setting
 from skills.temporal.display import short_date
+from skills.temporal import periods as tperiods
 from skills.temporal.extract import DateFact, best_date, parse_date
+import corroboration
 from config import DATA_DIR, LLM_MODE
 from evidence import MIN_QUOTE_CHARS, EvidenceStore, normalize, widen_quote
 from runs import RunStore
@@ -680,6 +682,7 @@ class Runner:
                     if r["ok"]:
                         new_ids.append(r["claim_id"])
                         items[str(r["claim_id"])] = c.needed_fact - 1
+                        self._record_times(rid, r["claim_id"])
                         self.runs.emit(rid, "extract", "claim_recorded", {
                             "claim_id": r["claim_id"], "claim": c.claim, "value": value, "quote": normalize(c.quote),
                             "needed_fact": c.needed_fact,
@@ -691,6 +694,26 @@ class Runner:
                             "closest_passage": r.get("closest_passage"), "source_url": source["final_url"]})
         return {"new_claim_ids": new_ids, "all_claim_ids": s["all_claim_ids"] + new_ids, "rejected": rejected,
                 "new_sources": [], "claim_items": items}
+
+    def _record_times(self, rid: str, claim_id: int) -> None:
+        """Attach period and event dates to a recorded claim, read by code from its quote and the text around it (never by a
+        model). A claim carried by an SEC XBRL fact gets its exact period from the fact itself."""
+        try:
+            claim = self.store.get_claim(claim_id)
+            source = self.store.get_source(claim["source_sha256"])
+            text = normalize(Path(source["text_path"]).read_text(encoding="utf-8"))
+            lo, hi = claim["quote_start"], claim["quote_end"]
+            best = best_date(self._source_dates(claim["source_sha256"]))
+            published = best.value if best and best.kind == "published" else None
+            items = tperiods.analyse(claim["quote"], f"{text[max(0, lo - 250):lo]} {text[hi:hi + 250]}", published,
+                                     best.precision if best else None)
+            if exact := tperiods.period_from_xbrl(text, lo, hi):
+                items = exact + [i for i in items if i.kind != "period"]
+            if items and self.store.record_claim_time(claim_id, items, created_by=f"runner:{rid[:8]}"):
+                self.runs.emit(rid, "extract", "claim_time_recorded", {
+                    "claim_id": claim_id, "items": [{"kind": i.kind, "value": i.value, "origin": i.origin} for i in items][:8]})
+        except Exception as exc:   # time attributes are an addition: a failure here must not lose the claim
+            self.runs.emit(rid, "extract", "claim_time_failed", {"claim_id": claim_id, "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
 
     def n_check(self, s: State) -> dict:
         rid = s["run_id"]
@@ -754,7 +777,8 @@ class Runner:
             best = best_date(self._source_dates(claim["source_sha256"]))
             row = {"claim_id": cid, "claim": claim["claim_text"], "value": claim["value"], "quote": claim["quote"],
                    "source_url": source["final_url"], "source_sha256": claim["source_sha256"],
-                   "source_tier": claim["source_tier"], "as_of": claim["as_of"],
+                   "source_tier": claim["source_tier"], "fact": s["claim_items"].get(str(cid)),
+                   "times": self.store.claim_times(cid),
                    "source_date": best.value if best else None, "source_date_kind": best.kind if best else None}
             checks = self.store.support_checks_for(cid)
             if checks:
@@ -764,6 +788,20 @@ class Runner:
                 verdict = "off_topic"  # true to its source, but does not answer a needed fact
             rows[verdict].append(row)
         gaps = [t for i, t in enumerate(s["checklist"]) if i not in s["covered"]]
+
+        # how well is each fact backed, and do the sources agree? (labels only: nothing is hidden)
+        shown = rows["supported"] + rows["partially_supported"]
+        conflicts = corroboration.find_conflicts(rows["supported"])
+        for c in conflicts:
+            a, b = c["claims"]
+            self.store.flag_contradiction(a, b, c["note"], created_by=f"runner:{rid[:8]}")
+        disputed = {cid for c in conflicts for cid in c["claims"]}
+        sites: dict = {}
+        for r in rows["supported"]:
+            sites.setdefault(r["fact"], set()).add(corroboration.site(r["source_url"]))
+        for r in shown:
+            r["corroboration"] = corroboration.label(r, sites.get(r["fact"], set()), r["claim_id"] in disputed)
+            r["as_of"] = next((t["value"] for t in r["times"] if t["kind"] == "as_of"), None)
 
         # how old is what the answer rests on? (established claims first; partial ones only if nothing is established)
         basis = rows["supported"] or rows["partially_supported"]
@@ -787,7 +825,7 @@ class Runner:
             "question": s["question"], "subject": s["subject"], "summary": summary, "invalid_citations_removed": dropped,
             "established": rows["supported"], "partial": rows["partially_supported"],
             "not_supported": len(rows["not_supported"]), "unchecked": len(rows["unchecked"]),
-            "off_topic": len(rows["off_topic"]),
+            "off_topic": len(rows["off_topic"]), "conflicts": conflicts,
             "gaps": gaps, "rejected_quotes": s["rejected"], "warnings": s.get("warnings", []) + ([time_warning] if time_warning else []),
             "time": timing,
             "budget_used": {"searches": s["searches_used"], "fetches": s["fetches_used"], "iterations": s["iteration"]},
