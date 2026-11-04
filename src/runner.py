@@ -86,6 +86,7 @@ class ExtractedClaim(BaseModel):
 class Extraction(BaseModel):
     claims: list[ExtractedClaim] = Field(default_factory=list)
     _dropped: ClassVar[int] = 0      # malformed claims dropped since the last take_dropped() (telemetry only)
+    _examples: ClassVar[list] = []   # what was dropped, so a dropped claim is never invisible
 
     @model_validator(mode="before")
     @classmethod
@@ -97,8 +98,11 @@ class Extraction(BaseModel):
             for item in data["claims"]:
                 try:
                     good.append(ExtractedClaim.model_validate(item))
-                except ValidationError:
+                except ValidationError as exc:
                     cls._dropped += 1
+                    if len(cls._examples) < 3:
+                        cls._examples.append({"claim": str(item)[:300], "problem": "; ".join(
+                            f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}" for e in exc.errors()[:2])})
             data = {**data, "claims": good}
         return data
 
@@ -106,6 +110,11 @@ class Extraction(BaseModel):
     def take_dropped(cls) -> int:
         n, cls._dropped = cls._dropped, 0
         return n
+
+    @classmethod
+    def take_dropped_examples(cls) -> list:
+        ex, cls._examples = cls._examples, []
+        return ex
 
 
 class FollowUps(BaseModel):
@@ -184,7 +193,11 @@ def relevance_prompt(question: str, fact: str, claim_text: str) -> str:
     return (
         f"QUESTION: {question}\nNEEDED FACT: {fact}\n\nCLAIM: {claim_text}\n"
         "Does the claim itself state the needed fact (or a direct part of it)? Answer false for claims that "
-        "are merely related, generic, about something else, or about the document rather than the fact."
+        "are merely related, generic, about something else, or about the document rather than the fact. "
+        "A value written as a code or in a compact format (0926 for a September 26 date, 3571 for an industry code, "
+        "a year, an id) DOES state the fact when the claim gives it for the thing the fact asks about; do not require "
+        "it to be spelled out in words. But an identifier of the document itself (its arXiv id, URL or catalogue "
+        "number) is about the document, not the fact, unless the fact asks for that identifier."
     )
 
 
@@ -593,10 +606,11 @@ class Runner:
             text = normalize(Path(source["text_path"]).read_text(encoding="utf-8"))
             for chunk in top_chunks(text, terms, b["max_chunks_per_source"]):
                 prompt = extraction_prompt(s["question"], needed, source["final_url"], chunk)
-                Extraction.take_dropped()
+                Extraction.take_dropped(), Extraction.take_dropped_examples()
                 extraction = self._ask("extract", Extraction, prompt, rid, "extract")
                 if dropped := Extraction.take_dropped():
-                    self.runs.emit(rid, "extract", "claims_malformed", {"count": dropped, "source_url": source["final_url"]})
+                    self.runs.emit(rid, "extract", "claims_malformed", {
+                        "count": dropped, "source_url": source["final_url"], "examples": Extraction.take_dropped_examples()})
                 for c in (extraction.claims if extraction else [])[:5]:
                     key = (sha, normalize(c.quote))
                     if key in seen:

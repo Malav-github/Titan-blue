@@ -128,11 +128,11 @@ def extract_claims(ctx: Context, inputs: dict, settings: dict) -> dict:
     ids, rejected = [], 0
     seen: set[str] = set()
     for chunk in top_chunks(text, _terms(need), 3):
-        Extraction.take_dropped()
+        Extraction.take_dropped(), Extraction.take_dropped_examples()
         extraction = _ask(ctx, "extract", Extraction, extraction_prompt(need, f"1. {need}", source["final_url"], chunk),
                           settings.get("model") or None)
         if dropped := Extraction.take_dropped():
-            ctx.emit("claims_malformed", {"count": dropped, "source_url": source["final_url"]})
+            ctx.emit("claims_malformed", {"count": dropped, "source_url": source["final_url"], "examples": Extraction.take_dropped_examples()})
         for c in (extraction.claims if extraction else [])[:5]:
             key = normalize(c.quote)
             if key in seen:

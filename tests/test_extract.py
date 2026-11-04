@@ -73,6 +73,9 @@ def test_a_malformed_claim_is_dropped_and_the_rest_of_the_batch_survives():
     assert [c.claim for c in out.claims] == [GOOD["claim"], "Another fact stated in full."]
     assert Extraction.take_dropped() == 3
     assert Extraction.take_dropped() == 0                       # reading resets the count
+    examples = Extraction.take_dropped_examples()
+    assert 1 <= len(examples) <= 3 and "needed_fact" in examples[0]["problem"] and examples[0]["claim"]   # what was dropped is recorded
+    assert Extraction.take_dropped_examples() == []
 
 
 def test_nothing_is_repaired_or_invented_when_dropping():

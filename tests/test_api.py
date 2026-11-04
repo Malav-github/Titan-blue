@@ -178,19 +178,62 @@ def test_token_is_generated_and_persisted(tmp_path, monkeypatch):
     assert server.load_token() == "from-env"
 
 
-def test_wsl_keep_alive_starts_a_sleeping_process_and_tolerates_a_missing_wsl():
+class FakeProc:
+    def __init__(self, pid=4242):
+        self.pid, self.terminated = pid, False
+
+    def terminate(self):
+        self.terminated = True
+
+
+def test_wsl_keep_alive_starts_one_helper_and_remembers_it(tmp_path):
+    from api.wsl import COMMAND, keep_awake
+    pid_file, started = tmp_path / "wsl.pid", []
+    killed = []
+    helper = keep_awake(popen=lambda cmd, **kw: started.append(cmd) or FakeProc(), pid_file=pid_file, alive=lambda pid: False,
+                        run=lambda cmd, **kw: killed.append(cmd))
+    assert started == [COMMAND] == [["wsl", "-e", "sleep", "infinity"]]
+    assert pid_file.read_text() == "4242"
+    helper.terminate()
+    assert ["taskkill", "/PID", "4242", "/T", "/F"] in killed         # the whole tree, not just the parent
+    assert helper.proc.terminated and not pid_file.exists()
+
+
+def test_a_helper_left_behind_by_a_killed_server_is_reused_not_duplicated(tmp_path):
     from api.wsl import keep_awake
-    seen = []
+    pid_file, calls = tmp_path / "wsl.pid", []
+    pid_file.write_text("777")
+    helper = keep_awake(popen=lambda *a, **k: calls.append("started") or FakeProc(), pid_file=pid_file, alive=lambda pid: pid == 777,
+                        run=lambda cmd, **kw: calls.append(cmd))
+    assert "started" not in calls and helper.pid == 777              # nothing new was started
+    helper.terminate()
+    assert ["taskkill", "/PID", "777", "/T", "/F"] in calls and not pid_file.exists()
 
-    class Proc:
-        def terminate(self):
-            seen.append("terminated")
 
-    started = keep_awake(popen=lambda cmd, **kw: seen.append(cmd) or Proc())
-    assert seen[0] == ["wsl", "-e", "sleep", "infinity"]
-    started.terminate()
-    assert seen[-1] == "terminated"
+def test_a_stale_or_garbled_pid_file_starts_a_fresh_helper(tmp_path):
+    from api.wsl import keep_awake
+    for content in ("999", "not a number", ""):
+        pid_file = tmp_path / "wsl.pid"
+        pid_file.write_text(content)
+        helper = keep_awake(popen=lambda *a, **k: FakeProc(5), pid_file=pid_file, alive=lambda pid: False)
+        assert helper.pid == 5 and pid_file.read_text() == "5"
+
+
+def test_a_missing_wsl_is_tolerated(tmp_path):
+    from api.wsl import helper_alive, keep_awake
 
     def missing(cmd, **kw):
         raise FileNotFoundError("wsl")
-    assert keep_awake(popen=missing) is None
+    assert keep_awake(popen=missing, pid_file=tmp_path / "p", alive=lambda pid: False) is None
+    assert helper_alive(1, run=missing) is False
+
+
+def test_helper_alive_recognises_only_a_wsl_process_with_that_id():
+    from api.wsl import helper_alive
+
+    class Out:
+        def __init__(self, text):
+            self.stdout = text
+    assert helper_alive(10968, run=lambda *a, **k: Out('"wsl.exe","10968","Console","1","3,000 K"')) is True
+    assert helper_alive(10968, run=lambda *a, **k: Out('"chrome.exe","10968","Console","1","3,000 K"')) is False   # id reused by another program
+    assert helper_alive(10968, run=lambda *a, **k: Out("INFO: No tasks are running which match the specified criteria.")) is False

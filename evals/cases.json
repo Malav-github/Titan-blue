@@ -1,113 +1,398 @@
 {
   "_note": "Frozen test material for comparing local models. Passages are real pages captured on 2026-11-02 (see evals/passages). Quotes are resolved against the passage text: {text} is an exact substring, {from,to} is an inclusive span.",
-
   "extraction": [
     {
       "id": "lyb_plant",
       "passage": "lyb_moretec.txt",
       "url": "https://www.lyondellbasell.com/en/our-solutions/circular-low-carbon-solutions/chemical-recycling/moretec/",
       "question": "What are the capacity and location of LyondellBasell's first commercial-scale MoReTec plant, and what public funding did it receive?",
-      "checklist": ["Capacity of the first commercial MoReTec plant", "Location of the first commercial MoReTec plant", "Public funding received for the plant"],
-      "expected": ["50,000 metric tons", "Wesseling", "40 million"]
+      "checklist": [
+        "Capacity of the first commercial MoReTec plant",
+        "Location of the first commercial MoReTec plant",
+        "Public funding received for the plant"
+      ],
+      "expected": [
+        "50,000 metric tons",
+        "Wesseling",
+        "40 million"
+      ]
     },
     {
       "id": "kit_origin",
       "passage": "bioplastics_kit.txt",
       "url": "https://www.bioplasticsmagazine.com/en/news/meldungen/20221118-Wesseling.php",
       "question": "Who did LyondellBasell develop MoReTec with, when did that start, and where is the pilot plant?",
-      "checklist": ["Research partner for MoReTec", "Year the MoReTec research started", "Location of the MoReTec pilot plant"],
-      "expected": ["Karlsruhe Institute of Technology", "2018", "Ferrara"]
+      "checklist": [
+        "Research partner for MoReTec",
+        "Year the MoReTec research started",
+        "Location of the MoReTec pilot plant"
+      ],
+      "expected": [
+        "Karlsruhe Institute of Technology",
+        "2018",
+        "Ferrara"
+      ]
     },
     {
       "id": "patent_record",
       "passage": "google_patent_wo2021037851.txt",
       "url": "https://patents.google.com/patent/WO2021037851A1/en",
       "question": "Who is the assignee of patent WO2021037851A1, what is its title, and which publications belong to its family?",
-      "checklist": ["Assignee of WO2021037851A1", "Title of WO2021037851A1", "Members of the patent family of WO2021037851A1"],
-      "expected": ["Basell Poliolefine Italia", "Plastic depolymerization using fluorinated alumina", "US20210061972A1"]
+      "checklist": [
+        "Assignee of WO2021037851A1",
+        "Title of WO2021037851A1",
+        "Members of the patent family of WO2021037851A1"
+      ],
+      "expected": [
+        "Basell Poliolefine Italia",
+        "Plastic depolymerization using fluorinated alumina",
+        "US20210061972A1"
+      ]
     },
     {
       "id": "irrelevant_page",
       "passage": "example_domain.txt",
       "url": "https://example.com/",
       "question": "Which patent families belong to LyondellBasell's MoReTec technology?",
-      "checklist": ["Patent families of MoReTec", "Assignee of those patents"],
+      "checklist": [
+        "Patent families of MoReTec",
+        "Assignee of those patents"
+      ],
       "expected": [],
       "negative": true
     }
   ],
-
   "support": [
-    {"id": "family_members", "passage": "google_patent_wo2021037851.txt", "expected": ["supported"],
-     "claim": "WO2021037851A1, US20210061972A1, EP4021964A1 and CN114341243A are members of one patent family (family ID 72659156).", "value": "WO2021037851A1",
-     "quote": {"from": "Family ID=72659156", "to": "WO (1) | WO2021037851A1 (en) |"}},
-    {"id": "assignee", "passage": "google_patent_wo2021037851.txt", "expected": ["supported"],
-     "claim": "The assignee of WO2021037851A1 is Basell Poliolefine Italia SRL.", "value": "Basell Poliolefine Italia SRL",
-     "quote": {"text": "DC.contributor (assignee): Basell Poliolefine Italia SRL"}},
-    {"id": "title", "passage": "google_patent_wo2021037851.txt", "expected": ["supported"],
-     "claim": "WO2021037851A1 is titled 'Plastic depolymerization using fluorinated alumina'.", "value": "Plastic depolymerization using fluorinated alumina",
-     "quote": {"text": "DC.title: Plastic depolymerization using fluorinated alumina"}},
-    {"id": "kit_2018", "passage": "bioplastics_kit.txt", "expected": ["supported"],
-     "claim": "LyondellBasell began research on chemical recycling with the Karlsruhe Institute of Technology in 2018, which proved the MoReTec technology at laboratory scale.", "value": "2018",
-     "quote": {"from": "In 2018, LyondellBasell began conducting base research", "to": "at laboratory scale."}},
-    {"id": "capacity", "passage": "lyb_moretec.txt", "expected": ["supported"],
-     "claim": "LYB's first commercial-scale MoReTec facility, MRT-1, will be at Wesseling, Germany, with an annual capacity of 50,000 metric tons.", "value": "50,000 metric tons",
-     "quote": {"from": "Our first commercial-scale catalytic chemical recycling facility", "to": "50,000 metric tons per year."}},
-    {"id": "grant", "passage": "lyb_moretec.txt", "expected": ["supported"],
-     "claim": "LYB was selected to receive a EUR 40 million EU Innovation Fund grant to support its MoReTec-1 plant in Wesseling, Germany.", "value": "40 million",
-     "quote": {"from": "LYB has been selected to receive", "to": "plant in Wesseling, Germany"}},
-    {"id": "link_via_title", "passage": "google_patent_wo2021037851.txt", "expected": ["not_supported", "partially_supported"],
-     "claim": "WO2021037851A1 and its family are the patents underpinning LyondellBasell's MoReTec technology.", "value": "WO2021037851A1",
-     "quote": {"text": "DC.title: Plastic depolymerization using fluorinated alumina"}},
-    {"id": "link_via_lyb_page", "passage": "lyb_moretec.txt", "expected": ["not_supported", "partially_supported"],
-     "claim": "WO2021037851A1 and its family are the patents underpinning LyondellBasell's MoReTec technology.", "value": "WO2021037851A1",
-     "quote": {"text": "Using our proprietary catalytic chemical recycling technology, MoReTec, we transform post-consumer plastic waste"}},
-    {"id": "moretec_catalyst", "passage": "google_patent_wo2021037851.txt", "expected": ["not_supported", "partially_supported"],
-     "claim": "MoReTec uses a fluorinated alumina catalyst.", "value": "fluorinated alumina",
-     "quote": {"text": "A method of depolymerizing plastics using a fluorinated alumina catalyst is described herein."}},
-    {"id": "wrong_capacity", "passage": "lyb_moretec.txt", "expected": ["not_supported", "partially_supported"],
-     "claim": "LYB's first commercial MoReTec facility will have an annual capacity of 500,000 metric tons.", "value": "500,000 metric tons",
-     "quote": {"from": "Our first commercial-scale catalytic chemical recycling facility", "to": "50,000 metric tons per year."}},
-    {"id": "wrong_grant", "passage": "lyb_moretec.txt", "expected": ["not_supported", "partially_supported"],
-     "claim": "LYB received a EUR 400 million EU grant for its MoReTec-1 plant.", "value": "400 million",
-     "quote": {"from": "LYB has been selected to receive", "to": "plant in Wesseling, Germany"}},
-    {"id": "patents_claim", "passage": "lyb_moretec.txt", "expected": ["not_supported", "partially_supported"],
-     "claim": "LyondellBasell holds patents covering the MoReTec technology.", "value": "patents",
-     "quote": {"text": "Using our proprietary catalytic chemical recycling technology, MoReTec, we transform post-consumer plastic waste"}},
-    {"id": "invented_date", "passage": "lyb_moretec.txt", "expected": ["not_supported", "partially_supported"],
-     "claim": "The MoReTec plant at Wesseling will start operating in 2024.", "value": "2024",
-     "quote": {"from": "Our first commercial-scale catalytic chemical recycling facility", "to": "50,000 metric tons per year."}}
-  ],
-
-  "relevance": [
-    {"id": "unrelated_patent", "question": "Which patent families belong to LyondellBasell's MoReTec technology?", "fact": "Patent families or publication numbers that belong to MoReTec",
-     "claim": "The patent BRPI0714639B1 is filed under Basell Poliolefine Italia S.R.L.", "expected": false},
-    {"id": "generic_description", "question": "Which patent families belong to LyondellBasell's MoReTec technology?", "fact": "Patent families or publication numbers that belong to MoReTec",
-     "claim": "MoReTec is a proprietary catalytic chemical recycling technology.", "expected": false},
-    {"id": "how_it_works", "question": "Which patent families belong to LyondellBasell's MoReTec technology?", "fact": "Patent families or publication numbers that belong to MoReTec",
-     "claim": "LyondellBasell is developing a proprietary molecular recycling technology called MoReTec, which uses a catalyst in the pyrolysis process.", "expected": false},
-    {"id": "partner", "question": "Who developed MoReTec?", "fact": "Who developed MoReTec and with which research partner",
-     "claim": "LyondellBasell has collaborated with Germany's Karlsruhe Institute of Technology (KIT) to prove the efficiency of the MoReTec technology at laboratory scale.", "expected": true},
-    {"id": "family_members", "question": "Which publications belong to the family of WO2021037851A1?", "fact": "Members of the patent family of WO2021037851A1",
-     "claim": "WO2021037851A1, US20210061972A1, EP4021964A1 and CN114341243A belong to the same patent family.", "expected": true},
-    {"id": "plant_capacity", "question": "Where is the first MoReTec plant and how big is it?", "fact": "Capacity and location of MoReTec's first commercial plant",
-     "claim": "The first commercial-scale MoReTec plant, MRT-1, is at Wesseling, Germany and is designed for 50,000 metric tons per year.", "expected": true},
-    {"id": "grant_vs_capacity", "question": "Where is the first MoReTec plant and how big is it?", "fact": "Capacity and location of MoReTec's first commercial plant",
-     "claim": "LYB was selected to receive a EUR 40 million EU Innovation Fund grant.", "expected": false},
-    {"id": "assignee", "question": "Who owns WO2021037851A1?", "fact": "Assignee (owner) of WO2021037851A1",
-     "claim": "The assignee of WO2021037851A1 is Basell Poliolefine Italia SRL.", "expected": true}
-  ],
-
-  "manifest": [
     {
-      "id": "patentx", "passage": "api_docs_patentx.txt", "name": "PatentX API", "docs_url": "https://docs.patentx.example/",
-      "expected": {"host": "api.patentx.example", "auth_type": "header", "auth_name": "X-Api-Key",
-                   "paths": ["/patents", "/patents/{number}", "/families/{number}"]}
+      "id": "family_members",
+      "passage": "google_patent_wo2021037851.txt",
+      "expected": [
+        "supported"
+      ],
+      "claim": "WO2021037851A1, US20210061972A1, EP4021964A1 and CN114341243A are members of one patent family (family ID 72659156).",
+      "value": "WO2021037851A1",
+      "quote": {
+        "from": "Family ID=72659156",
+        "to": "WO (1) | WO2021037851A1 (en) |"
+      }
     },
     {
-      "id": "records", "passage": "api_docs_records.txt", "name": "Records Open Data API", "docs_url": "https://data.records.example/docs",
-      "expected": {"host": "data.records.example", "auth_type": "bearer", "auth_name": null,
-                   "paths": ["/records/search", "/records/{id}"]}
+      "id": "assignee",
+      "passage": "google_patent_wo2021037851.txt",
+      "expected": [
+        "supported"
+      ],
+      "claim": "The assignee of WO2021037851A1 is Basell Poliolefine Italia SRL.",
+      "value": "Basell Poliolefine Italia SRL",
+      "quote": {
+        "text": "DC.contributor (assignee): Basell Poliolefine Italia SRL"
+      }
+    },
+    {
+      "id": "title",
+      "passage": "google_patent_wo2021037851.txt",
+      "expected": [
+        "supported"
+      ],
+      "claim": "WO2021037851A1 is titled 'Plastic depolymerization using fluorinated alumina'.",
+      "value": "Plastic depolymerization using fluorinated alumina",
+      "quote": {
+        "text": "DC.title: Plastic depolymerization using fluorinated alumina"
+      }
+    },
+    {
+      "id": "kit_2018",
+      "passage": "bioplastics_kit.txt",
+      "expected": [
+        "supported"
+      ],
+      "claim": "LyondellBasell began research on chemical recycling with the Karlsruhe Institute of Technology in 2018, which proved the MoReTec technology at laboratory scale.",
+      "value": "2018",
+      "quote": {
+        "from": "In 2018, LyondellBasell began conducting base research",
+        "to": "at laboratory scale."
+      }
+    },
+    {
+      "id": "capacity",
+      "passage": "lyb_moretec.txt",
+      "expected": [
+        "supported"
+      ],
+      "claim": "LYB's first commercial-scale MoReTec facility, MRT-1, will be at Wesseling, Germany, with an annual capacity of 50,000 metric tons.",
+      "value": "50,000 metric tons",
+      "quote": {
+        "from": "Our first commercial-scale catalytic chemical recycling facility",
+        "to": "50,000 metric tons per year."
+      }
+    },
+    {
+      "id": "grant",
+      "passage": "lyb_moretec.txt",
+      "expected": [
+        "supported"
+      ],
+      "claim": "LYB was selected to receive a EUR 40 million EU Innovation Fund grant to support its MoReTec-1 plant in Wesseling, Germany.",
+      "value": "40 million",
+      "quote": {
+        "from": "LYB has been selected to receive",
+        "to": "plant in Wesseling, Germany"
+      }
+    },
+    {
+      "id": "link_via_title",
+      "passage": "google_patent_wo2021037851.txt",
+      "expected": [
+        "not_supported",
+        "partially_supported"
+      ],
+      "claim": "WO2021037851A1 and its family are the patents underpinning LyondellBasell's MoReTec technology.",
+      "value": "WO2021037851A1",
+      "quote": {
+        "text": "DC.title: Plastic depolymerization using fluorinated alumina"
+      }
+    },
+    {
+      "id": "link_via_lyb_page",
+      "passage": "lyb_moretec.txt",
+      "expected": [
+        "not_supported",
+        "partially_supported"
+      ],
+      "claim": "WO2021037851A1 and its family are the patents underpinning LyondellBasell's MoReTec technology.",
+      "value": "WO2021037851A1",
+      "quote": {
+        "text": "Using our proprietary catalytic chemical recycling technology, MoReTec, we transform post-consumer plastic waste"
+      }
+    },
+    {
+      "id": "moretec_catalyst",
+      "passage": "google_patent_wo2021037851.txt",
+      "expected": [
+        "not_supported",
+        "partially_supported"
+      ],
+      "claim": "MoReTec uses a fluorinated alumina catalyst.",
+      "value": "fluorinated alumina",
+      "quote": {
+        "text": "A method of depolymerizing plastics using a fluorinated alumina catalyst is described herein."
+      }
+    },
+    {
+      "id": "wrong_capacity",
+      "passage": "lyb_moretec.txt",
+      "expected": [
+        "not_supported",
+        "partially_supported"
+      ],
+      "claim": "LYB's first commercial MoReTec facility will have an annual capacity of 500,000 metric tons.",
+      "value": "500,000 metric tons",
+      "quote": {
+        "from": "Our first commercial-scale catalytic chemical recycling facility",
+        "to": "50,000 metric tons per year."
+      }
+    },
+    {
+      "id": "wrong_grant",
+      "passage": "lyb_moretec.txt",
+      "expected": [
+        "not_supported",
+        "partially_supported"
+      ],
+      "claim": "LYB received a EUR 400 million EU grant for its MoReTec-1 plant.",
+      "value": "400 million",
+      "quote": {
+        "from": "LYB has been selected to receive",
+        "to": "plant in Wesseling, Germany"
+      }
+    },
+    {
+      "id": "patents_claim",
+      "passage": "lyb_moretec.txt",
+      "expected": [
+        "not_supported",
+        "partially_supported"
+      ],
+      "claim": "LyondellBasell holds patents covering the MoReTec technology.",
+      "value": "patents",
+      "quote": {
+        "text": "Using our proprietary catalytic chemical recycling technology, MoReTec, we transform post-consumer plastic waste"
+      }
+    },
+    {
+      "id": "invented_date",
+      "passage": "lyb_moretec.txt",
+      "expected": [
+        "not_supported",
+        "partially_supported"
+      ],
+      "claim": "The MoReTec plant at Wesseling will start operating in 2024.",
+      "value": "2024",
+      "quote": {
+        "from": "Our first commercial-scale catalytic chemical recycling facility",
+        "to": "50,000 metric tons per year."
+      }
+    }
+  ],
+  "relevance": [
+    {
+      "id": "unrelated_patent",
+      "question": "Which patent families belong to LyondellBasell's MoReTec technology?",
+      "fact": "Patent families or publication numbers that belong to MoReTec",
+      "claim": "The patent BRPI0714639B1 is filed under Basell Poliolefine Italia S.R.L.",
+      "expected": false
+    },
+    {
+      "id": "generic_description",
+      "question": "Which patent families belong to LyondellBasell's MoReTec technology?",
+      "fact": "Patent families or publication numbers that belong to MoReTec",
+      "claim": "MoReTec is a proprietary catalytic chemical recycling technology.",
+      "expected": false
+    },
+    {
+      "id": "how_it_works",
+      "question": "Which patent families belong to LyondellBasell's MoReTec technology?",
+      "fact": "Patent families or publication numbers that belong to MoReTec",
+      "claim": "LyondellBasell is developing a proprietary molecular recycling technology called MoReTec, which uses a catalyst in the pyrolysis process.",
+      "expected": false
+    },
+    {
+      "id": "partner",
+      "question": "Who developed MoReTec?",
+      "fact": "Who developed MoReTec and with which research partner",
+      "claim": "LyondellBasell has collaborated with Germany's Karlsruhe Institute of Technology (KIT) to prove the efficiency of the MoReTec technology at laboratory scale.",
+      "expected": true
+    },
+    {
+      "id": "family_members",
+      "question": "Which publications belong to the family of WO2021037851A1?",
+      "fact": "Members of the patent family of WO2021037851A1",
+      "claim": "WO2021037851A1, US20210061972A1, EP4021964A1 and CN114341243A belong to the same patent family.",
+      "expected": true
+    },
+    {
+      "id": "plant_capacity",
+      "question": "Where is the first MoReTec plant and how big is it?",
+      "fact": "Capacity and location of MoReTec's first commercial plant",
+      "claim": "The first commercial-scale MoReTec plant, MRT-1, is at Wesseling, Germany and is designed for 50,000 metric tons per year.",
+      "expected": true
+    },
+    {
+      "id": "grant_vs_capacity",
+      "question": "Where is the first MoReTec plant and how big is it?",
+      "fact": "Capacity and location of MoReTec's first commercial plant",
+      "claim": "LYB was selected to receive a EUR 40 million EU Innovation Fund grant.",
+      "expected": false
+    },
+    {
+      "id": "assignee",
+      "question": "Who owns WO2021037851A1?",
+      "fact": "Assignee (owner) of WO2021037851A1",
+      "claim": "The assignee of WO2021037851A1 is Basell Poliolefine Italia SRL.",
+      "expected": true
+    },
+    {
+      "id": "coded_fiscal_year_end",
+      "question": "What is the legal name, ticker symbol and fiscal year end of the company with SEC CIK 0000320193?",
+      "fact": "Fiscal year end of the company with CIK 0000320193",
+      "claim": "The fiscal year end of the company with CIK 0000320193 is 0926.",
+      "expected": true
+    },
+    {
+      "id": "ticker",
+      "question": "What is the legal name, ticker symbol and fiscal year end of the company with SEC CIK 0000320193?",
+      "fact": "Ticker symbol of the company with CIK 0000320193",
+      "claim": "The ticker symbol of the company with CIK 0000320193 is AAPL.",
+      "expected": true
+    },
+    {
+      "id": "legal_name",
+      "question": "What is the legal name, ticker symbol and fiscal year end of the company with SEC CIK 0000320193?",
+      "fact": "Legal name of the company with CIK 0000320193",
+      "claim": "The legal name of the company with CIK 0000320193 is Apple Inc.",
+      "expected": true
+    },
+    {
+      "id": "coded_industry",
+      "question": "What is the SEC industry classification code of the company with CIK 0000320193?",
+      "fact": "SIC industry classification code of the company with CIK 0000320193",
+      "claim": "The industry classification code of the company with CIK 0000320193 is 3571.",
+      "expected": true
+    },
+    {
+      "id": "founding_year",
+      "question": "In what year was Dropbox founded?",
+      "fact": "Year Dropbox was founded",
+      "claim": "Dropbox was founded in 2007.",
+      "expected": true
+    },
+    {
+      "id": "dropbox_hq_off_topic",
+      "question": "In what year was Dropbox founded?",
+      "fact": "Year Dropbox was founded",
+      "claim": "Dropbox's headquarters were originally located in San Francisco on Market Street.",
+      "expected": false
+    },
+    {
+      "id": "dropbox_description_off_topic",
+      "question": "In what year was Dropbox founded?",
+      "fact": "Year Dropbox was founded",
+      "claim": "Dropbox Inc. is a United States cloud software company.",
+      "expected": false
+    },
+    {
+      "id": "paper_first_author",
+      "question": "Who is the first author of the paper 'Attention Is All You Need', and in which year was it published?",
+      "fact": "First author of 'Attention Is All You Need'",
+      "claim": "The first author of 'Attention Is All You Need' is Ashish Vaswani.",
+      "expected": true
+    },
+    {
+      "id": "paper_source_off_topic",
+      "question": "Who is the first author of the paper 'Attention Is All You Need', and in which year was it published?",
+      "fact": "First author of 'Attention Is All You Need'",
+      "claim": "The information about the paper is sourced from arXiv.",
+      "expected": false
+    },
+    {
+      "id": "paper_identifier_off_topic",
+      "question": "Who is the first author of the paper 'Attention Is All You Need', and in which year was it published?",
+      "fact": "Year 'Attention Is All You Need' was published",
+      "claim": "The paper 'Attention Is All You Need' is cited with the arXiv ID 1706.03762.",
+      "expected": false
+    }
+  ],
+  "manifest": [
+    {
+      "id": "patentx",
+      "passage": "api_docs_patentx.txt",
+      "name": "PatentX API",
+      "docs_url": "https://docs.patentx.example/",
+      "expected": {
+        "host": "api.patentx.example",
+        "auth_type": "header",
+        "auth_name": "X-Api-Key",
+        "paths": [
+          "/patents",
+          "/patents/{number}",
+          "/families/{number}"
+        ]
+      }
+    },
+    {
+      "id": "records",
+      "passage": "api_docs_records.txt",
+      "name": "Records Open Data API",
+      "docs_url": "https://data.records.example/docs",
+      "expected": {
+        "host": "data.records.example",
+        "auth_type": "bearer",
+        "auth_name": null,
+        "paths": [
+          "/records/search",
+          "/records/{id}"
+        ]
+      }
     }
   ]
 }
