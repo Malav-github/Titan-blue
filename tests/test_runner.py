@@ -79,6 +79,12 @@ def env(tmp_path, monkeypatch):
 
 
 def make_runner(env, scout=False, **handler_overrides):
+    runner = _make_runner(env, scout, **handler_overrides)
+    runner.network_workers = 1          # one at a time: tests count calls in order
+    return runner
+
+
+def _make_runner(env, scout=False, **handler_overrides):
     return Runner(scout=scout, store=env["store"], runs=env["runs"], checkpoint_path=env["ckpt"], registry=env["registry"],
                   llm_factory=lambda task: ScriptedLLM(default_handlers(**handler_overrides)),
                   search_fn=env["world"].search, fetch_fn=env["world"].fetch)

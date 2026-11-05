@@ -11,6 +11,7 @@ and Langfuse traces are tagged with the run id.
 
 import re
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 import uuid
 from pathlib import Path
 from typing import ClassVar, Literal, TypedDict
@@ -203,6 +204,8 @@ class State(TypedDict, total=False):
     api_calls_used: int
     covered: list[int]
     fetched_keys: list[str]
+    backlog: list[str]         # sources fetched but not read yet because the needed facts were already backed
+    settle_sites: int          # independent sites that settle a fact (2 for research, 1 when only checking a premise)
     iteration: int
     searches_used: int
     fetches_used: int
@@ -284,6 +287,7 @@ class Runner:
                  checkpoint_path: str | None = None, llm_factory=None, search_fn=None, fetch_fn=None,
                  render_fn=None, registry=None, call_api_fn=None, now_fn=None, scout: bool = True):
         self.now_fn = now_fn                  # replaceable clock (tests, replays); None means the real one
+        self.network_workers = 4              # searches and page downloads run side by side; models stay one at a time
         self.scout_enabled = scout            # a first quick search before planning (tests that count searches switch it off)
         self.store = store or EvidenceStore()
         self.runs = runs or RunStore()
@@ -323,7 +327,7 @@ class Runner:
             "new_claim_ids": [], "candidates": [], "selected": [], "approved": False,
             "allow_capabilities": allow_capabilities, "capability_checked": False, "capability_id": None,
             "fetch_failures": 0, "api_calls_used": 0, "data_need": None,
-            "ask_sources": ask_sources, "premise": [], "premise_status": "none", "premise_missing": [], "premise_claim_ids": [],
+            "ask_sources": ask_sources, "backlog": [], "settle_sites": 2, "premise": [], "premise_status": "none", "premise_missing": [], "premise_claim_ids": [],
             "premise_url": None, "corrections": [], "sources_asked": 0, "outcome": None, "route": "discover",
         }
         if subject:
@@ -387,6 +391,26 @@ class Runner:
 
     # -- plumbing --------------------------------------------------------------------------------
 
+    def _side_by_side(self, fn, items: list) -> list:
+        """Run fn over items with network waiting overlapped (searches, page downloads). Results come back in the order of
+        items; an exception is returned in its place so one failure never hides the others. Models are not run this way: they
+        share one graphics card, so they stay one at a time (see n_check for how their work is ordered instead)."""
+        if self.network_workers <= 1 or len(items) <= 1:
+            out = []
+            for item in items:
+                try:
+                    out.append(fn(item))
+                except Exception as exc:
+                    out.append(exc)
+            return out
+        def safe(item):
+            try:
+                return fn(item)
+            except Exception as exc:
+                return exc
+        with ThreadPoolExecutor(max_workers=min(self.network_workers, len(items))) as pool:
+            return list(pool.map(safe, items))
+
     def _ask(self, task: str, schema, prompt: str, run_id: str, node: str):
         """Structured LLM call, one retry. Returns None on failure; the caller falls back, and it is logged."""
         last = None
@@ -445,11 +469,9 @@ class Runner:
         rid, q = s["run_id"], s["question"]
         queries = _dedupe([q, f"{q} official"])[:self.SCOUT_SEARCHES]
         results, warnings, seen = [], list(s.get("warnings", [])), set()
-        for query in queries:
-            try:
-                found = self.search_fn(query, max_results=6)
-            except Exception as exc:                       # the scout is a help, never a reason to stop the run
-                warnings.append(f"scout search failed: {type(exc).__name__}: {str(exc)[:120]}")
+        for found in self._side_by_side(lambda query: self.search_fn(query, max_results=6), queries):
+            if isinstance(found, Exception):               # the scout is a help, never a reason to stop the run
+                warnings.append(f"scout search failed: {type(found).__name__}: {str(found)[:120]}")
                 continue
             for hit in found["results"]:
                 key = normalize_url(hit["url"])
@@ -570,7 +592,7 @@ class Runner:
                 # a fresh plan starts clean: nothing from an earlier reading of the question carries over
                 "approved": False, "outcome": None, "premise_status": "none", "premise_missing": [], "premise_claim_ids": [],
                 "premise_url": None, "all_claim_ids": [], "verdicts": {}, "relevant": {}, "claim_items": {}, "covered": [],
-                "new_sources": [], "rejected": 0, "fetched_keys": []}
+                "new_sources": [], "rejected": 0, "fetched_keys": [], "backlog": []}
 
     # Verify first, act later: what the question takes for granted is established like any other claim (search, read,
     # verbatim quote, support check) before the person is asked to approve anything. Nothing is decided from the date or
@@ -586,7 +608,8 @@ class Runner:
         sub = {**s, "checklist": premise, "queries": premise[:b["max_queries_per_iter"]], "covered": [], "iteration": 0,
                "budgets": {**b, **self.PREMISE_BUDGETS}, "searches_used": 0, "fetches_used": 0, "fetch_failures": 0, "fetched_keys": [],
                "claim_items": {}, "new_sources": [], "new_claim_ids": [], "all_claim_ids": [], "verdicts": {}, "relevant": {},
-               "rejected": 0, "selected": [], "candidates": [], "page_categories": [], "company": None, "warnings": []}
+               "rejected": 0, "selected": [], "candidates": [], "page_categories": [], "company": None, "warnings": [],
+               "backlog": [], "settle_sites": 1}
         for step in (self.n_discover, self.n_select, "extra", self.n_fetch, self.n_extract, self.n_check):
             if step == "extra":                 # a source the person gave is read as well, never instead of the search
                 if s.get("premise_url"):
@@ -604,7 +627,8 @@ class Runner:
                 "rejected": sub["rejected"], "warnings": list(s.get("warnings", [])) + sub["warnings"], "premise_url": None,
                 # the real research starts clean: its own budget, no pages marked as already read, no fact marked as covered
                 "claim_items": {}, "covered": [], "new_sources": [], "new_claim_ids": [], "fetched_keys": [], "selected": [],
-                "candidates": [], "searches_used": 0, "fetches_used": 0, "fetch_failures": 0, "iteration": 0}
+                "candidates": [], "searches_used": 0, "fetches_used": 0, "fetch_failures": 0, "iteration": 0,
+                "backlog": [], "settle_sites": 2}
 
     def _premise_view(self, s: State) -> dict:
         claims = []
@@ -728,12 +752,15 @@ class Runner:
                 self.runs.emit(rid, "discover", "primary_failed", {"error": f"{type(exc).__name__}: {exc}"})
 
         searches = s["searches_used"]
-        for query in s["queries"]:
-            if searches >= b["max_searches"]:
-                self.runs.emit(rid, "discover", "budget_reached", {"budget": "max_searches"})
-                break
-            recency = (s.get("time_scope") or {}).get("recency")
-            result = self.search_fn(query, max_results=8, **({"recency": recency} if recency else {}))
+        recency = (s.get("time_scope") or {}).get("recency")
+        room = max(0, b["max_searches"] - searches)
+        todo = s["queries"][:room]
+        if len(s["queries"]) > room:
+            self.runs.emit(rid, "discover", "budget_reached", {"budget": "max_searches"})
+        outcomes = self._side_by_side(lambda q: self.search_fn(q, max_results=8, **({"recency": recency} if recency else {})), todo)
+        for query, result in zip(todo, outcomes):
+            if isinstance(result, Exception):
+                raise result
             searched_at = tclock.now(self.now_fn).as_dict()
             searches += 1
             for hit in result["results"]:
@@ -790,12 +817,15 @@ class Runner:
         rid = s["run_id"]
         new_sources, fetches, keys = [], s["fetches_used"], list(s["fetched_keys"])
         warnings = list(s.get("warnings", []))
-        for cand in s["selected"]:
+        downloads = self._side_by_side(lambda c: self.fetch_fn(c["url"], max_chars=2000), s["selected"])
+        for cand, downloaded in zip(s["selected"], downloads):
             url = cand["url"]
             keys.append(normalize_url(url))
             fetches += 1
             try:
-                result = self.fetch_fn(url, max_chars=2000)
+                if isinstance(downloaded, Exception):
+                    raise downloaded
+                result = downloaded
                 if result["status"] != 200:  # blocked or missing: not retried with other tools
                     raise RuntimeError(f"HTTP {result['status']}")
                 sha = self.store.ingest(result)
@@ -821,8 +851,8 @@ class Runner:
                 "dates": [{"kind": f.kind, "value": f.value, "origin": f.origin} for f in facts][:8],
                 "best_date": best.value if best else None, "best_date_kind": best.kind if best else None})
         failed = len(s["selected"]) - len(new_sources)
-        return {"new_sources": new_sources, "fetches_used": fetches, "fetched_keys": keys, "warnings": warnings,
-                "fetch_failures": s["fetch_failures"] + failed}
+        return {"new_sources": list(s.get("backlog") or []) + new_sources, "backlog": [], "fetches_used": fetches,
+                "fetched_keys": keys, "warnings": warnings, "fetch_failures": s["fetch_failures"] + failed}
 
     def _source_dates(self, sha: str) -> list[DateFact]:
         return [DateFact(d["kind"], d["value"], d["precision"], d["raw"], d["origin"], bool(d["relative"]))
@@ -903,7 +933,8 @@ class Runner:
         new_ids, rejected, seen = [], s["rejected"], set()
         items = dict(s["claim_items"])
         needed = "\n".join(f"{i}. {t}" for i, t in enumerate(s["checklist"], 1))
-        for sha in s["new_sources"]:
+        todo, backlog = list(s["new_sources"]), []
+        for pos, sha in enumerate(todo):
             source = self.store.get_source(sha)
             text = normalize(Path(source["text_path"]).read_text(encoding="utf-8"))
             for chunk in top_chunks(text, terms, b["max_chunks_per_source"]):
@@ -954,8 +985,25 @@ class Runner:
                         self.runs.emit(rid, "extract", "claim_rejected", {
                             "claim": c.claim, "quote": c.quote, "reason": r["reason"],
                             "closest_passage": r.get("closest_passage"), "source_url": source["final_url"]})
+            if pos + 1 < len(todo) and self._backed(items, len(s["checklist"]), s.get("settle_sites", 2)):
+                backlog = todo[pos + 1:]               # every needed fact already has claims from enough sites: read the rest only if needed
+                self.runs.emit(rid, "extract", "extract_stopped", {
+                    "read": pos + 1, "kept_for_later": len(backlog),
+                    "reason": "every needed fact already has claims from enough independent sites"})
+                break
         return {"new_claim_ids": new_ids, "all_claim_ids": s["all_claim_ids"] + new_ids, "rejected": rejected,
-                "new_sources": [], "claim_items": items}
+                "new_sources": [], "claim_items": items, "backlog": backlog}
+
+    def _backed(self, items: dict, facts: int, need_sites: int) -> bool:
+        """Does every needed fact have recorded claims from at least `need_sites` independent sites (or one primary source)?"""
+        sites: dict[int, set] = {}
+        primary: set[int] = set()
+        for cid, fact in items.items():
+            claim = self.store.get_claim(int(cid))
+            sites.setdefault(fact, set()).add(corroboration.site(self.store.get_source(claim["source_sha256"])["final_url"]))
+            if claim["source_tier"] == "primary":
+                primary.add(fact)
+        return all(i in primary or len(sites.get(i, ())) >= need_sites for i in range(facts))
 
     def _record_times(self, rid: str, claim_id: int) -> None:
         """Attach period and event dates to a recorded claim, read by code from its quote and the text around it (never by a
@@ -977,32 +1025,81 @@ class Runner:
         except Exception as exc:   # time attributes are an addition: a failure here must not lose the claim
             self.runs.emit(rid, "extract", "claim_time_failed", {"claim_id": claim_id, "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
 
+    # Stop when the answer is in. A fact is settled once a supported, relevant claim from a primary source backs it, or supported
+    # relevant claims from `settle_sites` independent sites do. The remaining claims for that fact are not checked (they stay
+    # listed as unchecked, never hidden): the run's answer would not change and each check costs two model calls. Checks run in
+    # small waves, all support checks (one model) and then all relevance checks (the other), so the two models are not swapped
+    # in and out of the graphics card for every claim.
+    CHECK_WAVE = 3
+
+    def _settled_facts(self, verdicts: dict, relevant: dict, items: dict, need_sites: int) -> set[int]:
+        sites: dict[int, set] = {}
+        primary: set[int] = set()
+        for c, v in verdicts.items():
+            if v == "supported" and relevant.get(c) and c in items:
+                claim = self.store.get_claim(int(c))
+                sites.setdefault(items[c], set()).add(corroboration.site(self.store.get_source(claim["source_sha256"])["final_url"]))
+                if claim["source_tier"] == "primary":
+                    primary.add(items[c])
+        return primary | {f for f, found in sites.items() if len(found) >= need_sites}
+
+    def _check_order(self, ids: list[int]) -> list[int]:
+        """Primary-source claims first, then one claim per site before a second from the same site, so the first wave can settle."""
+        seen: dict[str, int] = {}
+        keyed = []
+        for cid in ids:
+            claim = self.store.get_claim(cid)
+            where = corroboration.site(self.store.get_source(claim["source_sha256"])["final_url"])
+            seen[where] = seen.get(where, 0) + 1
+            keyed.append((claim["source_tier"] != "primary", seen[where], len(keyed), cid))
+        return [cid for *_, cid in sorted(keyed)]
+
     def n_check(self, s: State) -> dict:
         rid = s["run_id"]
         verdicts, relevant = dict(s["verdicts"]), dict(s["relevant"])
-        for cid in s["new_claim_ids"]:
-            try:
-                res = check_claim(self.store, cid, llm=self.llm_factory("claim_support"))
-            except Exception as exc:
-                self.runs.emit(rid, "check", "llm_failed", {"task": "claim_support", "claim_id": cid,
-                                                           "error": f"{type(exc).__name__}: {str(exc)[:200]}"})
-                continue
-            verdicts[str(cid)] = res["verdict"]
-            self.runs.emit(rid, "check", "support_checked", {
-                "claim_id": cid, "verdict": res["verdict"], "reasoning": res["reasoning"],
-                "unsupported_parts": res["unsupported_parts"], "missing_tokens": res["missing_tokens"]})
-            if res["verdict"] != "supported":
-                continue
-            # A true claim can still be beside the point. Relevance is relative to this question, so it is
-            # judged here and logged with the run, not stored on the claim.
-            fact = s["checklist"][s["claim_items"][str(cid)]]
-            claim = self.store.get_claim(cid)
-            verdict = self._ask("relevance", Relevance, relevance_prompt(s["question"], fact, claim["claim_text"]),
-                                rid, "check")
-            relevant[str(cid)] = bool(verdict and verdict.addresses)
-            self.runs.emit(rid, "check", "relevance_checked", {
-                "claim_id": cid, "needed_fact": fact, "addresses": relevant[str(cid)],
-                "reason": verdict.reason if verdict else "relevance check failed; treated as not relevant"})
+        need = s.get("settle_sites", 2)
+        pending = self._check_order(list(s["new_claim_ids"]))
+        while pending:
+            settled = self._settled_facts(verdicts, relevant, s["claim_items"], need)
+            wave, rest = [], []
+            for cid in pending:
+                fact = s["claim_items"].get(str(cid))
+                if fact in settled:
+                    self.runs.emit(rid, "check", "check_skipped", {
+                        "claim_id": cid, "needed_fact": s["checklist"][fact],
+                        "reason": "this fact is already backed; the claim stays on record, unchecked"})
+                elif len(wave) < self.CHECK_WAVE:
+                    wave.append(cid)
+                else:
+                    rest.append(cid)
+            pending = rest
+            if not wave:
+                break
+            supported = []
+            for cid in wave:
+                try:
+                    res = check_claim(self.store, cid, llm=self.llm_factory("claim_support"))
+                except Exception as exc:
+                    self.runs.emit(rid, "check", "llm_failed", {"task": "claim_support", "claim_id": cid,
+                                                               "error": f"{type(exc).__name__}: {str(exc)[:200]}"})
+                    continue
+                verdicts[str(cid)] = res["verdict"]
+                self.runs.emit(rid, "check", "support_checked", {
+                    "claim_id": cid, "verdict": res["verdict"], "reasoning": res["reasoning"],
+                    "unsupported_parts": res["unsupported_parts"], "missing_tokens": res["missing_tokens"]})
+                if res["verdict"] == "supported":
+                    supported.append(cid)
+            for cid in supported:
+                # A true claim can still be beside the point. Relevance is relative to this question, so it is
+                # judged here and logged with the run, not stored on the claim.
+                fact = s["checklist"][s["claim_items"][str(cid)]]
+                claim = self.store.get_claim(cid)
+                verdict = self._ask("relevance", Relevance, relevance_prompt(s["question"], fact, claim["claim_text"]),
+                                    rid, "check")
+                relevant[str(cid)] = bool(verdict and verdict.addresses)
+                self.runs.emit(rid, "check", "relevance_checked", {
+                    "claim_id": cid, "needed_fact": fact, "addresses": relevant[str(cid)],
+                    "reason": verdict.reason if verdict else "relevance check failed; treated as not relevant"})
         return {"verdicts": verdicts, "relevant": relevant, "new_claim_ids": []}
 
     def n_assess(self, s: State) -> dict:
