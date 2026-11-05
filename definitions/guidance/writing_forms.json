@@ -1,0 +1,93 @@
+{
+  "about": "The kinds of writing Titan knows. Each form says what it is for, who reads it, how long it runs, how it is built and what is specific to it. All of them also follow writing_rules.json. 'generated' says whether the runner writes this form today; the others are guidelines the evaluation matrix already scores against.",
+  "forms": [
+    {
+      "id": "answer",
+      "label": "Short answer",
+      "generated": true,
+      "route_when": null,
+      "purpose": "Answer one factual question.",
+      "reader": "Someone who wants the fact and its date, and will move on.",
+      "words": [8, 90],
+      "structure": ["The answer in the first sentence, with its date or period.", "One sentence of support or limit if needed."],
+      "rules": ["Do not repeat the question.", "If the answer has changed over time, give the current value and the date it took effect."]
+    },
+    {
+      "id": "news",
+      "label": "News brief",
+      "generated": true,
+      "route_when": "\\b(?:latest|recent|news|announce\\w*|moves?|update|new|this (?:week|month|quarter|year)|last (?:week|month|quarter))\\b",
+      "purpose": "Tell the reader what happened most recently and what came before it that matters.",
+      "reader": "A decision maker scanning for what changed.",
+      "words": [30, 160],
+      "structure": ["Lead: who did what, when, in one sentence of at most 35 words (the inverted pyramid).", "Second sentence: the most important detail (size, terms, reason).", "Earlier events as background, oldest last, each with its own date and a phrase that marks it as earlier ('In 2020 ...').", "Last sentence: what the evidence does not establish."],
+      "rules": ["Past tense for events, present tense for states that still hold.", "Attribute: say who stated it (the company's press release, a filing, a news agency).", "No adjectives that praise or alarm.", "Separate what the company said from what others reported about it."]
+    },
+    {
+      "id": "short_form",
+      "label": "Short form (headline, summary line, post)",
+      "generated": false,
+      "route_when": "\\b(?:headline|tl;?dr|one[- ]line|one sentence|tweet|post|caption|blurb)\\b",
+      "purpose": "Carry one point in a line or two.",
+      "reader": "Someone who will read nothing else.",
+      "words": [5, 45],
+      "structure": ["One point, subject and verb, with the date or period."],
+      "rules": ["No hedging words inside a headline; put the limit in a second line.", "Never two events in one line."]
+    },
+    {
+      "id": "research_note",
+      "label": "Research note",
+      "generated": false,
+      "route_when": "\\b(?:research note|analysis|analy[sz]e|assess|findings?)\\b",
+      "purpose": "Report what was found about a question, how strong the evidence is and what remains open.",
+      "reader": "An analyst who will check the sources.",
+      "words": [120, 450],
+      "structure": ["Question and answer in two sentences.", "Findings, one short paragraph per finding, each dated and cited.", "Evidence strength: primary or secondary, agreement or conflict between sources.", "Open questions and what would settle them."],
+      "rules": ["Method in a sentence, not a section.", "Separate finding from interpretation; label interpretation.", "Show conflicts side by side with their dates."]
+    },
+    {
+      "id": "report",
+      "label": "Report",
+      "generated": false,
+      "route_when": "\\b(?:report|briefing|dossier|profile|overview)\\b",
+      "purpose": "Give a complete, organised account of a subject for reference.",
+      "reader": "Several readers, some of whom read only the summary.",
+      "words": [300, 1500],
+      "structure": ["Summary of at most 120 words that stands alone.", "Sections by theme or by period, each opening with its finding.", "Timeline of dated events where the story spans more than a year.", "Limits and gaps.", "Sources."],
+      "rules": ["A heading says what the section found, not its topic.", "Tables for figures that are compared; prose for reasons.", "Every section dates its facts."]
+    },
+    {
+      "id": "white_paper",
+      "label": "White paper",
+      "generated": false,
+      "route_when": "\\b(?:white ?paper|position paper|thought leadership)\\b",
+      "purpose": "Argue a position from evidence for a reader who must decide.",
+      "reader": "A decision maker outside the writer's team.",
+      "words": [1200, 4000],
+      "structure": ["Executive summary: the problem, the position, the ask.", "The problem and who bears it, with figures and dates.", "What the evidence shows, then options considered.", "Recommendation and its risks.", "Appendix of sources."],
+      "rules": ["State the argument before the evidence, then support it.", "Treat the strongest counter-argument fairly.", "Every number is sourced and dated; claims of cause are marked as argument, not fact."]
+    },
+    {
+      "id": "essay",
+      "label": "Essay",
+      "generated": false,
+      "route_when": "\\b(?:essay|opinion|argue|argument|perspective|commentary|op-?ed)\\b",
+      "purpose": "Develop one idea and persuade or illuminate.",
+      "reader": "An interested general reader.",
+      "words": [500, 1500],
+      "structure": ["A thesis in the first paragraph.", "Each paragraph carries one step of the argument, topic sentence first.", "A concession to the best opposing view.", "A close that says what follows from the thesis, not a repeat of it."],
+      "rules": ["Facts used as evidence keep their dates and sources.", "The author's view is labelled as the author's view.", "Concrete before abstract."]
+    },
+    {
+      "id": "long_form",
+      "label": "Long-form feature",
+      "generated": false,
+      "route_when": "\\b(?:long[- ]form|feature|deep dive|story of|history of|case study)\\b",
+      "purpose": "Tell how something came to be, with context and consequence.",
+      "reader": "A reader prepared to spend ten minutes.",
+      "words": [1500, 6000],
+      "structure": ["A nut paragraph near the top says what the piece is about and why now.", "Chronological spine with dated scenes or events.", "Context and consequence set apart from the chronology.", "An ending that returns to the present date and says what is unresolved."],
+      "rules": ["Keep the chronology unmistakable: each section opens with its date or span.", "Do not let the narrative smooth over gaps; mark them.", "Vary sentence length, but never at the cost of precision."]
+    }
+  ]
+}

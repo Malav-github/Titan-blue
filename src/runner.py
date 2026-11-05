@@ -25,7 +25,7 @@ import tracing
 from skills.temporal import clock as tclock, freshness, intent as tintent, setting as temporal_setting
 from skills.temporal.display import short_date
 from skills.temporal import periods as tperiods
-from skills import planning
+from skills import planning, writing
 from skills.planning import sense as common_sense
 from skills.temporal.extract import DateFact, best_date, parse_date
 import corroboration
@@ -687,7 +687,9 @@ class Runner:
             "Count a result only if its title or snippet says so about this subject and this period; the same company or topic is "
             "not enough. Return their numbers, or none."), rid, "plan")
         reported = sorted({n for n in (out.reported if out else []) if 1 <= n <= len(hits)})
-        status = "none" if out is None else ("reported" if reported else "unverified")
+        # A refusal needs a judgement: no result numbers AND no reason is an empty answer from a small model, not a finding.
+        judged = out is not None and bool(reported or (out.reason or "").strip())
+        status = "none" if not judged else ("reported" if reported else "unverified")
         screen = {"query": claim, "reason": (out.reason if out else "")[:200], "reported": reported,
                   "not_screened": premise[1:], "providers": [p["provider"] for p in found.get("providers", []) if p.get("ok")],
                   "results": [{"n": i, "title": h["title"][:120], "url": h["url"], "site": corroboration.site(h["url"]),
@@ -697,7 +699,7 @@ class Runner:
             "status": status, "query": claim, "results": len(hits), "reported": reported, "engines": screen["providers"],
             "searched_at": tclock.now(self.now_fn).as_dict()})
         return {"premise_status": status, "premise_missing": [claim] if status == "unverified" else [], "premise_screen": screen,
-                "warnings": [] if out else ["premise screen: the model call failed, so the premise was not judged"]}
+                "warnings": [] if judged else ["premise screen: the model gave no judgement, so the premise was not judged"]}
 
     def _premise_view(self, s: State) -> dict:
         claims = []
@@ -724,7 +726,9 @@ class Runner:
             "Question: Who wrote the paper 'Orange Lattices in Tuesday Space'?\n"
             "premise: [\"A paper titled 'Orange Lattices in Tuesday Space' exists\"]\n"
             "Question: What is the population of Norway?\n"
-            "premise: []\n\n"
+            "premise: []\n"
+            "Question: What is Acme's latest strategic move?\n"
+            "premise: []   (a strategic move is what the question asks to find out, so it is not a premise)\n\n"
             + (f"The person later corrected the reading of the question: {'; '.join(s['corrections'])}.\n" if s.get("corrections") else "")
             + f"Question: {s['question']}\npremise:")
         out = self._ask("plan", PremiseList, prompt, s["run_id"], "plan")
@@ -1198,6 +1202,48 @@ class Runner:
             "iteration": iteration, "covered": sorted(covered), "gaps": gaps, "next_queries": queries if gaps else []})
         return {"covered": sorted(covered), "queries": queries, "iteration": iteration}
 
+    def _write(self, s: State, rows: list[dict], gaps: list[str], rid: str) -> tuple[str, list[int], dict]:
+        """Put the established claims into words (writing skill): dated, grouped into moments, in the form the request asks for,
+        then score the draft with the evaluation matrix and, if it has a blocking fault, write it once more with the faults named."""
+        today = tclock.now(self.now_fn).local.date()
+        scope = s.get("time_scope") or {}
+        form = writing.written_as(writing.choose_form(s["question"], scope))
+        facts = writing.build_facts(rows)
+        allowed = {r["claim_id"] for r in rows}
+        prompt = writing.draft_prompt(s["question"], facts, form, scope, today, gaps)
+
+        def clean(text: str) -> tuple[str, list[int]]:
+            cited = {int(i) for i in re.findall(r"\[claim:(\d+)\]", text)}
+            return re.sub(r"\[claim:(\d+)\]", lambda m: m.group(0) if int(m.group(1)) in allowed else "[invalid citation removed]", text), sorted(cited - allowed)
+
+        def rate(text: str) -> dict:
+            return writing.score(text, facts, question=s["question"], subject=s["subject"], scope=scope, today=today, gaps=gaps, form=form,
+                                 checklist=s["checklist"], established_ids=allowed)
+
+        draft = self._ask("synthesis", Summary, prompt, rid, "report")
+        if not draft:
+            return "", [], {}
+        text, dropped = clean(draft.text)
+        result = rate(text)
+        revisions = 0
+        while revisions < writing.setting("max_revisions") and (result["blockers"] or (result["score"] or 100) < writing.setting("revise_below")):
+            again = self._ask("synthesis", Summary, writing.revision_prompt(prompt, text, result["issues"]), rid, "report")
+            if not again:
+                break
+            revisions += 1
+            new_text, new_dropped = clean(again.text)
+            new_result = rate(new_text)
+            self.runs.emit(rid, "report", "summary_revised", {"before": result["score"], "after": new_result["score"], "issues": result["issues"][:6]})
+            if (new_result["score"] or 0) >= (result["score"] or 0):      # a worse rewrite never replaces a better draft
+                text, dropped, result = new_text, new_dropped, new_result
+        text, uncited = writing.drop_uncited(text)          # a statement no claim backs does not stay in the answer
+        if uncited:
+            result = rate(text)
+            self.runs.emit(rid, "report", "uncited_removed", {"sentences": uncited})
+        self.runs.emit(rid, "report", "summary_scored", {"form": form["id"], "score": result["score"], "grade": result["grade"],
+                                                         "blockers": [b["id"] for b in result["blockers"]], "revisions": revisions})
+        return text, dropped, {**result, "revisions": revisions, "uncited_removed": uncited, "requested_form": writing.choose_form(s["question"], scope)["id"]}
+
     def n_report(self, s: State) -> dict:
         rid = s["run_id"]
         rows = {"supported": [], "partially_supported": [], "not_supported": [], "unchecked": [], "off_topic": []}
@@ -1240,18 +1286,10 @@ class Runner:
         time_warning = freshness.warning(timing)
 
         premise_failed = s.get("outcome") == "premise_unverified"
-        summary, dropped = "", []
+        summary, dropped, quality = "", [], {}
         allowed = {r["claim_id"] for r in rows["supported"] if not r["premise"]}
         if allowed and not premise_failed:
-            listing = "\n".join(f"[claim:{r['claim_id']}] {r['claim']}" for r in rows["supported"] if not r["premise"])
-            prompt = (f"QUESTION: {s['question']}\n\nVERIFIED CLAIMS:\n{listing}\n\nWrite a short factual answer using ONLY "
-                      f"these claims. Cite each statement as [claim:ID]. Say plainly what the claims do not establish. "
-                      f"Do not add anything that is not in the claims.")
-            draft = self._ask("synthesis", Summary, prompt, rid, "report")
-            if draft:
-                cited = {int(i) for i in re.findall(r"\[claim:(\d+)\]", draft.text)}
-                dropped = sorted(cited - allowed)
-                summary = re.sub(r"\[claim:(\d+)\]", lambda m: m.group(0) if int(m.group(1)) in allowed else "[invalid citation removed]", draft.text)
+            summary, dropped, quality = self._write(s, [r for r in rows["supported"] if not r["premise"]], gaps, rid)
         if premise_failed:
             outcome = "premise_unverified"
         elif not gaps:
@@ -1267,10 +1305,10 @@ class Runner:
             "not_supported": len(rows["not_supported"]), "unchecked": len(rows["unchecked"]),
             "off_topic": len(rows["off_topic"]), "conflicts": conflicts,
             "gaps": gaps, "rejected_quotes": s["rejected"], "warnings": s.get("warnings", []) + ([time_warning] if time_warning else []),
-            "time": timing,
+            "time": timing, "quality": quality,
             "budget_used": {"searches": s["searches_used"], "fetches": s["fetches_used"], "iterations": s["iteration"]},
             "domain": s.get("domain"),
         }
         self.runs.emit(rid, "report", "report_ready", {k: (len(v) if isinstance(v, list) else v)
-                                                       for k, v in report.items() if k != "summary"})
+                                                       for k, v in report.items() if k not in ("summary", "quality")})
         return {"report": report}

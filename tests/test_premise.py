@@ -90,6 +90,13 @@ def test_a_failed_model_call_leaves_the_premise_unjudged_not_refused(env):
     assert any("premise was not judged" in w for w in result["report"]["warnings"])
 
 
+def test_an_empty_judgement_from_the_model_is_not_a_refusal(env):
+    """A small model sometimes returns nothing at all. That is no finding, so the question is researched, with a warning."""
+    result = make_runner(env, **plan(), PremiseScreen=lambda p: PremiseScreen(reported=[], reason="")).start("What does Acme charge?")
+    assert result["report"]["outcome"] == "answered"
+    assert any("gave no judgement" in w for w in result["report"]["warnings"])
+
+
 # --- the person answers the finding ---
 
 def asked(runner, question="What did Acme say in 2031?"):
@@ -152,7 +159,7 @@ def test_a_comment_makes_the_agent_rebuild_its_plan_and_screen_again(env):
 
     # nothing reports the 2031 premise; the corrected 2026 one is reported
     runner = make_runner(env, Plan=planner, PremiseList=premise_of,
-                         PremiseScreen=lambda p: PremiseScreen(reported=[1] if "2026" in p else []))
+                         PremiseScreen=lambda p: PremiseScreen(reported=[1] if "2026" in p else [], reason="screened"))
     first = asked(runner)
     assert first["approval_request"]["premise"]["status"] == "unverified"
 

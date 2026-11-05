@@ -1,0 +1,77 @@
+{
+ "about": "Written outputs scored by a person, with reasons. See src/skills/writing/golden.py.",
+ "cases": [
+  {
+   "id": "sp-global-latest-move-2026-11-06",
+   "captured_at": "2026-11-05T19:20:54+00:00",
+   "question": "S&P Global's latest strategic move.\n",
+   "subject": "S&P Global",
+   "today": "2026-11-06",
+   "scope": {
+    "intent": "latest"
+   },
+   "gaps": [],
+   "output": "S&P Global announced a strategic review for Capital IQ and associated data businesses [claim:222]. It has expanded AI-powered capabilities across its private markets ecosystem [claim:223], and also expanded its AI-powered capabilities across private markets [claim:224]. Additionally, S&P Global agreed to acquire IHS Markit analytics company in a $44 billion transaction [claim:230]. The claims do not establish the specific outcomes or details of the strategic review, the extent of the AI capabilities expansion, or the terms of the acquisition beyond the stated agreement.",
+   "claims": [
+    {
+     "claim_id": 222,
+     "claim": "S&P Global announced a strategic review for Capital IQ and associated data businesses.",
+     "value": "S&P Global announced a strategic review for Capital IQ and associated data businesses.",
+     "quote": "Announces Strategic Review for Capital IQ and Associated Data Businesses",
+     "times": [],
+     "source_url": "https://press.spglobal.com/2026-10-27-S-P-Global-Reports-Third-Quarter-Results-Announces-Strategic-Review-for-Capital-IQ-and-Associated-Data-Businesses",
+     "source_date": "2026-10-27T03:03:26",
+     "source_date_kind": "search_result",
+     "source_tier": "secondary",
+     "corroboration": "2 independent sources",
+     "fact": 0,
+     "established": true
+    },
+    {
+     "claim_id": 223,
+     "claim": "S&P Global has expanded AI-powered capabilities across its private markets ecosystem.",
+     "value": "S&P Global has expanded AI-powered capabilities across its private markets ecosystem.",
+     "quote": "today announced expanded AI-powered capabilities across its private markets ecosystem, including new iLEVEL enhancements that embed AI directly into private markets workflows and enable customers to securely connect their iLEVEL data and capabilities to AI tools such as Copilot and Claude through",
+     "times": [],
+     "source_url": "https://press.spglobal.com/2026-10-22-S-P-Global-Expands-AI-Powered-Capabilities-Across-Private-Markets",
+     "source_date": "2026-10-22T13:28:28",
+     "source_date_kind": "search_result",
+     "source_tier": "secondary",
+     "corroboration": "2 independent sources",
+     "fact": 0,
+     "established": true
+    },
+    {
+     "claim_id": 224,
+     "claim": "S&P Global has expanded its AI-powered capabilities across private markets.",
+     "value": "S&P Global has expanded its AI-powered capabilities across private markets.",
+     "quote": "S&P Global Expands AI-Powered Capabilities Across Private Markets",
+     "times": [],
+     "source_url": "https://press.spglobal.com/2026-10-22-S-P-Global-Expands-AI-Powered-Capabilities-Across-Private-Markets",
+     "source_date": "2026-10-22T13:28:28",
+     "source_date_kind": "search_result",
+     "source_tier": "secondary",
+     "corroboration": "2 independent sources",
+     "fact": 0,
+     "established": true
+    },
+    {
+     "claim_id": 230,
+     "claim": "S&P Global agreed to acquire IHS Markit analytics company in a $44 billion transaction.",
+     "value": "S&P Global agreed to acquire IHS Markit analytics company in a $44 billion transaction.",
+     "quote": "analytics company in a $44 billion transaction.[17][18] In 2023, S&P sold the former IHS engineering operations to KKR & Co., which rebranded as Accuris.[19] In October 2025, S&P Global announced a deal to buy markets data and analytics firm With Intelligence for $1.8 billion.[20] On July 1, 2026,",
+     "times": [],
+     "source_url": "https://en.wikipedia.org/wiki/S%26P_Global",
+     "source_date": "2004-05-13T02:43:58+00:00",
+     "source_date_kind": "published",
+     "source_tier": "secondary",
+     "corroboration": "2 independent sources",
+     "fact": 0,
+     "established": true
+    }
+   ],
+   "notes": "User review 2026-11-06: strategic review (2026-10-27) and expanded AI capabilities (2026-10-22) were the right finds, the strategic review the more relevant because it was the latest. But the output is not time aware: it presents the strategic review and the IHS Markit acquisition, several years apart, as if simultaneous. Awaiting the user's own scores.",
+   "human": null
+  }
+ ]
+}

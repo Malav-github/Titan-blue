@@ -71,7 +71,27 @@ function ReportView({ report }: { report: Report }) {
       )}
       {report.summary ? (
         <Card><p className="whitespace-pre-line"><Answer text={report.summary} /></p>
-          <p className="mt-2 text-xs text-muted">Written by a model from the verified claims below only; each [claim:N] points to one of them.</p></Card>
+          <p className="mt-2 text-xs text-muted">Written by a model from the verified claims below only; each [claim:N] points to one of them.</p>
+          {report.quality?.score != null && (
+            <details className="mt-3 text-sm">
+              <summary className="cursor-pointer">
+                Writing score by the evaluation matrix: <strong>{report.quality.score}/100 ({report.quality.grade})</strong>
+                {report.quality.blockers.length > 0 && <span className="text-bad"> · capped by {report.quality.blockers.map((b) => b.id.replace(/_/g, ' ')).join(', ')}</span>}
+                {(report.quality.revisions ?? 0) > 0 && <span className="text-muted"> · written again once</span>}
+              </summary>
+              <table className="mt-2 w-full text-left text-xs">
+                <thead><tr className="text-muted"><th>Dimension</th><th>Points (0-5)</th><th>What the checks found</th></tr></thead>
+                <tbody>{Object.entries(report.quality.dimensions).map(([id, d]) => (
+                  <tr key={id} className="align-top"><td className="pr-3">{d.label}</td><td className="pr-3">{d.points ?? '-'}</td>
+                    <td>{d.checks.filter((c) => c.score !== null && c.score < 1).map((c) => c.detail).join('; ') || 'nothing to correct'}</td></tr>
+                ))}</tbody>
+              </table>
+              {(report.quality.uncited_removed ?? []).length > 0 && (
+                <p className="mt-2 text-xs text-warn">Removed because no claim backs it: {(report.quality.uncited_removed ?? []).map((s) => `“${s}”`).join(' ')}</p>
+              )}
+            </details>
+          )}
+        </Card>
       ) : (
         report.outcome === 'premise_unverified' || report.outcome === 'not_found' ? null :
           <Card><p className="text-sm text-muted">No answer was written: nothing was established strongly enough.</p></Card>

@@ -1,0 +1,177 @@
+{
+  "about": "The evaluation matrix for written output. Six dimensions, each scored 0 to 5 by a person (using the anchors) and 0 to 1 by code (the checks listed). The weights add to 100; the overall score is out of 100. A blocker caps the overall score no matter how the rest scores, because some failures (events years apart read as simultaneous, a statement no claim supports) make an output unfit to use. Person and code are compared on the golden cases in evals/writing_golden.json so that the code's checks can be tuned until they agree.",
+  "scale": {
+    "max": 5,
+    "meaning": {
+      "0": "unusable",
+      "1": "poor: a reader would be misled or lost",
+      "2": "weak: usable only with correction",
+      "3": "acceptable: no harm, but plainly improvable",
+      "4": "good: small flaws",
+      "5": "excellent: nothing to change"
+    }
+  },
+  "dimensions": [
+    {
+      "id": "time",
+      "label": "Time awareness",
+      "weight": 25,
+      "question": "Does the reader know when each thing happened, and which things did not happen together?",
+      "anchors": {
+        "5": "Every event has its date or period; events far apart are in separate sentences in a stated order; the newest is first for a 'latest' question; undated facts are labelled.",
+        "3": "Most events dated, one undated fact unlabelled, order mostly clear, no false simultaneity.",
+        "1": "Few dates; events of different years joined as if together, or the latest event is not the one led with.",
+        "0": "Dates absent or wrong, and the story reads as one moment."
+      },
+      "checks": [
+        "dated",
+        "simultaneity",
+        "order",
+        "latest_first",
+        "undated_labelled",
+        "vague_time",
+        "implied_link"
+      ]
+    },
+    {
+      "id": "grounding",
+      "label": "Grounding",
+      "weight": 20,
+      "question": "Does every statement rest on a verified claim, and do the numbers and names match?",
+      "anchors": {
+        "5": "Every statement cited; numbers and names match the claims.",
+        "3": "One uncited or loosely paraphrased statement.",
+        "1": "Several statements without support, or a figure that no claim contains.",
+        "0": "Invented content."
+      },
+      "checks": [
+        "cited",
+        "valid_citations",
+        "numbers",
+        "names",
+        "evaluative"
+      ]
+    },
+    {
+      "id": "materiality",
+      "label": "Materiality",
+      "weight": 20,
+      "question": "Does the output spend its words on what matters most, first, and say it once?",
+      "anchors": {
+        "5": "Leads with the most consequential fact; every established fact that answers the question is present; nothing repeated.",
+        "3": "The right facts, but the lead is not the strongest, or one is repeated.",
+        "1": "Important established facts missing, or the space goes to minor ones.",
+        "0": "The point of the question is not in the output."
+      },
+      "checks": [
+        "lead",
+        "coverage",
+        "redundancy"
+      ]
+    },
+    {
+      "id": "relevance",
+      "label": "Relevance",
+      "weight": 15,
+      "question": "Does everything in the output answer the question that was asked, about the subject that was asked about?",
+      "anchors": {
+        "5": "Every sentence answers or states a limit.",
+        "3": "One sentence is background nobody asked for.",
+        "1": "A third or more is off the question.",
+        "0": "Mostly off the question."
+      },
+      "checks": [
+        "answers",
+        "subject"
+      ]
+    },
+    {
+      "id": "honesty",
+      "label": "Honesty about limits",
+      "weight": 10,
+      "question": "Does it say what it could not establish and how sure it is?",
+      "anchors": {
+        "5": "Gaps and weak support are stated where they apply; no overclaiming.",
+        "3": "Limits stated generally, not where they apply.",
+        "1": "A gap exists and is not mentioned, or certainty words go beyond the evidence.",
+        "0": "Presents a guess as fact."
+      },
+      "checks": [
+        "gaps_stated",
+        "hedged",
+        "overclaim"
+      ]
+    },
+    {
+      "id": "clarity",
+      "label": "Clarity and form",
+      "weight": 10,
+      "question": "Is it plain, the right length and built like its form?",
+      "anchors": {
+        "5": "Plain, short sentences; right length; follows the form's structure.",
+        "3": "Fine but wordy, or a little over or under length.",
+        "1": "Hard to follow, padded or far outside the form's length.",
+        "0": "Unreadable."
+      },
+      "checks": [
+        "sentence_length",
+        "length",
+        "filler"
+      ]
+    }
+  ],
+  "blockers": [
+    {
+      "id": "false_simultaneity",
+      "cap": 50,
+      "when": "events more than the same-period window apart (or one dated and one undated) are joined by a simultaneity word or one sentence without separate dates",
+      "from": "simultaneity"
+    },
+    {
+      "id": "no_dates_for_latest",
+      "cap": 60,
+      "when": "a 'latest' question is answered with no date anywhere in the output",
+      "from": "dated"
+    },
+    {
+      "id": "invalid_citation",
+      "cap": 40,
+      "when": "a citation points at a claim that is not established",
+      "from": "valid_citations"
+    },
+    {
+      "id": "wrong_number",
+      "cap": 40,
+      "when": "a number in the output is in none of the claims it cites",
+      "from": "numbers"
+    },
+    {
+      "id": "uncited_statement",
+      "cap": 85,
+      "when": "a sentence states something and carries no [claim:ID]",
+      "from": "cited"
+    }
+  ],
+  "grades": [
+    [
+      90,
+      "A"
+    ],
+    [
+      80,
+      "B"
+    ],
+    [
+      65,
+      "C"
+    ],
+    [
+      50,
+      "D"
+    ],
+    [
+      0,
+      "F"
+    ]
+  ]
+}

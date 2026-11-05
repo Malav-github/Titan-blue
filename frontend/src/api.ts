@@ -123,6 +123,12 @@ export interface Report {
   rejected_quotes: number
   warnings: string[]
   budget_used: { searches: number; fetches: number; iterations: number }
+  quality?: {
+    score: number | null; grade: string | null; form?: string; revisions?: number; uncited_removed?: string[]
+    blockers: { id: string; cap: number; detail: string }[]
+    issues: string[]
+    dimensions: Record<string, { label: string; weight: number; score: number | null; points: number | null; checks: { id: string; score: number | null; detail: string }[] }>
+  }
   time?: {
     today: string
     scope: string | null

@@ -1,0 +1,182 @@
+{
+  "about": "Rules every written output follows, whatever its form. Three that matter most to a research reader come first: materiality (what deserves space), relevance (what belongs) and time (when each thing happened). Each rule says whether the evaluation matrix can check it by code ('auto') or needs a person or a judge ('review').",
+  "areas": [
+    {
+      "id": "time",
+      "label": "Time",
+      "why": "A reader who is not told when something happened will assume it happened together with the things next to it. Two events years apart, written in the same paragraph without dates, read as one story.",
+      "rules": [
+        {
+          "id": "T1",
+          "rule": "Give the date, month or year of every event in the sentence that reports it. 'S&P Global announced a review on 27 October 2026', never 'S&P Global announced a review'.",
+          "check": "auto:dated"
+        },
+        {
+          "id": "T2",
+          "rule": "Events that happened more than about six weeks apart go in separate sentences, each with its own date. Never join them with 'also', 'additionally', 'meanwhile', 'while', 'alongside' or 'at the same time'.",
+          "check": "auto:simultaneity"
+        },
+        {
+          "id": "T3",
+          "rule": "Order by time and say which way: newest first for a 'latest' question, oldest first for a history or timeline. Do not mix the two.",
+          "check": "auto:order"
+        },
+        {
+          "id": "T4",
+          "rule": "For a 'latest' question the first sentence is about the newest dated event. Older events follow as background and are marked as earlier.",
+          "check": "auto:latest_first"
+        },
+        {
+          "id": "T5",
+          "rule": "If a fact has no reliable date (for example it comes from a reference page that is edited continuously), say it is undated and keep it apart from dated events. Do not borrow the date of a neighbouring fact, and do not use the page's own date as the date of the event.",
+          "check": "auto:undated_labelled"
+        },
+        {
+          "id": "T6",
+          "rule": "Replace 'recently', 'currently', 'now', 'this year' with the date they stand for. The reader may open the report months later.",
+          "check": "auto:vague_time"
+        },
+        {
+          "id": "T8",
+          "rule": "Connect events by time only ('earlier', 'later', 'in the same week'). Never say one caused, led to, followed from or reinforced another unless a claim says so: sequence in time is not cause.",
+          "check": "auto:implied_link"
+        },
+        {
+          "id": "T7",
+          "rule": "For earnings and other period figures name the period (fiscal or calendar, full year, quarter) and what it is compared with.",
+          "check": "review"
+        }
+      ]
+    },
+    {
+      "id": "materiality",
+      "label": "Materiality",
+      "why": "Space is the writer's scarcest resource. Spend it on what would change what the reader believes or does.",
+      "rules": [
+        {
+          "id": "M1",
+          "rule": "Lead with the most consequential fact for this question: for 'latest' the newest dated event, otherwise the one a primary source states. The answer comes first, the support after.",
+          "check": "auto:lead"
+        },
+        {
+          "id": "M2",
+          "rule": "Include every established fact that answers the question and nothing that does not. Size, money, ownership change, leadership change and legal or regulatory action outweigh colour.",
+          "check": "auto:coverage"
+        },
+        {
+          "id": "M3",
+          "rule": "Say each fact once. Two claims that state the same thing are one point, cited twice.",
+          "check": "auto:redundancy"
+        },
+        {
+          "id": "M4",
+          "rule": "Prefer facts from the company or another primary source over a report about it; say when a point rests on one secondary source only.",
+          "check": "review"
+        },
+        {
+          "id": "M5",
+          "rule": "Give magnitude when the evidence has it (amount, share, count) so the reader can judge whether it matters.",
+          "check": "review"
+        }
+      ]
+    },
+    {
+      "id": "relevance",
+      "label": "Relevance",
+      "why": "A true statement that does not answer the question is noise, and it costs the reader attention.",
+      "rules": [
+        {
+          "id": "R1",
+          "rule": "Every sentence answers the question or states a limit on the answer. Cut background the reader did not ask for.",
+          "check": "auto:answers"
+        },
+        {
+          "id": "R2",
+          "rule": "Stay on the subject asked about. A fact about a different company, product or period is out, unless the question compares them.",
+          "check": "auto:subject"
+        },
+        {
+          "id": "R3",
+          "rule": "No scene-setting, no restating the question, no closing summary of a three-sentence answer.",
+          "check": "auto:filler"
+        }
+      ]
+    },
+    {
+      "id": "grounding",
+      "label": "Grounding",
+      "why": "Titan's rule: nothing is stated that a verified claim does not state.",
+      "rules": [
+        {
+          "id": "G1",
+          "rule": "Every statement of fact carries the claim it rests on, as [claim:ID].",
+          "check": "auto:cited"
+        },
+        {
+          "id": "G2",
+          "rule": "Numbers, names and dates in a sentence appear in the claims it cites. Never round, convert or complete them from memory.",
+          "check": "auto:numbers"
+        },
+        {
+          "id": "G3",
+          "rule": "Only cite established claims.",
+          "check": "auto:valid_citations"
+        },
+        {
+          "id": "G4",
+          "rule": "No name, company or figure that no claim contains.",
+          "check": "auto:names"
+        },
+        {
+          "id": "G5",
+          "rule": "No judgement the claims do not make: 'significant', 'major', 'marks a shift', 'signals', 'underscores'. Report what happened and let the reader weigh it.",
+          "check": "auto:evaluative"
+        }
+      ]
+    },
+    {
+      "id": "honesty",
+      "label": "Honesty about limits",
+      "why": "A reader trusts a report that says what it could not establish.",
+      "rules": [
+        {
+          "id": "H1",
+          "rule": "If part of the question is not answered, say which part, in the answer.",
+          "check": "auto:gaps_stated"
+        },
+        {
+          "id": "H2",
+          "rule": "Mark points that rest on a single unconfirmed source or that sources dispute.",
+          "check": "auto:hedged"
+        },
+        {
+          "id": "H3",
+          "rule": "No certainty words ('definitely', 'proves') beyond what the evidence gives.",
+          "check": "auto:overclaim"
+        }
+      ]
+    },
+    {
+      "id": "clarity",
+      "label": "Clarity and form",
+      "why": "The reader should be able to act after one read.",
+      "rules": [
+        {
+          "id": "C1",
+          "rule": "Plain words, short sentences (about 30 words at most), one idea each, active voice, the subject named.",
+          "check": "auto:sentence_length"
+        },
+        {
+          "id": "C2",
+          "rule": "Keep to the length and structure of the form (see the forms list).",
+          "check": "auto:length"
+        },
+        {
+          "id": "C3",
+          "rule": "No filler or stock phrases.",
+          "check": "auto:filler"
+        }
+      ]
+    }
+  ]
+}
