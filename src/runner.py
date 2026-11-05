@@ -62,6 +62,9 @@ class Plan(BaseModel):
     page_categories: list[Literal[CATEGORY_NAMES]] = Field(default_factory=list)
     queries: list[str] = Field(description="Distinct web search queries")
     checklist: list[str] = Field(description="One short label per distinct fact the question itself asks for (1 to 6), nothing more")
+    premise: list[str] = Field(default_factory=list, description=(
+        "What the question takes for granted and could be false: an event, document, statement or role it assumes exists "
+        "(for example 'Dropbox CEO wrote a 2031 shareholder letter'). Empty for a plain lookup that assumes nothing."))
     needs_data_source: str | None = Field(
         None, description="If answering needs structured data from a particular kind of source that ordinary web pages "
                           "cannot give (e.g. patent family records, SEC filings), name it; otherwise null")
@@ -163,6 +166,14 @@ class State(TypedDict, total=False):
     relevant: dict
     claim_items: dict
     allow_capabilities: bool
+    ask_sources: bool          # pause and ask the person for a source when something cannot be established
+    phase: str                 # "premise" while the question's own assumptions are being verified, then "main"
+    premise: list[str]
+    premise_claim_ids: list[int]
+    main: dict                 # the real checklist, queries and budgets, held back during the premise phase
+    sources_asked: int
+    gate: str                  # what the gate decided: continue | read | stop
+    outcome: str | None        # premise_unverified when the question's premise could not be established
     data_need: str | None
     capability_checked: bool
     capability_id: str | None
@@ -274,7 +285,7 @@ class Runner:
 
     def start(self, question: str, subject: str | None = None, require_approval: bool = False,
               pause_after: list[str] | None = None, budgets: dict | None = None,
-              allow_capabilities: bool = False, run_id: str | None = None) -> dict:
+              allow_capabilities: bool = False, run_id: str | None = None, ask_sources: bool = False) -> dict:
         """`allow_capabilities`: let the run pause and ask for a new data source (API) when ordinary pages are not enough."""
         run_id = run_id or uuid.uuid4().hex     # a caller (the API) may pick the id so it can hand it back at once
         merged = {**DEFAULT_BUDGETS, **(budgets or {})}
@@ -289,6 +300,7 @@ class Runner:
             "new_claim_ids": [], "candidates": [], "selected": [], "approved": False,
             "allow_capabilities": allow_capabilities, "capability_checked": False, "capability_id": None,
             "fetch_failures": 0, "api_calls_used": 0, "data_need": None,
+            "ask_sources": ask_sources, "phase": "main", "premise": [], "premise_claim_ids": [], "sources_asked": 0, "outcome": None,
         }
         if subject:
             state["subject"] = subject
@@ -331,6 +343,8 @@ class Runner:
             request_id = self.registry.create_request(run_id, asks[0]["need"], asks[0]["reason"])
             capability = {"request_id": request_id, "need": asks[0]["need"], "reason": asks[0]["reason"]}
             self.runs.emit(run_id, "runner", "capability_needed", capability)
+        elif asks and asks[0].get("type") == "source_needed":
+            self.runs.emit(run_id, "runner", "source_needed", asks[0])
         elif asks:
             self.runs.emit(run_id, "runner", "awaiting_approval", asks[0])
         elif snap.next:
@@ -363,16 +377,18 @@ class Runner:
 
     def _build(self, checkpointer):
         g = StateGraph(State)
-        for name in ("plan", "approve", "discover", "select", "fetch", "api_lookup", "extract", "check", "assess",
+        for name in ("plan", "approve", "premise", "gate", "discover", "select", "fetch", "api_lookup", "extract", "check", "assess",
                      "capability", "report"):
             g.add_node(name, getattr(self, f"n_{name}"))
         g.add_edge(START, "plan")
         g.add_edge("plan", "approve")
-        g.add_conditional_edges("approve", lambda s: "discover" if s.get("approved") else END, {"discover": "discover", END: END})
+        g.add_conditional_edges("approve", lambda s: "premise" if s.get("approved") else END, {"premise": "premise", END: END})
+        g.add_edge("premise", "discover")
         for a, b in (("discover", "select"), ("select", "fetch"), ("fetch", "api_lookup"), ("api_lookup", "extract"),
                      ("extract", "check"), ("check", "assess")):
             g.add_edge(a, b)
-        g.add_conditional_edges("assess", self._more_or_report, {"capability": "capability", "discover": "discover", "report": "report"})
+        g.add_conditional_edges("assess", self._more_or_report, {"capability": "capability", "discover": "discover", "gate": "gate", "report": "report"})
+        g.add_conditional_edges("gate", lambda s: s.get("gate", "stop"), {"continue": "discover", "read": "fetch", "stop": "report"})
         g.add_conditional_edges("capability", lambda s: "discover" if s.get("capability_id") else "report", {"discover": "discover", "report": "report"})
         g.add_edge("report", END)
         return g.compile(checkpointer=checkpointer)
@@ -381,13 +397,17 @@ class Runner:
     def _more_or_report(s: State) -> str:
         b = s["budgets"]
         gaps = [i for i in range(len(s["checklist"])) if i not in s["covered"]]
+        if s.get("phase") == "premise":
+            return "gate"
         room = (s["iteration"] < b["max_iterations"] and s["searches_used"] < b["max_searches"]
                 and s["fetches_used"] < b["max_fetches"])
         attempts = s["fetches_used"]
         blocked = attempts >= 3 and s["fetch_failures"] * 2 >= attempts  # most pages were unusable
         if gaps and s.get("allow_capabilities") and not s.get("capability_checked") and (s.get("data_need") or blocked):
             return "capability"
-        return "discover" if gaps and s["queries"] and room else "report"
+        if gaps and s["queries"] and room:
+            return "discover"
+        return "gate" if gaps and s.get("ask_sources") and s.get("sources_asked", 0) < 2 else "report"
 
     # -- nodes -----------------------------------------------------------------------------------
 
@@ -411,7 +431,9 @@ class Runner:
             f"(headquarters, funding, history, sources). Write each item as a short label for the fact (for example 'Year "
             f"Dropbox was founded'), never the answer or any value, even if you think you know it: your guess may be wrong and "
             f"would mislead the search. Never add steps such as verifying, cross-checking or confirming sources; the system "
-            f"does that itself."
+            f"does that itself.\n"
+            f"premise: list what the question takes for granted that could be false (an event, document, statement or role it "
+            f"assumes exists, written as a plain statement). Leave it empty for a plain lookup that assumes nothing."
         )
         plan = self._ask("plan", Plan, prompt, rid, "plan")
         warnings = list(s.get("warnings", []))
@@ -427,10 +449,11 @@ class Runner:
         entity_id = self.store.add_entity(entity_name, kind="subject")
         self.runs.emit(rid, "plan", "plan_ready", {"subject": subject, "company": plan.company,
                        "page_categories": categories, "queries": queries, "checklist": checklist,
-                       "today": now.as_dict(), "time_scope": scope.as_dict()})
+                       "today": now.as_dict(), "time_scope": scope.as_dict(), "premise": _dedupe(plan.premise)[:3]})
         return {"subject": subject, "company": plan.company, "entity_name": entity_name, "entity_id": entity_id,
                 "page_categories": categories, "queries": queries, "checklist": checklist, "warnings": warnings,
-                "data_need": plan.needs_data_source, "time_scope": scope.as_dict()}
+                "data_need": plan.needs_data_source, "time_scope": scope.as_dict(),
+                "premise": _dedupe(plan.premise)[:3]}
 
     def n_approve(self, s: State) -> dict:
         if not s.get("require_approval") or s.get("approved"):
@@ -446,6 +469,49 @@ class Runner:
             update["checklist"] = _dedupe(decision["checklist"])[:6]
         self.runs.emit(s["run_id"], "approve", "approved", {k: v for k, v in update.items() if k != "approved"})
         return update
+
+    # Verify first, act later: what the question takes for granted is established like any other claim (search, read,
+    # verbatim quote, support check) before the real research starts. Nothing is decided from the date or from the model's memory.
+    PREMISE_BUDGETS = {"max_iterations": 1, "max_searches": 2, "max_fetches": 4}
+
+    def n_premise(self, s: State) -> dict:
+        premise = s.get("premise") or []
+        if not premise or s.get("phase") == "premise":
+            return {}
+        b = s["budgets"]
+        self.runs.emit(s["run_id"], "premise", "premise_check", {"premise": premise})
+        return {"phase": "premise", "main": {"checklist": s["checklist"], "queries": s["queries"], "budgets": b},
+                "checklist": premise, "queries": premise[:b["max_queries_per_iter"]], "covered": [],
+                "budgets": {**b, **self.PREMISE_BUDGETS}}
+
+    def n_gate(self, s: State) -> dict:
+        """After a round of checking: carry on, read a source the person gave, or stop and say what could not be established."""
+        rid = s["run_id"]
+        premise = s.get("phase") == "premise"
+        gaps = [t for i, t in enumerate(s["checklist"]) if i not in s["covered"]]
+        if premise and not gaps:
+            main = s["main"]
+            moved = [int(c) for c in s["claim_items"]]
+            self.runs.emit(rid, "gate", "premise_verified", {"premise": s["checklist"], "claims": moved})
+            return {"gate": "continue", "phase": "main", "checklist": main["checklist"], "queries": main["queries"],
+                    "budgets": main["budgets"], "covered": [], "iteration": 0, "searches_used": 0, "fetches_used": 0,
+                    "fetch_failures": 0, "premise_claim_ids": moved, "claim_items": {}, "sources_asked": 0,
+                    "fetched_keys": [], "new_sources": []}
+        asked = s.get("sources_asked", 0)
+        outcome = "premise_unverified" if premise else None
+        if not s.get("ask_sources") or asked >= 2:
+            self.runs.emit(rid, "gate", "gate_stopped", {"premise": premise, "missing": gaps, "sources_asked": asked})
+            return {"gate": "stop", "outcome": outcome}
+        decision = interrupt({"type": "source_needed", "stage": "premise" if premise else "answer", "missing": gaps,
+                              "question": s["question"], "sources_asked": asked}) or {}
+        url = str(decision.get("url") or "").strip()
+        if not re.match(r"https?://\S+$", url):
+            self.runs.emit(rid, "gate", "gate_stopped", {"premise": premise, "missing": gaps, "sources_asked": asked,
+                                                         "person_declined": True})
+            return {"gate": "stop", "outcome": outcome}
+        self.runs.emit(rid, "gate", "source_supplied", {"url": url, "stage": "premise" if premise else "answer"})
+        return {"gate": "read", "sources_asked": asked + 1,
+                "selected": [{"url": url, "title": url, "snippet": "", "score": 1.0, "tier": "user_suggested"}]}
 
     def n_discover(self, s: State) -> dict:
         rid, b = s["run_id"], s["budgets"]
@@ -789,7 +855,8 @@ class Runner:
             row = {"claim_id": cid, "claim": claim["claim_text"], "value": claim["value"], "quote": claim["quote"],
                    "source_url": source["final_url"], "source_sha256": claim["source_sha256"],
                    "source_tier": claim["source_tier"], "fact": s["claim_items"].get(str(cid)),
-                   "times": self.store.claim_times(cid),
+                   "times": self.store.claim_times(cid), "premise": cid in set(s.get("premise_claim_ids") or []) or (
+                       s.get("phase") == "premise"),
                    "source_date": best.value if best else None, "source_date_kind": best.kind if best else None}
             checks = self.store.support_checks_for(cid)
             if checks:
@@ -820,10 +887,11 @@ class Runner:
                                   s.get("time_scope") or {}, tclock.now(self.now_fn), temporal_setting("latest_max_age_days"))
         time_warning = freshness.warning(timing)
 
+        premise_failed = s.get("outcome") == "premise_unverified"
         summary, dropped = "", []
-        allowed = {r["claim_id"] for r in rows["supported"]}
-        if allowed:
-            listing = "\n".join(f"[claim:{r['claim_id']}] {r['claim']}" for r in rows["supported"])
+        allowed = {r["claim_id"] for r in rows["supported"] if not r["premise"]}
+        if allowed and not premise_failed:
+            listing = "\n".join(f"[claim:{r['claim_id']}] {r['claim']}" for r in rows["supported"] if not r["premise"])
             prompt = (f"QUESTION: {s['question']}\n\nVERIFIED CLAIMS:\n{listing}\n\nWrite a short factual answer using ONLY "
                       f"these claims. Cite each statement as [claim:ID]. Say plainly what the claims do not establish. "
                       f"Do not add anything that is not in the claims.")
@@ -832,7 +900,14 @@ class Runner:
                 cited = {int(i) for i in re.findall(r"\[claim:(\d+)\]", draft.text)}
                 dropped = sorted(cited - allowed)
                 summary = re.sub(r"\[claim:(\d+)\]", lambda m: m.group(0) if int(m.group(1)) in allowed else "[invalid citation removed]", draft.text)
+        if premise_failed:
+            outcome = "premise_unverified"
+        elif not gaps:
+            outcome = "answered"
+        else:
+            outcome = "partial" if len(gaps) < len(s["checklist"]) else "not_found"
         report = {
+            "outcome": outcome, "premise": [{"text": t, "verified": s.get("phase") == "main"} for t in (s.get("premise") or [])],
             "question": s["question"], "subject": s["subject"], "summary": summary, "invalid_citations_removed": dropped,
             "established": rows["supported"], "partial": rows["partially_supported"],
             "not_supported": len(rows["not_supported"]), "unchecked": len(rows["unchecked"]),

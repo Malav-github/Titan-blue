@@ -31,7 +31,7 @@ BEGIN SELECT RAISE(ABORT, 'run_events is append-only'); END;
 # Event type -> run status it implies. Other event types do not change the status.
 STATUS_BY_EVENT = {
     "queued": "queued", "run_started": "running", "resumed": "running", "awaiting_approval": "awaiting_approval",
-    "paused": "paused", "capability_needed": "needs_capability", "run_finished": "finished", "run_stopped": "stopped", "run_failed": "failed",
+    "paused": "paused", "capability_needed": "needs_capability", "source_needed": "needs_source", "run_finished": "finished", "run_stopped": "stopped", "run_failed": "failed",
 }
 
 

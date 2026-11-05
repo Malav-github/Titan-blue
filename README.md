@@ -71,6 +71,13 @@ uv run python run_research.py --list                                    # past r
 uv run python run_research.py --events RUN_ID                           # full event log
 ```
 
+**Verify first, act later.** The planner lists what a question takes for granted (for example "the CEO wrote a 2031 shareholder letter").
+Before any real research, that premise is searched for and checked like every other claim: word-for-word quote, support check. Nothing is
+decided from the date or from the model's memory. If it cannot be established, the run stops with "no evidence this happened" and, in the
+app, pauses to ask you for a source (a web address today; documents and APIs next). A source you give is read and checked like everything
+else and is labelled as yours, never as independent or official. The same pause appears when the answer itself cannot be found, and the
+report then says plainly that there was not enough information (`outcome`: answered, partial, not_found, premise_unverified).
+
 ## Comparing local models
 
 ```powershell

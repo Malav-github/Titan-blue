@@ -280,3 +280,11 @@ def test_a_failure_in_time_reading_does_not_lose_the_claim(env, monkeypatch):
                                                quote=Q_QUOTE, needed_fact=1)])
     assert len(result["report"]["established"]) == 1
     assert "claim_time_failed" in [e["type"] for e in env["runs"].events(result["run_id"])]
+
+
+def test_same_calendar_day_written_two_ways_is_not_a_conflict():
+    a = {"claim_id": 1, "fact": 0, "value": "October 7, 2024", "times": []}
+    b = {"claim_id": 2, "fact": 0, "value": "7 October 2024", "times": []}
+    assert corroboration.find_conflicts([a, b]) == []
+    c = {"claim_id": 3, "fact": 0, "value": "October 8, 2024", "times": []}
+    assert len(corroboration.find_conflicts([a, c])) == 1

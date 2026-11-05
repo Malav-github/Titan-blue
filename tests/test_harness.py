@@ -42,4 +42,4 @@ def test_endpoint_serves_the_flowchart(tmp_path):
     c = TestClient(app)
     assert c.get("/api/harness/research").status_code == 401
     data = c.get("/api/harness/research", headers={"x-titan-token": "t"}).json()
-    assert len(data["nodes"]) == 11 and len(data["edges"]) == 13
+    assert len(data["nodes"]) == 13 and len(data["edges"]) == 18

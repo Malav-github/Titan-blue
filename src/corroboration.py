@@ -34,6 +34,21 @@ def _norm(value: str) -> str:
     return re.sub(r"[\s,$%]", "", str(value or "")).lower()
 
 
+_MONTH = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b", re.I)
+
+
+def _calendar_day(value: str):
+    """The date a value states in words ('October 7, 2024', '7 Oct 2024'), or None. Needs a month name and a day and a year."""
+    text = str(value or "")
+    if not _MONTH.search(text) or not re.search(r"\b\d{1,2}\b", text) or not re.search(r"\b\d{4}\b", text):
+        return None
+    try:
+        from dateutil import parser
+        return parser.parse(text, fuzzy=False).date()
+    except (ValueError, OverflowError):
+        return None
+
+
 def _periods(row: dict) -> set[str]:
     return {t["value"] for t in row.get("times", []) if t["kind"] == "period"}
 
@@ -47,6 +62,9 @@ def disagree(a: dict, b: dict) -> str | None:
     va, vb = _norm(a.get("value")), _norm(b.get("value"))
     if not va or not vb or va == vb or not (re.search(r"\d", va) and re.search(r"\d", vb)):
         return None
+    day_a, day_b = _calendar_day(a.get("value")), _calendar_day(b.get("value"))
+    if day_a and day_a == day_b:
+        return None            # the same calendar day written two ways
     pa, pb = _periods(a), _periods(b)
     if pa or pb:
         if pa != pb:           # different periods, or only one states its period: nothing to compare

@@ -5,68 +5,80 @@
     "plan": {
       "label": "Plan",
       "col": 0,
-      "row": 0,
+      "row": 1,
       "does": "Works out today's date and the time frame of the question, then drafts the web searches and the list of facts that must be established."
     },
     "approve": {
       "label": "Your approval",
       "col": 1,
-      "row": 0,
+      "row": 1,
       "does": "Pauses so you can edit the searches and the fact list, or reject the run. Nothing is searched before you approve."
     },
     "discover": {
       "label": "Search",
       "col": 2,
-      "row": 0,
+      "row": 1,
       "does": "Runs the web searches (limited to recent pages for questions about the current state) and finds the company's own pages. Every search records its exact time."
     },
     "select": {
       "label": "Choose pages",
       "col": 3,
-      "row": 0,
+      "row": 1,
       "does": "Picks which results are worth reading, shown each page's date and today's date."
     },
     "fetch": {
       "label": "Read pages",
       "col": 4,
-      "row": 0,
+      "row": 1,
       "does": "Downloads each page, archives the exact bytes with a hash, collects every date the page carries, and falls back to a browser for pages that need one."
     },
     "api_lookup": {
       "label": "Data sources",
       "col": 4,
-      "row": 1,
+      "row": 2,
       "does": "A deterministic router offers only the approved connectors that fit the question; the model picks calls from those, and identifiers it was never given are refused."
     },
     "extract": {
       "label": "Extract claims",
       "col": 3,
-      "row": 1,
+      "row": 2,
       "does": "A model proposes claims with word-for-word quotes. Code rejects any quote not found in the archived page, shortens over-long ones, and reads each claim's period and event dates."
     },
     "check": {
       "label": "Check claims",
       "col": 2,
-      "row": 1,
+      "row": 2,
       "does": "A second check judges whether the quote really supports the claim and whether it answers the needed fact. Code downgrades a claim whose numbers or period are not in the quote."
     },
     "assess": {
       "label": "Assess coverage",
       "col": 1,
-      "row": 1,
+      "row": 2,
       "does": "Code, not a model, decides which facts are established. It loops back to search while facts are missing and budget remains."
     },
     "capability": {
       "label": "Ask for a data source",
       "col": 1,
-      "row": 2,
+      "row": 3.15,
       "does": "When pages are mostly unusable or the plan needs structured data, the run pauses and asks you to add a connector or carry on without."
     },
     "report": {
       "label": "Report",
       "col": 0,
-      "row": 1,
+      "row": 2,
       "does": "Writes a short answer from the verified claims only, labels how well each fact is backed, flags disagreements and stale sources, and lists what was not established."
+    },
+    "premise": {
+      "label": "Check the premise",
+      "col": 2,
+      "row": 0,
+      "does": "Verify first, act later. What the question takes for granted (an event, a document, a statement) is searched for and checked like any other claim: word-for-word quote, support check. Nothing is decided from the date or from the model's memory."
+    },
+    "gate": {
+      "label": "Verified? Else ask",
+      "col": 3,
+      "row": 3.15,
+      "does": "Decides whether to carry on. If the premise is verified the real research starts. If something could not be established, the run pauses and asks you for a source (a web link, and soon a document or API); your source is read and checked like everything else. If you decline, the run stops and says what could not be established."
     }
   },
   "edges": [
@@ -76,8 +88,13 @@
     },
     {
       "from": "approve",
-      "to": "discover",
+      "to": "premise",
       "label": "approved"
+    },
+    {
+      "from": "premise",
+      "to": "discover",
+      "label": "premise held"
     },
     {
       "from": "discover",
@@ -124,12 +141,12 @@
       "label": "source added",
       "via": [
         [
-          2.5,
-          2
+          1.5,
+          3.15
         ],
         [
-          2.5,
-          0.55
+          1.5,
+          1.6
         ]
       ]
     },
@@ -137,6 +154,66 @@
       "from": "capability",
       "to": "report",
       "label": "carry on"
+    },
+    {
+      "from": "assess",
+      "to": "gate",
+      "label": "still missing",
+      "via": [
+        [
+          1.3,
+          2.62
+        ],
+        [
+          3.3,
+          2.62
+        ]
+      ]
+    },
+    {
+      "from": "gate",
+      "to": "discover",
+      "label": "premise verified",
+      "via": [
+        [
+          2.5,
+          3.15
+        ],
+        [
+          2.5,
+          1.6
+        ]
+      ]
+    },
+    {
+      "from": "gate",
+      "to": "fetch",
+      "label": "your source",
+      "via": [
+        [
+          3.5,
+          3.15
+        ],
+        [
+          3.5,
+          1.6
+        ]
+      ]
+    },
+    {
+      "from": "gate",
+      "to": "report",
+      "label": "stop",
+      "via": [
+        [
+          3,
+          3.9
+        ],
+        [
+          0,
+          3.9
+        ]
+      ]
     }
   ]
 }

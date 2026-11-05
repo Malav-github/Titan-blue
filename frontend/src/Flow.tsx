@@ -39,9 +39,10 @@ function routeVia(a: Pt, b: Pt, via: [number, number][]) {
   const p1 = edgePoint(a, pts[0])
   const p2 = edgePoint(b, pts[pts.length - 1])
   const all = [p1, ...pts, p2]
-  const mid = all[Math.floor(all.length / 2)]
-  const prev = all[Math.floor(all.length / 2) - 1]
-  return { d: 'M' + all.map((p) => `${p.x},${p.y}`).join(' L'), labelAt: { x: (mid.x + prev.x) / 2, y: (mid.y + prev.y) / 2 } }
+  // the label sits on the longest stretch, where there is most room
+  let best = 0
+  for (let i = 1; i < all.length; i++) if (Math.hypot(all[i].x - all[i - 1].x, all[i].y - all[i - 1].y) > Math.hypot(all[best + 1].x - all[best].x, all[best + 1].y - all[best].y)) best = i - 1
+  return { d: 'M' + all.map((p) => `${p.x},${p.y}`).join(' L'), labelAt: { x: (all[best].x + all[best + 1].x) / 2, y: (all[best].y + all[best + 1].y) / 2 } }
 }
 
 function route(a: Pt, b: Pt, bend = 0) {
@@ -72,7 +73,8 @@ export function Flow({ events, status }: { events?: RunEvent[]; status?: string 
   const live = events !== undefined
   const view = flowView(nodes.map((n) => n.id), events ?? [], status)
   const width = Math.max(...nodes.map((n) => n.col)) * GX + W + PAD * 2
-  const height = Math.max(...nodes.map((n) => n.row)) * GY + H + PAD * 2
+  const lowest = Math.max(...nodes.map((n) => n.row), ...edges.flatMap((e) => (e.via ?? []).map(([, r]) => r - 0.3)))
+  const height = lowest * GY + H + PAD * 2
   const selected = picked ? byId[picked] : null
   const taken = (e: HarnessEdge) => live && view[e.from].state !== 'pending' && view[e.to].state !== 'pending'
 

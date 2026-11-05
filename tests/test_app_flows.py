@@ -28,7 +28,7 @@ class FakeRunner:
         self.decisions = []
 
     def start(self, question, subject=None, require_approval=False, pause_after=None, budgets=None,
-              allow_capabilities=False, run_id=None):
+              allow_capabilities=False, run_id=None, ask_sources=False):
         self.runs.emit(run_id, "runner", "run_started", {"question": question, "subject": subject, "budgets": budgets or {},
                                                           "require_approval": require_approval})
         self.runs.emit(run_id, "plan", "plan_ready", {"queries": ["acme pricing"]})
@@ -294,3 +294,18 @@ def test_the_built_app_is_served_with_the_token_and_cannot_escape_its_folder(par
 
 def test_templates_appear_in_the_order_they_ask_for(client):
     assert [t["id"] for t in client.get("/api/templates", headers=H).json()] == ["research-company", "add-data-source"]
+
+
+# --- the run asks for a source ---
+
+def test_a_run_that_needs_a_source_shows_the_request_and_takes_a_link_or_a_decline(client, parts):
+    rid = start_research(client)
+    assert client.post(f"/api/runs/{rid}/source", headers=H, json={"url": "https://x.example/a"}).status_code == 409   # not waiting yet
+    parts["runs"].emit(rid, "runner", "source_needed", {"type": "source_needed", "stage": "premise", "missing": ["Acme wrote a 2031 letter"],
+                                                         "sources_asked": 0})
+    run = client.get(f"/api/runs/{rid}", headers=H).json()
+    assert run["status"] == "needs_source" and run["source_request"]["missing"] == ["Acme wrote a 2031 letter"]
+    bad = client.post(f"/api/runs/{rid}/source", headers=H, json={"url": "not a link"})
+    assert bad.status_code == 422
+    assert client.post(f"/api/runs/{rid}/source", headers=H, json={"url": "https://x.example/letter"}).status_code == 202
+    assert client.post(f"/api/runs/{rid}/source", headers=H, json={"url": None}).status_code in (202, 409)

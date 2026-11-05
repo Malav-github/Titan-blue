@@ -65,7 +65,7 @@ def main() -> int:
         started = time.time()
         print(f"\n{case['id']} (level {case['level']}): {case['question']}", flush=True)
         try:
-            run_id = http.post("/api/templates/research-company/run", json={"inputs": {
+            run_id = http.post("/api/templates/research-company/run", json={"ask_sources": False, "inputs": {
                 "subject": case["question"][:60], "question": case["question"], "allow_capabilities": False,
                 "max_searches": args.searches, "max_fetches": args.fetches}}).raise_for_status().json()["run_id"]
             status, deadline, approved = "queued", started + args.timeout, False
@@ -75,6 +75,8 @@ def main() -> int:
                 if status == "awaiting_approval" and not approved:
                     http.post(f"/api/runs/{run_id}/decision", json={"approved": True}).raise_for_status()
                     approved = True
+                elif status == "needs_source":      # headless: no source to give, so the run states what it could not establish
+                    http.post(f"/api/runs/{run_id}/source", json={"url": None}).raise_for_status()
                 elif status in TERMINAL:
                     break
                 time.sleep(5)

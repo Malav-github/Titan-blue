@@ -107,6 +107,8 @@ export interface Report {
   unchecked: number
   off_topic: number
   conflicts?: { claims: number[]; note: string }[]
+  outcome?: 'answered' | 'partial' | 'not_found' | 'premise_unverified'
+  premise?: { text: string; verified: boolean }[]
   gaps: string[]
   rejected_quotes: number
   warnings: string[]
@@ -129,6 +131,7 @@ export interface RunDetail {
   subject?: string | null
   approval?: Approval | null
   capability?: { request_id: string; need: string; reason: string } | null
+  source_request?: { stage: 'premise' | 'answer'; missing: string[]; sources_asked: number } | null
   report?: Report | null
   outputs?: unknown
 }
@@ -247,6 +250,7 @@ export const api = {
   run: (id: string) => request<RunDetail>(`/api/runs/${id}`),
   runEvents: (id: string, after: number) => request<RunEvent[]>(`/api/runs/${id}/events?after=${after}`),
   decide: (id: string, body: { approved: boolean; queries?: string[]; checklist?: string[] }) => post(`/api/runs/${id}/decision`, body),
+  giveSource: (id: string, url: string | null) => post(`/api/runs/${id}/source`, { url }),
   continueRun: (id: string, capability: string | null) => post(`/api/runs/${id}/continue`, { capability }),
   connectors: () => request<ConnectorSummary[]>('/api/connectors'),
   requests: () => request<Omit<CapabilityRequest, 'events' | 'gate'>[]>('/api/capability/requests'),

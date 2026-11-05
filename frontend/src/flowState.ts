@@ -11,7 +11,7 @@ export interface NodeView {
 }
 
 // Events written by the runner itself, not by a node, belong to the step they are about.
-const OWNER: Record<string, string> = { awaiting_approval: 'approve', approved: 'approve', capability_needed: 'capability' }
+const OWNER: Record<string, string> = { awaiting_approval: 'approve', approved: 'approve', capability_needed: 'capability', source_needed: 'gate' }
 const ownerOf = (e: RunEvent) => OWNER[e.type] ?? e.node
 
 const count = (events: RunEvent[], type: string) => events.filter((e) => e.type === type).length
@@ -22,7 +22,7 @@ export function flowView(ids: string[], events: RunEvent[], status: string | nul
   for (const e of events) (by[ownerOf(e)] ??= []).push(e)
 
   const furthest = Math.max(-1, ...MAIN_ORDER.map((id, i) => (by[id]?.length ? i : -1)))
-  const last = [...events].reverse().find((e) => MAIN_ORDER.includes(e.node) || e.node === 'capability' || e.node === 'report')
+  const last = [...events].reverse().find((e) => MAIN_ORDER.includes(e.node) || ['capability', 'report', 'premise', 'gate'].includes(e.node))
   const finished = status === 'finished'
   const view: Record<string, NodeView> = {}
   for (const id of ids) {
@@ -32,6 +32,7 @@ export function flowView(ids: string[], events: RunEvent[], status: string | nul
     if (mine.length || (idx >= 0 && idx < furthest) || (id === 'report' && finished)) state = 'done'
     if (id === 'approve' && status === 'awaiting_approval') state = 'waiting'
     else if (id === 'capability' && status === 'needs_capability') state = 'waiting'
+    else if (id === 'gate' && status === 'needs_source') state = 'waiting'
     else if (status === 'running' && last && ownerOf(last) === id) state = 'active'
     if (status === 'failed' && last && ownerOf(last) === id) state = 'failed'
     view[id] = { state, badges: [], events: mine }
@@ -57,6 +58,10 @@ export function flowView(ids: string[], events: RunEvent[], status: string | nul
   if (rejected) ok('extract', `${rejected} rejected`, true)
   const checked = count(by.check ?? [], 'support_checked')
   if (checked) ok('check', `${checked} checked`)
+  if (count(by.premise ?? [], 'premise_check')) ok('premise', 'checking')
+  if (count(by.gate ?? [], 'premise_verified')) ok('gate', 'premise held')
+  if (count(by.gate ?? [], 'source_supplied')) ok('gate', 'your source read')
+  if (count(by.gate ?? [], 'gate_stopped')) ok('gate', 'stopped', true)
   const rounds = count(by.assess ?? [], 'coverage_assessed')
   if (rounds) ok('assess', `round ${rounds}`)
   return view

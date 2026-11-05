@@ -29,6 +29,14 @@ function ClaimCard({ claim, caution }: { claim: ReportClaim; caution?: boolean }
   )
 }
 
+/** The written answer, with each [claim:N] marker turned into a link to that claim. */
+function Answer({ text }: { text: string }) {
+  return <>{text.split(/(\[claim:\d+\])/g).map((part, i) => {
+    const m = /^\[claim:(\d+)\]$/.exec(part)
+    return m ? <Link key={i} className="text-accent underline" to={`/evidence/${m[1]}`}>[claim {m[1]}]</Link> : part
+  })}</>
+}
+
 function ReportView({ report }: { report: Report }) {
   return (
     <section aria-labelledby="report-h" className="flex flex-col gap-4">
@@ -50,11 +58,23 @@ function ReportView({ report }: { report: Report }) {
           Sources disagree: {(report.conflicts ?? []).map((c) => c.note).join('; ')}. Both are shown below; neither was chosen for you.
         </div>
       )}
+      {(report.outcome === 'premise_unverified' || report.outcome === 'not_found') && (
+        <div role="status" className="rounded-md border border-warn bg-warn-bg p-3 text-sm">
+          <strong>{report.outcome === 'premise_unverified'
+            ? 'No evidence was found that what the question assumes actually happened, so the research was not carried out.'
+            : 'There was not enough information to answer this question.'}</strong>
+          {report.outcome === 'premise_unverified' && (report.premise ?? []).length > 0 && (
+            <ul className="mt-1 list-disc pl-5">{(report.premise ?? []).map((p) => <li key={p.text}>Not established: {p.text}</li>)}</ul>
+          )}
+          <span className="mt-1 block">Nothing here is a statement that it did not happen: it is that no source could be read and quoted for it. A source from you would let me look again.</span>
+        </div>
+      )}
       {report.summary ? (
-        <Card><p className="whitespace-pre-line">{report.summary}</p>
+        <Card><p className="whitespace-pre-line"><Answer text={report.summary} /></p>
           <p className="mt-2 text-xs text-muted">Written by a model from the verified claims below only; each [claim:N] points to one of them.</p></Card>
       ) : (
-        <Card><p className="text-sm text-muted">No answer was written: nothing was established strongly enough.</p></Card>
+        report.outcome === 'premise_unverified' || report.outcome === 'not_found' ? null :
+          <Card><p className="text-sm text-muted">No answer was written: nothing was established strongly enough.</p></Card>
       )}
       <div>
         <h3 className="mb-2 font-semibold">Established ({report.established.length})</h3>
@@ -115,6 +135,42 @@ function ApprovalPanel({ runId, plan }: { runId: string; plan: Approval }) {
         <Button onClick={() => decide.mutate(true)} disabled={decide.isPending}>Approve and run</Button>
         <Button variant="danger" onClick={() => decide.mutate(false)} disabled={decide.isPending}>Reject</Button>
       </div>
+    </Card>
+  )
+}
+
+/** The run could not establish something: ask for a source to read, or stop. What is added is checked like everything else. */
+function SourcePanel({ run }: { run: RunDetail }) {
+  const qc = useQueryClient()
+  const [url, setUrl] = useState('')
+  const ask = run.source_request
+  const go = useMutation({
+    mutationFn: (u: string | null) => api.giveSource(run.run_id, u),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['run', run.run_id] }),
+  })
+  const premise = ask?.stage === 'premise'
+  return (
+    <Card className="border-warn">
+      <h2 className="text-lg font-semibold">{premise ? 'I could not find evidence that this happened' : 'I could not find the answer'}</h2>
+      <p className="mt-1 text-sm">
+        {premise ? 'The question assumes the following, and no source I could read and quote confirms it:' : 'These facts are still missing:'}
+      </p>
+      <ul className="mt-1 list-disc pl-5 text-sm">{(ask?.missing ?? []).map((m) => <li key={m}>{m}</li>)}</ul>
+      <p className="mt-2 text-sm text-muted">
+        If you have a source, give me its web address. I will read it and check it like everything else: the exact words must be on the page,
+        and it will be marked as a source you supplied, never as independent or official.
+      </p>
+      <form className="mt-3 flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); if (url.trim()) go.mutate(url.trim()) }}>
+        <div className="min-w-64 flex-1">
+          <label htmlFor="source-url" className="block text-sm font-medium">Web address of a source</label>
+          <input id="source-url" type="url" placeholder="https://" value={url} onChange={(e) => setUrl(e.target.value)}
+            className="mt-1 w-full rounded-md border border-line bg-surface px-2 py-1.5 text-sm" />
+        </div>
+        <Button type="submit" disabled={go.isPending || !url.trim()}>Read this source</Button>
+        <Button type="button" variant="danger" onClick={() => go.mutate(null)} disabled={go.isPending}>No source, stop here</Button>
+      </form>
+      <p className="mt-2 text-xs text-muted">Documents and data-source APIs can be added from the Data sources page; reading them inside a run comes next.</p>
+      <div className="mt-3"><ErrorNote error={go.error} /></div>
     </Card>
   )
 }
@@ -198,6 +254,7 @@ export function RunPage() {
       <div className="flex flex-col gap-6">
         {data.status === 'awaiting_approval' && data.approval && <ApprovalPanel key={id} runId={id} plan={data.approval} />}
         {data.status === 'needs_capability' && <CapabilityPanel run={data} />}
+        {data.status === 'needs_source' && <SourcePanel key={id + (data.source_request?.sources_asked ?? 0)} run={data} />}
         {data.status === 'failed' && (
           <div role="alert" className="rounded-md border border-bad bg-bad-bg p-3 text-sm text-bad">
             The run failed: {String(failure?.payload.error ?? 'unknown error')}

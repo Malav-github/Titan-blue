@@ -8,6 +8,7 @@ import asyncio
 import hmac
 import json
 import os
+import re
 import secrets
 from pathlib import Path
 
@@ -29,7 +30,7 @@ from app import ollama_models
 from evidence import EvidenceStore
 from runs import RunStore
 
-STOPS = TERMINAL | {"awaiting_approval", "needs_capability", "paused"}      # a stream ends here; reconnect after acting
+STOPS = TERMINAL | {"awaiting_approval", "needs_capability", "needs_source", "paused"}      # a stream ends here; reconnect after acting
 DIST_DIR = config.PROJECT_ROOT / "frontend" / "dist"
 ALLOWED_HOSTS = {"localhost", "127.0.0.1", "[::1]", "testserver"}
 TOKEN_FILE = Path(config.DATA_DIR) / "api_token.txt"
@@ -56,6 +57,7 @@ def load_token() -> str:
 
 class RunRequest(BaseModel):
     inputs: dict = Field(default_factory=dict)
+    ask_sources: bool = True                # pause for a source when something cannot be established (headless callers send false)
     settings: dict = Field(default_factory=dict)
 
 
@@ -66,12 +68,17 @@ class Decision(BaseModel):
     checklist: list[str] | None = None
 
 
+class SourceGiven(BaseModel):
+    url: str | None = None                  # a web page to read and check; null (or empty) means "stop here"
+
+
 class Continue(BaseModel):
     capability: str | None = None           # connector id to use, or null to carry on without a new source
 
 
 class TemplateRun(BaseModel):
     inputs: dict = Field(default_factory=dict)
+    ask_sources: bool = True                # pause for a source when something cannot be established (headless callers send false)
 
 
 class CapabilityDecision(BaseModel):
@@ -226,6 +233,7 @@ def create_app(registry: Registry | None = None, token: str | None = None,
                 "subject": started.get("subject"), "budgets": started.get("budgets"),
                 "approval": last("awaiting_approval") if status == "awaiting_approval" else None,
                 "capability": last("capability_needed") if status == "needs_capability" else None,
+                "source_request": last("source_needed") if status == "needs_source" else None,
                 "report": jobs.report(run_id) if status == "finished" else None, "event_count": len(events)}
 
     @app.get("/api/runs/{run_id}")
@@ -277,6 +285,17 @@ def create_app(registry: Registry | None = None, token: str | None = None,
             raise HTTPException(409, {"problems": exc.problems})
         return {"ok": True}
 
+    @app.post("/api/runs/{run_id}/source", status_code=202)
+    def give_source(run_id: str, body: SourceGiven):
+        """A research run paused because something could not be established: read the source the person gives, or stop."""
+        if run_kind(engine.runs.events(run_id)) != "research" or engine.runs.status(run_id) != "needs_source":
+            raise HTTPException(409, {"problems": ["this run is not waiting for a source"]})
+        url = (body.url or "").strip()
+        if url and not re.match(r"https?://\S+$", url):
+            raise HTTPException(422, {"problems": ["give a web address that starts with http:// or https://"]})
+        jobs.resume_research(run_id, {"url": url} if url else {"decline": True})
+        return {"ok": True}
+
     @app.post("/api/runs/{run_id}/continue", status_code=202)
     def continue_run(run_id: str, body: Continue):
         """A research run paused for a data source: carry on with the new connector, or without one."""
@@ -305,7 +324,8 @@ def create_app(registry: Registry | None = None, token: str | None = None,
             raise HTTPException(422, {"problems": problems})
         if t.kind == "research":
             budgets = {k: values[k] for k in ("max_searches", "max_fetches") if k in values}
-            run_id = jobs.start_research(values["question"], values["subject"], budgets, bool(values.get("allow_capabilities")))
+            run_id = jobs.start_research(values["question"], values["subject"], budgets, bool(values.get("allow_capabilities")),
+                                          ask_sources=body.ask_sources)
             return {"kind": "research", "run_id": run_id}
         known = {"name": values["api_name"], "docs_url": values["docs_url"]} if values.get("api_name") else None
         return {"kind": "capability", "request_id": jobs.start_capability(values["need"], known)}
