@@ -112,3 +112,46 @@ def test_the_planner_sees_the_brief_and_the_plan_reaches_the_best_place(env):
 def test_more_ways_to_say_latest_are_respected():
     for q in ("What is the ongoing status of the Acme trial?", "What does Acme charge at present?", "Who runs Acme presently?"):
         assert classify(q, NOW).recent, q
+
+
+# --- diverse queries that always name the subject ---------------------------------------------------------------------
+
+def run_diversify(question, queries, subject="Strategy", company=None, limit=3):
+    scope = classify(question, NOW)
+    return planning.diversify(queries, question, subject, company, planning.build(question, None, scope, NOW), scope, NOW, limit)
+
+
+def test_the_name_the_question_uses_overrules_a_generic_subject():
+    q = "What is S&P Global's latest strategy disclosure?"
+    assert planning.the_subject("Strategy", None, q) == "S&P Global"
+    assert planning.the_subject("Dropbox", None, "What did Dropbox say?") == "Dropbox"
+    assert planning.the_subject("Acme Corp", "Acme Corporation", "Who runs Acme Corporation?") == "Acme Corporation"
+
+
+def test_the_reported_case_names_the_company_and_looks_from_different_angles():
+    q = "What is S&P Global's latest strategy disclosure?"
+    out = run_diversify(q, ["Strategy company latest strategy disclosure 2026", "MSTR strategy disclosure recent news 2026",
+                            "Company strategy disclosure announcements 2026"], company=None)
+    assert len(out) == 3 and all("S&P Global" in x for x in out)
+    text = " ".join(out).lower()
+    assert "investor relations" in text or "site:" in text          # the company's own pages
+    assert any(w in text for w in ("acquisition", "spin-off", "layoffs", "restructuring"))   # what 'strategy' usually means
+    assert len({x.lower() for x in out}) == 3
+
+
+def test_near_duplicate_queries_are_dropped_and_distinct_ones_kept():
+    out = run_diversify("What does Acme charge?", ["acme pricing plans", "Acme pricing plans 2026", "acme data retention policy"],
+                        subject="Acme")
+    assert out == ["acme pricing plans", "acme data retention policy"]
+
+
+def test_a_specific_filing_question_goes_to_the_company_and_the_filing():
+    out = run_diversify("What are Apple's latest quarterly net sales?", ["apple net sales", "apple quarterly revenue"], subject="Apple",
+                        company="Apple Inc.")
+    assert any("site:sec.gov" in x and "10-Q" in x for x in out)
+    assert all("apple" in x.lower() for x in out)
+
+
+def test_queries_that_already_differ_and_name_the_subject_are_left_alone():
+    qs = ["Acme investor relations annual report", "Acme layoffs restructuring", "Acme acquisition merger"]
+    assert run_diversify("What is Acme's strategy?", qs, subject="Acme", company="Acme") == qs

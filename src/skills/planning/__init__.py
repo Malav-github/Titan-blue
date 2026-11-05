@@ -59,3 +59,4 @@ def documents() -> list[dict]:
 
 
 from skills.planning.brief import PlanningBrief, build, ensure_sources  # noqa: E402,F401
+from skills.planning.queries import diversify, the_subject  # noqa: E402,F401

@@ -1,0 +1,37 @@
+{
+  "id": "query_lenses",
+  "title": "Different angles for a set of search queries",
+  "note": "Read by the planning skill. Search queries for one question should not be three phrasings of the same thing: each takes a different angle (a lens). Every query names the subject. `source` lenses go to the company's own investor-relations pages, annual report or filings; `themes` widen a loose word such as 'strategy' into the concrete events it usually means, because pages report the events, not the word. Terms are searched as plain words.",
+  "source_lens": {
+    "with_documents": "{subject} {document} {operator}",
+    "company_owned": "{subject} investor relations annual report 10-K",
+    "covers": "site:|investor relations|annual report|\\b10-?[kq]\\b|\\b8-?k\\b|sec\\.gov|shareholder letter"
+  },
+  "generic_subjects": ["strategy", "company", "business", "corporation", "firm", "news", "disclosure", "report", "latest", "announcement"],
+  "similarity_threshold": 0.6,
+  "noise_words": ["latest", "recent", "newest", "current", "news", "announcements", "announcement", "disclosure", "disclosures", "update", "updates", "company", "2024", "2025", "2026", "2027"],
+  "themes": [
+    {
+      "id": "strategy",
+      "route_when": "\\b(strateg\\w*|strategic moves?|moves?|plans?|direction|pivot|roadmap|initiatives?|priorities|outlook|restructur\\w*|what is \\w+ (?:doing|up to))\\b",
+      "lenses": [
+        {"id": "moves", "terms": ["acquisition", "merger", "divestiture", "spin-off", "layoffs", "restructuring"]},
+        {"id": "capital", "terms": ["capital allocation", "share repurchase", "debt offering", "investment"]}
+      ]
+    },
+    {
+      "id": "leadership_change",
+      "route_when": "\\b(leadership|management changes?|succession|steps? down|new (?:ceo|cfo)|executive changes?)\\b",
+      "lenses": [
+        {"id": "appointments", "terms": ["appoints", "named chief executive", "resigns", "succession"]}
+      ]
+    },
+    {
+      "id": "financial_health",
+      "route_when": "\\b(financial health|risk|solvency|liquidity|debt|credit rating|going concern)\\b",
+      "lenses": [
+        {"id": "debt", "terms": ["credit rating", "debt", "liquidity", "going concern"]}
+      ]
+    }
+  ]
+}

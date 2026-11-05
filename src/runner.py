@@ -533,8 +533,10 @@ class Runner:
             + f"QUESTION: {s['question']}\n\n"
             f"Return: subject (what the question is about); company (the official company name only if the "
             f"company's own website matters, else null); page_categories (company pages worth reading, from "
-            f"{list(CATEGORY_NAMES)}; empty if no company); queries (up to {b['max_queries_per_iter']} distinct "
-            f"web search queries using exact names and distinguishing terms; search operators work, e.g. "
+            f"{list(CATEGORY_NAMES)}; empty if no company); queries (up to {b['max_queries_per_iter']} web search queries, "
+            f"each naming the company or subject and each taking a DIFFERENT angle (for example the company's own investor-relations "
+            f"or annual report, its filings, and the concrete events the question may mean, such as acquisitions, spin-offs or "
+            f"layoffs), never three phrasings of one search; use exact names and distinguishing terms; search operators work, e.g. "
             f"site:patents.google.com, site:sec.gov, or a company's own domain); checklist: ONE item for each distinct fact "
             f"the question itself asks for, and nothing more. A question that asks one thing gets exactly ONE item; a question "
             f"that asks for a name, a ticker and a date gets THREE. Never add related facts the question did not ask for "
@@ -552,7 +554,7 @@ class Runner:
         entity_name = plan.company or subject
         queries = _dedupe(plan.queries)[:b["max_queries_per_iter"]] or [s["question"]]
         queries = _dedupe(tintent.apply_year_terms(queries, scope, now))[:b["max_queries_per_iter"]]
-        queries = _dedupe(planning.ensure_sources(queries, brief, subject, scope, now, b["max_queries_per_iter"]))
+        queries = _dedupe(planning.diversify(queries, s["question"], subject, plan.company, brief, scope, now, b["max_queries_per_iter"]))
         checklist = _dedupe(plan.checklist)[:6] or [s["question"]]
         categories = [c for c in plan.page_categories if plan.company]
         entity_id = self.store.add_entity(entity_name, kind="subject")

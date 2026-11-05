@@ -6,7 +6,7 @@
     {
       "id": "company_disclosure",
       "label": "Company disclosures and financial filings",
-      "route_when": "\\b(10-?K|10-?Q|8-?K|20-?F|6-?K|DEF ?14A|proxy|S-1|SEC|EDGAR|filings?|filed|annual report|quarterly report|10-K|balance sheet|net sales|revenues?|net income|earnings|EPS|shares outstanding|total assets|cash flow|segment|risk factors?)\\b",
+      "route_when": "\\b(10-?K|10-?Q|8-?K|20-?F|6-?K|DEF ?14A|proxy|S-1|SEC|EDGAR|filings?|filed|disclosures?|annual report|quarterly report|10-K|balance sheet|net sales|revenues?|net income|earnings|EPS|shares outstanding|total assets|cash flow|segment|risk factors?)\\b",
       "places": [
         {"site": "sec.gov", "operator": "site:sec.gov", "role": "primary", "why": "EDGAR holds the filing itself, with form type, period of report and filing date", "connector": "sec_edgar"},
         {"site": "the company's investor-relations site", "operator": "site:<company domain>", "role": "primary", "why": "the company's own copy, often with the earnings release and presentation next to it"}
