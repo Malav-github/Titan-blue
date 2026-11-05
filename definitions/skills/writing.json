@@ -6,13 +6,6 @@
     "same_period_days": 45,
     "revise_below": 70,
     "max_revisions": 1,
-    "reference_sites": [
-      "wikipedia.org",
-      "wikidata.org",
-      "britannica.com",
-      "investopedia.com",
-      "fandom.com"
-    ],
     "event_kinds": [
       "announced",
       "effective",
@@ -144,6 +137,23 @@
       "stems from",
       "driven by",
       "paved the way"
+    ],
+    "attribution_cues": [
+      "said",
+      "says",
+      "announced",
+      "reported",
+      "reports",
+      "stated",
+      "filed",
+      "disclosed",
+      "according to",
+      "press release",
+      "filing",
+      "10-k",
+      "10-q",
+      "8-k",
+      "told"
     ]
   }
 }

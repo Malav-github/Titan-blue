@@ -91,6 +91,8 @@ export interface ReportClaim {
   source_url: string
   source_sha256: string
   source_tier: string
+  source_class?: string
+  source_label?: string
   source_date?: string | null
   source_date_kind?: string | null
   times?: ClaimTime[]
@@ -113,6 +115,8 @@ export interface Report {
   summary: string
   established: ReportClaim[]
   partial: ReportClaim[]
+  context?: ReportClaim[]
+  reference_only?: ReportClaim[]
   not_supported: number
   unchecked: number
   off_topic: number

@@ -77,6 +77,11 @@
           "id": "M5",
           "rule": "Give magnitude when the evidence has it (amount, share, count) so the reader can judge whether it matters.",
           "check": "review"
+        },
+        {
+          "id": "M6",
+          "rule": "An answer may and should carry material context for the event it reports: the terms of a deal (price, size, structure, conditions), the parties, the reason and the circumstances it was made in. Put the context right after the event, dated like it, and keep it to what changes how the reader understands the event.",
+          "check": "auto:context_used"
         }
       ]
     },
@@ -87,7 +92,7 @@
       "rules": [
         {
           "id": "R1",
-          "rule": "Every sentence answers the question or states a limit on the answer. Cut background the reader did not ask for.",
+          "rule": "Every sentence answers the question, gives material context for the answer (terms, parties, reasons, circumstances) or states a limit on the answer. Cut background the reader did not ask for and context that does not change how the answer is read.",
           "check": "auto:answers"
         },
         {
@@ -131,6 +136,16 @@
           "id": "G5",
           "rule": "No judgement the claims do not make: 'significant', 'major', 'marks a shift', 'signals', 'underscores'. Report what happened and let the reader weigh it.",
           "check": "auto:evaluative"
+        },
+        {
+          "id": "G6",
+          "rule": "Credit the source by kind. The company's own filings, releases and website are primary: write 'the company said / announced / filed'. A publication reporting on them is secondary: name it ('Reuters reported'). Reference works such as Wikipedia are for general knowledge only and are not used for a company's news.",
+          "check": "auto:source_fit"
+        },
+        {
+          "id": "G7",
+          "rule": "Name the publication when a point rests on a secondary source.",
+          "check": "auto:attributed"
         }
       ]
     },

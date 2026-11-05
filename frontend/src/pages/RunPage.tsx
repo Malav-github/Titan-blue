@@ -14,6 +14,7 @@ function ClaimCard({ claim, caution }: { claim: ReportClaim; caution?: boolean }
       <blockquote className="mt-2 border-l-4 border-line pl-3 text-sm italic text-muted">“{claim.quote}”</blockquote>
       <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
         <TierBadge tier={claim.source_tier} />
+        {claim.source_label && <span className="text-muted">{claim.source_label}</span>}
         <Badge tone={claim.source_date ? 'neutral' : 'warn'}>
           {claim.source_date ? `Dated ${claim.source_date.slice(0, 10)}${claim.source_date_kind ? ` (${claim.source_date_kind.replace('_', ' ')})` : ''}` : 'No date found'}
         </Badge>
@@ -101,6 +102,16 @@ function ReportView({ report }: { report: Report }) {
         {report.established.length === 0 ? <p className="text-sm text-muted">No claim passed every check.</p> :
           <ul className="flex flex-col gap-3">{report.established.map((c) => <ClaimCard key={c.claim_id} claim={c} />)}</ul>}
       </div>
+      {(report.context ?? []).length > 0 && (
+        <div>
+          <h3 className="mb-1 font-semibold">Context ({(report.context ?? []).length})</h3>
+          <p className="mb-2 text-sm text-muted">Verified, and not the fact asked for, but material to it: terms, parties, reasons, circumstances. The answer may use them.</p>
+          <ul className="flex flex-col gap-3">{(report.context ?? []).map((c) => <ClaimCard key={c.claim_id} claim={c} />)}</ul>
+        </div>
+      )}
+      {(report.reference_only ?? []).length > 0 && (
+        <p className="text-sm text-muted">{(report.reference_only ?? []).length} verified claim(s) came from a reference work such as Wikipedia. That is for general knowledge, not for a company's news, so they are kept on record but not used in the answer: {(report.reference_only ?? []).map((c) => `#${c.claim_id}`).join(', ')}.</p>
+      )}
       {report.partial.length > 0 && (
         <div>
           <h3 className="mb-2 font-semibold">Partly supported: treat with caution ({report.partial.length})</h3>

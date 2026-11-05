@@ -20,7 +20,7 @@ from skills.writing import build_facts, matrix, score
 from skills.writing.kinds import choose_form, written_as
 
 GOLDEN_PATH = PROJECT_ROOT / "evals" / "writing_golden.json"
-_ROW_KEYS = ("claim_id", "claim", "value", "quote", "times", "source_url", "source_date", "source_date_kind", "source_tier", "corroboration", "fact")
+_ROW_KEYS = ("claim_id", "claim", "value", "quote", "times", "source_url", "source_date", "source_date_kind", "source_tier", "corroboration", "fact", "source_class", "source_label", "role")
 
 
 def load(path=GOLDEN_PATH) -> dict:
@@ -37,8 +37,9 @@ def save(data: dict, path=GOLDEN_PATH) -> None:
 def case_from_report(report: dict, case_id: str, note: str = "", today: date | None = None) -> dict:
     """A golden case from a finished run's report: the question, the written output and the claims it was written from."""
     t = report.get("time") or {}
-    rows = [{k: r.get(k) for k in _ROW_KEYS} | {"established": r in report.get("established", [])}
-            for r in report.get("established", []) + report.get("partial", [])]
+    rows = [{k: r.get(k) for k in _ROW_KEYS} | {"established": r in report.get("established", []) or r in report.get("context", []),
+                                                "role": "context" if r in report.get("context", []) else "answer"}
+            for r in report.get("established", []) + report.get("partial", []) + report.get("context", [])]
     return {"id": case_id, "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "question": report.get("question", ""), "subject": report.get("subject", ""),
             "today": t.get("today") or (today or date.today()).isoformat(), "scope": {"intent": t.get("scope") or ""},
@@ -46,7 +47,7 @@ def case_from_report(report: dict, case_id: str, note: str = "", today: date | N
 
 
 def facts_of(case: dict):
-    return build_facts([r for r in case["claims"]])
+    return build_facts(case["claims"])
 
 
 def auto_score(case: dict) -> dict:

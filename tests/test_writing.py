@@ -24,8 +24,8 @@ ROWS = [
     row(222, "S&P Global announced a strategic review for Capital IQ and associated data businesses."),
     row(223, "S&P Global has expanded AI-powered capabilities across its private markets ecosystem.", when="2026-10-22T13:28:28"),
     row(224, "S&P Global has expanded its AI-powered capabilities across private markets.", when="2026-10-22T13:28:28"),
-    row(230, "S&P Global agreed to acquire IHS Markit analytics company in a $44 billion transaction.", url="https://en.wikipedia.org/wiki/S%26P_Global",
-        when="2004-05-13T02:43:58+00:00", kind="published", tier="secondary", corroboration="single source, unconfirmed"),
+    row(230, "S&P Global agreed to acquire IHS Markit analytics company in a $44 billion transaction.", url="https://www.reuters.com/markets/deals/x",
+        when="", kind="", tier="secondary", corroboration="single source, unconfirmed"),
 ]
 FACTS = writing.build_facts(ROWS)
 
@@ -35,7 +35,7 @@ BAD = ("S&P Global announced a strategic review for Capital IQ and associated da
        "establish the specific outcomes or details of the strategic review.")
 GOOD = ("On 27 October 2026, S&P Global announced a strategic review for Capital IQ and associated data businesses [claim:222]. "
         "On 22 October 2026, it expanded its AI-powered capabilities across private markets [claim:223][claim:224]. "
-        "Earlier, on a date the sources do not give, S&P Global agreed to acquire IHS Markit in a $44 billion transaction [claim:230]. "
+        "Earlier, on a date the sources do not give, Reuters reported that S&P Global agreed to acquire IHS Markit in a $44 billion transaction [claim:230]. "
         "The claims do not establish the outcome of the strategic review.")
 
 
@@ -50,7 +50,10 @@ def rate(text, rows=None, **kw):
 
 def test_a_reference_page_date_is_not_the_events_date():
     by = {f.claim_id: f for f in FACTS}
-    assert by[230].basis == "reference" and not by[230].dated            # Wikipedia's 2004 'published' date says nothing about the deal
+    assert by[230].basis == "none" and not by[230].dated and by[230].source_class == "major_publication"
+    wiki = writing.build_facts([row(9, "S&P Global agreed to acquire IHS Markit.", url="https://en.wikipedia.org/wiki/S%26P_Global",
+                                    when="2004-05-13T02:43:58+00:00", kind="published", tier="secondary")])[0]
+    assert wiki.basis == "reference" and not wiki.dated                    # Wikipedia's 2004 'published' date says nothing about the deal
     assert by[222].basis == "page" and by[222].iso() == "2026-10-27"
 
 
@@ -104,7 +107,7 @@ def test_the_prompt_carries_today_the_moments_and_the_undated_warning():
     p = writing.draft_prompt("S&P Global's latest strategic move.", FACTS, writing.form_by_id("news"), LATEST, TODAY, ["outcome"])
     assert "TODAY: 2026-11-06" in p and "MOMENT 1: 22 October 2026 to 27 October 2026" in p and "NO RELIABLE DATE" in p
     assert "did NOT happen together" in p and "LATEST" in p and "NOT ESTABLISHED" in p
-    assert "reference page" in p and "[claim:230]" in p
+    assert "NO RELIABLE DATE" in p and "[claim:230]" in p and "Major publication" in p
     assert "MUST end with the tag" in p and "never as 2026-10-27" in p and "Do not say one caused" in p
 
 

@@ -9,21 +9,33 @@ from skills.writing.facts import Fact, age_text, groups
 _AREAS = ("time", "materiality", "relevance", "honesty")
 
 
+def _when(f: Fact) -> str:
+    return {"event": f"date {f.human()} ({f.origin})", "stated": f"date {f.human()} ({f.origin})",
+            "page": f"page dated {f.human()}, taken as the announcement date",
+            "reference": f.origin, "none": "no date found"}[f.basis]
+
+
+def _line(f: Fact) -> str:
+    source = f"{f.tier} source: {f.source_label}" if f.tier else f.source_label
+    tags = "; ".join(x for x in (_when(f), source, f.corroboration) if x)
+    return f"  [claim:{f.claim_id}] {f.text} ({tags})"
+
+
 def _listing(facts: list[Fact], today: date) -> str:
     lines = []
-    for n, moment in enumerate(groups(facts), 1):
+    main, context = [f for f in facts if f.role == "answer"], [f for f in facts if f.role == "context"]
+    for n, moment in enumerate(groups(main), 1):
         if moment[0].dated:
             first, last = moment[-1].human(), moment[0].human()
             span = first if first == last else f"{first} to {last}"
             lines.append(f"MOMENT {n}: {span} ({age_text(moment[0], today)})")
         else:
             lines.append("NO RELIABLE DATE (keep these apart from the dated moments and say they are undated)")
-        for f in moment:
-            when = {"event": f"date {f.human()} ({f.origin})", "stated": f"date {f.human()} ({f.origin})",
-                    "page": f"page dated {f.human()}, taken as the announcement date",
-                    "reference": f.origin, "none": "no date found"}[f.basis]
-            tags = "; ".join(x for x in (when, f.tier and f"{f.tier} source", f.corroboration) if x)
-            lines.append(f"  [claim:{f.claim_id}] {f.text} ({tags})")
+        lines += [_line(f) for f in moment]
+    if context:
+        lines.append("CONTEXT CLAIMS: material information about the events above. Use it to give the terms, size, parties, reason and "
+                     "circumstances of the event it belongs to, in the sentences right after that event, dated like it. Not separate stories.")
+        lines += [_line(f) for f in context]
     return "\n".join(lines)
 
 
@@ -58,7 +70,10 @@ def draft_prompt(question: str, facts: list[Fact], form: dict, scope: dict | Non
           "A sentence that states a fact MUST end with the tag of the claim it rests on, written exactly like [claim:243]; a sentence "
           "without its tag is wrong. Write each date the way a person does ('27 October 2026'), never as 2026-10-27, and put it in the "
           "sentence that reports the event. Join events by time only ('earlier', 'later'). Do not say one caused, led to, followed or "
-          "reinforced another unless a claim says so. Do not add anything that is not in the claims.")
+          "reinforced another unless a claim says so. Do not add anything that is not in the claims.\n"
+          "Credit the source in the sentence: what a company said, announced or filed is its own statement ('S&P Global said ...'); what a "
+          "publication reported is second-hand, so name it ('Reuters reported ...'). Include the material context claims, the terms and "
+          "circumstances of an event, where they exist.")
 
 
 def revision_prompt(first_prompt: str, draft: str, issues: list[str]) -> str:

@@ -29,6 +29,7 @@ from skills import planning, writing
 from skills.planning import sense as common_sense
 from skills.temporal.extract import DateFact, best_date, parse_date
 import corroboration
+import source_class
 import sources
 from config import DATA_DIR, LLM_MODE
 from evidence import MIN_QUOTE_CHARS, EvidenceStore, narrow_quote, normalize, widen_quote
@@ -159,6 +160,9 @@ class Relevance(BaseModel):
     # before explaining contradicted itself ("directly provides the needed fact" -> addresses: false).
     reason: str = Field(description="One sentence: what the claim states, and whether that is the needed fact or a direct part of it")
     addresses: bool = Field(description="True only if the claim itself states the needed fact (or a direct part of it); must agree with the reason")
+    context: bool = Field(False, description=(
+        "True if the claim does not state the needed fact but gives material context for the same event or subject: terms, price, size, "
+        "parties, date, reason, circumstances or financial impact. False if it addresses the fact, or is about something else."))
 
 
 NON_FACT = re.compile(r"^\s*(the\s+)?(passage|text|quote|excerpt|page|document|article|source)\b|^\s*quote\s*:|"
@@ -188,6 +192,7 @@ class State(TypedDict, total=False):
     all_claim_ids: list[int]
     verdicts: dict
     relevant: dict
+    context: dict              # claim id -> True if it is material context for the answer rather than the needed fact itself
     claim_items: dict
     allow_capabilities: bool
     ask_sources: bool          # pause and ask the person for a source when something cannot be established
@@ -232,13 +237,16 @@ def extraction_prompt(question: str, needed: str, page_url: str, chunk: str) -> 
     return (
         f"QUESTION: {question}\nNEEDED FACTS:\n{needed}\nPAGE: {page_url}\n\n"
         f"PASSAGE:\n{chunk}\n\n"
-        "Extract up to 5 facts from the passage, but ONLY facts that establish one of the NEEDED FACTS "
+        "Extract up to 8 facts from the passage, mostly facts that establish one of the NEEDED FACTS "
         "(give its number in `needed_fact`). Skip headings, marketing language and anything off-topic. "
         "`claim` is ONE complete sentence in your own words stating the fact (for example: \"The plant's annual "
         "capacity is 50,000 metric tons.\"); never paste the quote into it and never start it with \"quote:\". "
         "`quote` must be copied EXACTLY from the passage (20-300 characters, no paraphrase, no fixing "
         "typos, no ellipses). State only what the passage says; do not add facts or links between facts "
-        "that it does not state. If nothing in the passage establishes a needed fact, return no claims."
+        "that it does not state. Besides those, you may add up to 3 CONTEXT facts: material information about the same event that a reader "
+        "of the answer would want (the terms, price or size of a deal, the parties, the reason or circumstances, the financial impact); "
+        "give for `needed_fact` the number of the NEEDED FACT that event belongs to. If nothing in the passage establishes a needed fact "
+        "or gives such context, return no claims."
     )
 
 
@@ -250,7 +258,10 @@ def relevance_prompt(question: str, fact: str, claim_text: str) -> str:
         "A value written as a code or in a compact format (0926 for a September 26 date, 3571 for an industry code, "
         "a year, an id) DOES state the fact when the claim gives it for the thing the fact asks about; do not require "
         "it to be spelled out in words. But an identifier of the document itself (its arXiv id, URL or catalogue "
-        "number) is about the document, not the fact, unless the fact asks for that identifier."
+        "number) is about the document, not the fact, unless the fact asks for that identifier. "
+        "If the claim does not state the needed fact but gives material context for the same event or subject (the terms, price or size of "
+        "a deal, the parties, the reason or circumstances, the financial impact), answer addresses=false and context=true; "
+        "for anything else context=false."
     )
 
 
@@ -334,7 +345,7 @@ class Runner:
         state: State = {
             "run_id": run_id, "question": question, "require_approval": require_approval, "budgets": merged,
             "iteration": 0, "searches_used": 0, "fetches_used": 0, "rejected": 0, "fetched_keys": [],
-            "all_claim_ids": [], "verdicts": {}, "relevant": {}, "claim_items": {}, "covered": [], "warnings": [], "new_sources": [],
+            "all_claim_ids": [], "verdicts": {}, "relevant": {}, "context": {}, "claim_items": {}, "covered": [], "warnings": [], "new_sources": [],
             "new_claim_ids": [], "candidates": [], "selected": [], "approved": False,
             "allow_capabilities": allow_capabilities, "capability_checked": False, "capability_id": None,
             "fetch_failures": 0, "api_calls_used": 0, "data_need": None,
@@ -814,7 +825,8 @@ class Runner:
                     for p in pages["pages"]:
                         if p["category"] in s["page_categories"]:
                             found[normalize_url(p["url"])] = {"url": p["url"], "title": f"[{p['category']}] {p['url']}",
-                                                              "snippet": "", "score": 1.0, "tier": "primary"}
+                                                              "snippet": "", "score": 1.0, "tier": "primary",
+                                                              "class": "company_site", "label": source_class.label_of("company_site")}
                     self.runs.emit(rid, "discover", "primary_pages", {"domain": domain, "pages": len(found),
                                    "categories_not_found": pages["categories_not_found"]})
                 else:
@@ -831,6 +843,9 @@ class Runner:
         if len(s["queries"]) > room:
             self.runs.emit(rid, "discover", "budget_reached", {"budget": "max_searches"})
         outcomes = self._side_by_side(lambda q: self.search_fn(q, max_results=8, **({"recency": recency} if recency else {})), todo)
+        names = [s.get("company"), s.get("entity_name"), planning.the_subject(s["subject"], s.get("company"), s["question"])]
+        development = source_class.is_development(s["question"], s.get("time_scope"))
+        skipped: list[str] = []
         for query, result in zip(todo, outcomes):
             if isinstance(result, Exception):
                 raise result
@@ -838,11 +853,14 @@ class Runner:
             searches += 1
             for hit in result["results"]:
                 key = normalize_url(hit["url"])
-                official = bool(domain) and primary.is_official(hit["url"], [domain])
+                cls = source_class.classify(hit["url"], [domain] if domain else [], text=f"{hit['title']} {hit['snippet']}", names=names)
+                if not source_class.allowed(cls["id"], development):       # a reference work is not a source for a company's news
+                    skipped.append(hit["url"])
+                    continue
                 known = found.get(key)
-                if known is None or (known["tier"] != "primary" and official):
+                if known is None or (known["tier"] != "primary" and cls["tier"] == "primary"):
                     found[key] = {"url": hit["url"], "title": hit["title"], "snippet": hit["snippet"],
-                                  "score": hit["score"], "tier": "primary" if official else "secondary",
+                                  "score": hit["score"], "tier": cls["tier"], "class": cls["id"], "label": cls["label"],
                                   "published": hit.get("published")}
             self.runs.emit(rid, "discover", "search_done", {
                 "query": query, "results": len(result["results"]), "search_id": result["search_id"],
@@ -850,6 +868,9 @@ class Runner:
                 "searched_at": searched_at, "recency": recency})
             warnings += [f"search '{query}': {w}" for w in result["warnings"]]
 
+        if skipped:
+            self.runs.emit(rid, "discover", "reference_skipped", {
+                "urls": _dedupe(skipped)[:10], "why": "reference works are for general knowledge, not for a company's news"})
         fetched = set(s["fetched_keys"])
         ranked = sorted((c for k, c in found.items() if k not in fetched),
                         key=lambda c: (c["tier"] != "primary", -c["score"]))[:25]
@@ -867,7 +888,7 @@ class Runner:
         now = tclock.now(self.now_fn)
         scope = s.get("time_scope") or {}
         listing = "\n".join(
-            f"{i}. [{c['tier']}] {c['title'][:90]} - {c['url']}"
+            f"{i}. [{c.get('label') or c['tier']}] {c['title'][:90]} - {c['url']}"
             f"{' (dated ' + short_date(c.get('published')) + ')' if short_date(c.get('published')) else ' (no date shown)'}"
             f"\n   {c['snippet'][:160]!r}" for i, c in enumerate(shown, 1))
         timing = ""
@@ -877,7 +898,8 @@ class Runner:
             timing = f"TODAY: {now.describe()}.\nTIME SCOPE: {ts.guidance(now)}\n"
         prompt = (f"{timing}QUESTION: {s['question']}\nFACTS NEEDED: {s['checklist']}\n\nCandidate pages:\n{listing}\n\n"
                   f"Choose up to {n} pages most likely to state the needed facts. Prefer the organisation's own "
-                  f"pages and primary documents (patent records, filings) over commentary. Return their numbers, best first.")
+                  f"pages and primary documents (filings, press releases, patent records) over commentary; after those, major "
+                  f"publications that report on them. Return their numbers, best first.")
         choice = self._ask("select", Selection, prompt, rid, "select")
         picked = [shown[i - 1] for i in dict.fromkeys(choice.numbers if choice else []) if 1 <= i <= len(shown)][:n]
         used_llm = bool(picked)
@@ -1129,7 +1151,7 @@ class Runner:
 
     def n_check(self, s: State) -> dict:
         rid = s["run_id"]
-        verdicts, relevant = dict(s["verdicts"]), dict(s["relevant"])
+        verdicts, relevant, context = dict(s["verdicts"]), dict(s["relevant"]), dict(s.get("context") or {})
         need = s.get("settle_sites", 2)
         pending = self._check_order(list(s["new_claim_ids"]))
         while pending:
@@ -1172,10 +1194,11 @@ class Runner:
                 verdict = self._ask("relevance", Relevance, relevance_prompt(s["question"], fact, claim["claim_text"]),
                                     rid, "check")
                 relevant[str(cid)] = bool(verdict and verdict.addresses)
+                context[str(cid)] = bool(verdict and not verdict.addresses and verdict.context)
                 self.runs.emit(rid, "check", "relevance_checked", {
-                    "claim_id": cid, "needed_fact": fact, "addresses": relevant[str(cid)],
+                    "claim_id": cid, "needed_fact": fact, "addresses": relevant[str(cid)], "context": context[str(cid)],
                     "reason": verdict.reason if verdict else "relevance check failed; treated as not relevant"})
-        return {"verdicts": verdicts, "relevant": relevant, "new_claim_ids": []}
+        return {"verdicts": verdicts, "relevant": relevant, "context": context, "new_claim_ids": []}
 
     def n_assess(self, s: State) -> dict:
         """Coverage is computed by code: a needed fact is covered once a supported claim is filed under it.
@@ -1202,14 +1225,14 @@ class Runner:
             "iteration": iteration, "covered": sorted(covered), "gaps": gaps, "next_queries": queries if gaps else []})
         return {"covered": sorted(covered), "queries": queries, "iteration": iteration}
 
-    def _write(self, s: State, rows: list[dict], gaps: list[str], rid: str) -> tuple[str, list[int], dict]:
+    def _write(self, s: State, rows: list[dict], context_rows: list[dict], gaps: list[str], rid: str) -> tuple[str, list[int], dict]:
         """Put the established claims into words (writing skill): dated, grouped into moments, in the form the request asks for,
         then score the draft with the evaluation matrix and, if it has a blocking fault, write it once more with the faults named."""
         today = tclock.now(self.now_fn).local.date()
         scope = s.get("time_scope") or {}
         form = writing.written_as(writing.choose_form(s["question"], scope))
-        facts = writing.build_facts(rows)
-        allowed = {r["claim_id"] for r in rows}
+        facts = writing.build_facts(rows) + writing.build_facts(context_rows, role="context")
+        allowed = {r["claim_id"] for r in rows + context_rows}
         prompt = writing.draft_prompt(s["question"], facts, form, scope, today, gaps)
 
         def clean(text: str) -> tuple[str, list[int]]:
@@ -1246,7 +1269,9 @@ class Runner:
 
     def n_report(self, s: State) -> dict:
         rid = s["run_id"]
-        rows = {"supported": [], "partially_supported": [], "not_supported": [], "unchecked": [], "off_topic": []}
+        rows = {"supported": [], "partially_supported": [], "not_supported": [], "unchecked": [], "off_topic": [], "context": [], "reference_only": []}
+        development = source_class.is_development(s["question"], s.get("time_scope"))
+        names = [s.get("company"), s.get("entity_name"), planning.the_subject(s["subject"], s.get("company"), s["question"])]
         for cid in s["all_claim_ids"]:
             claim = self.store.get_claim(cid)
             source = self.store.get_source(claim["source_sha256"])
@@ -1259,9 +1284,15 @@ class Runner:
             checks = self.store.support_checks_for(cid)
             if checks:
                 row["why"] = checks[-1]["reasoning"]
+            cls = source_class.classify(source["final_url"], [s["domain"]] if s.get("domain") else [], text=f"{claim['claim_text']} {claim['quote']}", names=names)
+            row["source_class"], row["source_label"] = cls["id"], cls["label"]
+            if claim["source_tier"] in ("primary", "secondary"):
+                row["source_tier"] = cls["tier"]            # a filing or a company release on a wire is primary wherever it is hosted
             verdict = s["verdicts"].get(str(cid), "unchecked")
-            if verdict == "supported" and not s["relevant"].get(str(cid)):
-                verdict = "off_topic"  # true to its source, but does not answer a needed fact
+            if verdict == "supported" and not source_class.allowed(cls["id"], development):
+                verdict = "reference_only"  # a reference work is not a source for a company's news: kept on record, not used in the answer
+            elif verdict == "supported" and not s["relevant"].get(str(cid)):
+                verdict = "context" if (s.get("context") or {}).get(str(cid)) else "off_topic"  # context: true, and material, but not the fact itself
             rows[verdict].append(row)
         gaps = [t for i, t in enumerate(s["checklist"]) if i not in s["covered"]]
 
@@ -1278,6 +1309,9 @@ class Runner:
         for r in shown:
             r["corroboration"] = corroboration.label(r, sites.get(r["fact"], set()), r["claim_id"] in disputed)
             r["as_of"] = next((t["value"] for t in r["times"] if t["kind"] == "as_of"), None)
+        for r in rows["context"]:
+            r["corroboration"] = corroboration.label(r, {corroboration.site(r["source_url"])}, False)
+            r["as_of"] = next((t["value"] for t in r["times"] if t["kind"] == "as_of"), None)
 
         # how old is what the answer rests on? (established claims first; partial ones only if nothing is established)
         basis = rows["supported"] or rows["partially_supported"]
@@ -1289,7 +1323,7 @@ class Runner:
         summary, dropped, quality = "", [], {}
         allowed = {r["claim_id"] for r in rows["supported"] if not r["premise"]}
         if allowed and not premise_failed:
-            summary, dropped, quality = self._write(s, [r for r in rows["supported"] if not r["premise"]], gaps, rid)
+            summary, dropped, quality = self._write(s, [r for r in rows["supported"] if not r["premise"]], rows["context"], gaps, rid)
         if premise_failed:
             outcome = "premise_unverified"
         elif not gaps:
@@ -1303,7 +1337,7 @@ class Runner:
             "question": s["question"], "subject": s["subject"], "summary": summary, "invalid_citations_removed": dropped,
             "established": rows["supported"], "partial": rows["partially_supported"],
             "not_supported": len(rows["not_supported"]), "unchecked": len(rows["unchecked"]),
-            "off_topic": len(rows["off_topic"]), "conflicts": conflicts,
+            "off_topic": len(rows["off_topic"]), "context": rows["context"], "reference_only": rows["reference_only"], "conflicts": conflicts,
             "gaps": gaps, "rejected_quotes": s["rejected"], "warnings": s.get("warnings", []) + ([time_warning] if time_warning else []),
             "time": timing, "quality": quality,
             "budget_used": {"searches": s["searches_used"], "fetches": s["fetches_used"], "iterations": s["iteration"]},

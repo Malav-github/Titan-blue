@@ -49,7 +49,9 @@
         "valid_citations",
         "numbers",
         "names",
-        "evaluative"
+        "evaluative",
+        "source_fit",
+        "attributed"
       ]
     },
     {
@@ -66,7 +68,8 @@
       "checks": [
         "lead",
         "coverage",
-        "redundancy"
+        "redundancy",
+        "context_used"
       ]
     },
     {
@@ -150,6 +153,12 @@
       "cap": 85,
       "when": "a sentence states something and carries no [claim:ID]",
       "from": "cited"
+    },
+    {
+      "id": "reference_for_news",
+      "cap": 60,
+      "when": "a reference work such as Wikipedia is the source of a key development or news about a company",
+      "from": "source_fit"
     }
   ],
   "grades": [

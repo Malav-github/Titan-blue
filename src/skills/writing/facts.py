@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import date as Date
 from urllib.parse import urlparse
 
+import source_class
 from skills.writing import setting
 
 _ISO = re.compile(r"^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?")
@@ -37,6 +38,9 @@ class Fact:
     corroboration: str | None = None
     site: str = ""
     fact: int | None = None      # index of the needed fact this claim answers
+    role: str = "answer"         # answer: states the needed fact | context: material context for the same event (terms, parties, reasons)
+    source_class: str = ""       # company_site | filing | wire_release | major_publication | reference | other
+    source_label: str = ""
     periods: list[str] = field(default_factory=list)
 
     @property
@@ -103,9 +107,8 @@ def _site(url: str) -> str:
     return ".".join(labels[-2:]) if len(labels) >= 2 else ""
 
 
-def _is_reference(url: str) -> bool:
-    host = (urlparse(url).hostname or "").lower()
-    return any(host == s or host.endswith("." + s) for s in setting("reference_sites"))
+def _is_reference(row: dict) -> bool:
+    return (row.get("source_class") or source_class.classify(row.get("source_url") or "")["id"]) == "reference"
 
 
 def _date_of(row: dict) -> tuple[Date | None, str, str, str]:
@@ -122,7 +125,7 @@ def _date_of(row: dict) -> tuple[Date | None, str, str, str]:
     m = _YEAR.search(row.get("claim") or "")
     if m:
         return Date(int(m.group(1)), 1, 1), "year", "stated", "year named in the claim"
-    if _is_reference(row.get("source_url") or ""):
+    if _is_reference(row):
         return None, "", "reference", "reference page: its date is not the event's date"
     if row.get("source_date") and row.get("source_date_kind") in setting("page_date_kinds"):
         d, p = parse_date(row["source_date"])
@@ -131,7 +134,7 @@ def _date_of(row: dict) -> tuple[Date | None, str, str, str]:
     return None, "", "none", ""
 
 
-def build_facts(rows: list[dict]) -> list[Fact]:
+def build_facts(rows: list[dict], role: str = "answer") -> list[Fact]:
     """Facts from the report's claim rows (`claim_id`, `claim`, `times`, `source_url`, `source_date`, `source_date_kind`...)."""
     out = []
     for r in rows:
@@ -139,6 +142,8 @@ def build_facts(rows: list[dict]) -> list[Fact]:
         out.append(Fact(claim_id=r["claim_id"], text=r.get("claim") or "", value=str(r.get("value") or ""), quote=r.get("quote") or "",
                         date=d, precision=p, basis=basis, origin=origin, tier=r.get("source_tier"),
                         corroboration=r.get("corroboration"), site=_site(r.get("source_url") or ""), fact=r.get("fact"),
+                        role=r.get("role") or role, source_class=r.get("source_class") or source_class.classify(r.get("source_url") or "")["id"],
+                        source_label=r.get("source_label") or source_class.classify(r.get("source_url") or "")["label"],
                         periods=[t["value"] for t in r.get("times") or [] if t.get("kind") == "period"]))
     return out
 

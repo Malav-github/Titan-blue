@@ -8,6 +8,7 @@ and the same facts always get the same score, so a change to the writer can be m
 import re
 from datetime import date
 
+import source_class
 from skills.writing import matrix, setting
 from skills.writing.facts import Fact, apart
 from skills.writing.kinds import form_by_id
@@ -75,6 +76,7 @@ class Ctx:
         self.sents = sentences(self.text)
         self.cited_sents = [(s, _cited(s, self.by_id)) for s in self.sents]
         self.latest = self.scope.get("intent") == "latest"
+        self.development = source_class.is_development(self.question, self.scope)
 
 
 # --- time ---
@@ -242,7 +244,7 @@ def check_names(c: Ctx) -> dict:
     for s in c.sents:
         ws = re.findall(r"[A-Za-z][\w&'-]*", CITE.sub("", s))
         for i, w in enumerate(ws):
-            parts = [p for p in re.split(r"[-']", w.lower()) if p]
+            parts = [p for p in re.split(r"[-']", w.lower()) if len(p) > 1]
             if i and w[0].isupper() and any(p not in known and p not in _STOP for p in parts) and w.lower() not in _CALENDAR and len(w) > 2 and not w.isupper():
                 extra.append(w)
     extra = list(dict.fromkeys(extra))
@@ -277,7 +279,7 @@ def check_lead(c: Ctx) -> dict:
 
 
 def check_coverage(c: Ctx) -> dict:
-    mine = [f for f in c.facts if f.claim_id in c.established]
+    mine = [f for f in c.facts if f.claim_id in c.established and f.role == "answer"]
     distinct = _distinct(mine)
     if not distinct:
         return _check("coverage", None, "no established fact")
@@ -294,6 +296,18 @@ def _statements(sentence: str, by_id: dict[int, Fact]) -> list[list[Fact]]:
     return [facts for g in groups_ if (facts := _cited(g, by_id))]
 
 
+def check_context_used(c: Ctx) -> dict:
+    """Material context (terms, parties, reasons, circumstances) that was established should reach the reader."""
+    context = [f for f in c.facts if f.role == "context" and f.claim_id in c.established]
+    if not context:
+        return _check("context_used", None, "no context claim was established")
+    cited = {f.claim_id for _, fs in c.cited_sents for f in fs}
+    used = [f for f in context if f.claim_id in cited]
+    want = min(2, len(context))
+    return _check("context_used", len(used) / want, f"{len(used)} context claim(s) used" if len(used) >= want
+                  else f"{len(context)} context claim(s) were established (for example claim {context[0].claim_id}: terms, parties or reasons) and the text uses {len(used)}")
+
+
 def check_redundancy(c: Ctx) -> dict:
     """The same point written twice: two statements, not one statement with two citations, resting on claims that say the same thing."""
     seen: list[tuple[int, Fact]] = []
@@ -308,16 +322,41 @@ def check_redundancy(c: Ctx) -> dict:
                   else f"claims {dupes[0][0].claim_id} and {dupes[0][1].claim_id} say the same thing and it is written out twice")
 
 
+# --- sources ---
+
+def check_source_fit(c: Ctx) -> dict:
+    """A reference work (Wikipedia and the like) is for general knowledge, never for a company's news."""
+    if not c.development:
+        return _check("source_fit", None, "not a question about a development")
+    bad = [f for _, fs in c.cited_sents for f in fs if f.source_class == "reference"]
+    return _check("source_fit", 0.0 if bad else 1.0, "no reference work is used for the news" if not bad
+                  else f"claim {bad[0].claim_id} rests on {bad[0].site}, a reference work, in an answer about a development", blocking=bool(bad))
+
+
+def check_attributed(c: Ctx) -> dict:
+    """A point that rests on a publication names it (or says it was reported); the company's own statements say the company said it."""
+    cues = re.compile("|".join(re.escape(x) for x in setting("attribution_cues")), re.I)
+    need = [(s, f) for s, fs in c.cited_sents for f in fs if f.tier == "secondary"]
+    if not need:
+        return _check("attributed", None, "no point rests on a secondary source")
+    ok = 0
+    for s, f in need:
+        name = f.site.split(".")[0] if f.site else ""
+        ok += bool(cues.search(CITE.sub("", s)) or (name and name.lower() in s.lower()))
+    return _check("attributed", ok / len(need), "secondary points name their source" if ok == len(need)
+                  else "a point from a secondary source does not say who reported it")
+
+
 # --- relevance ---
 
 def check_answers(c: Ctx) -> dict:
     cited = list({f.claim_id: f for _, fs in c.cited_sents for f in fs}.values())
-    known = [f for f in cited if f.fact is not None]
+    known = [f for f in cited if f.fact is not None or f.role == "context"]
     if not cited:
         return _check("answers", None, "nothing cited")
     if not known:
         return _check("answers", None, "no fact indexes known")
-    off = [f for f in cited if f.fact is None]
+    off = [f for f in cited if f.fact is None and f.role != "context"]
     return _check("answers", len(known) / len(cited), "every cited claim answers a needed fact" if not off
                   else f"claim {off[0].claim_id} does not answer a needed fact")
 
