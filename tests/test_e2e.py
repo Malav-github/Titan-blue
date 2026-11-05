@@ -136,7 +136,7 @@ def test_research_from_form_to_verified_claim(page: Page):
 
     page.get_by_label("Company or subject").fill("Acme")
     page.get_by_role("button", name="Start research").click()
-    expect(page.get_by_role("heading", name="Approve the plan")).to_be_visible()
+    expect(page.get_by_role("heading", name="Your decision on the plan")).to_be_visible()
     expect(page.get_by_text("Needs your approval")).to_be_visible()
     page.get_by_label("Facts to establish").fill("Starter plan price per month")
     page.get_by_role("button", name="Approve and run").click()
@@ -164,7 +164,7 @@ def test_research_from_form_to_verified_claim(page: Page):
 
 def test_the_flowchart_shows_every_step_and_explains_one_on_click(page: Page):
     page.goto("/how-it-works")
-    steps = ["Plan", "Your approval", "Search", "Choose pages", "Read pages", "Data sources", "Extract claims", "Check claims",
+    steps = ["Plan", "Check the premise", "Your decision", "Search", "Choose pages", "Read pages", "Data sources", "Extract claims", "Check claims",
              "Assess coverage", "Ask for a data source", "Report"]
     for name in steps:
         expect(page.get_by_role("button", name=name).first).to_be_visible()
@@ -177,8 +177,8 @@ def test_a_run_page_lights_up_the_flowchart(page: Page):
     page.get_by_label("Company or subject").fill("Acme")
     page.get_by_label("What do you want to know?").fill("What does the Starter plan cost?")
     page.get_by_role("button", name="Start research").click()
-    expect(page.get_by_role("heading", name="Approve the plan")).to_be_visible()
-    expect(page.get_by_role("button", name="Your approval: waiting for you")).to_be_visible()      # the pause is visible on the chart
+    expect(page.get_by_role("heading", name="Your decision on the plan")).to_be_visible()
+    expect(page.get_by_role("button", name="Your decision: waiting for you")).to_be_visible()      # the pause is visible on the chart
     page.get_by_role("button", name="Approve and run").click()
     expect(page.locator("header").get_by_text("Finished", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Plan: done")).to_be_visible()

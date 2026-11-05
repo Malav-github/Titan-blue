@@ -4,7 +4,7 @@ import pytest
 
 from connectors.registry import ConnectorRegistry
 from evidence import EvidenceStore
-from runner import (Extraction, ExtractedClaim, FollowUps, Plan, Relevance, Runner, Selection, Summary, top_chunks)
+from runner import (Extraction, ExtractedClaim, FollowUps, Plan, PremiseList, Relevance, Runner, Selection, Summary, top_chunks)
 from runs import RunStore
 from support import SupportVerdict
 from tools.archive import archive_bytes, utc_now
@@ -34,6 +34,7 @@ class ScriptedLLM:
 def default_handlers(**override):
     handlers = {
         "Plan": lambda p: Plan(subject="Acme", queries=["acme pricing"], checklist=["Starter plan price"]),
+        "PremiseList": lambda p: PremiseList(premise=[]),
         "Selection": lambda p: Selection(numbers=[1, 99]),  # 99 does not exist and must be ignored
         "Extraction": lambda p: Extraction(claims=[
             ExtractedClaim(predicate="pricing.starter", value="$29", claim="Acme's Starter plan costs $29 per month.", quote=GOOD_QUOTE, needed_fact=1),

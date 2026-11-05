@@ -62,12 +62,14 @@ class Plan(BaseModel):
     page_categories: list[Literal[CATEGORY_NAMES]] = Field(default_factory=list)
     queries: list[str] = Field(description="Distinct web search queries")
     checklist: list[str] = Field(description="One short label per distinct fact the question itself asks for (1 to 6), nothing more")
-    premise: list[str] = Field(default_factory=list, description=(
-        "What the question takes for granted and could be false: an event, document, statement or role it assumes exists "
-        "(for example 'Dropbox CEO wrote a 2031 shareholder letter'). Empty for a plain lookup that assumes nothing."))
     needs_data_source: str | None = Field(
         None, description="If answering needs structured data from a particular kind of source that ordinary web pages "
                           "cannot give (e.g. patent family records, SEC filings), name it; otherwise null")
+
+
+class PremiseList(BaseModel):
+    premise: list[str] = Field(default_factory=list, description=(
+        "Specific things the question refers to as if they exist, each written as a plain statement. Empty if it names none."))
 
 
 class ApiCall(BaseModel):
@@ -167,10 +169,14 @@ class State(TypedDict, total=False):
     claim_items: dict
     allow_capabilities: bool
     ask_sources: bool          # pause and ask the person for a source when something cannot be established
-    phase: str                 # "premise" while the question's own assumptions are being verified, then "main"
-    premise: list[str]
+    premise: list[str]         # what the question takes for granted
+    premise_status: str        # none | verified | unverified | overridden
+    premise_missing: list[str]
     premise_claim_ids: list[int]
-    main: dict                 # the real checklist, queries and budgets, held back during the premise phase
+    premise_url: str | None    # a source the person gave for the premise, read on the next check
+    corrections: list[str]     # the person's comments on the agent's reading of the question
+    original_question: str
+    route: str                 # where the approval step sends the run next
     sources_asked: int
     gate: str                  # what the gate decided: continue | read | stop
     outcome: str | None        # premise_unverified when the question's premise could not be established
@@ -300,7 +306,8 @@ class Runner:
             "new_claim_ids": [], "candidates": [], "selected": [], "approved": False,
             "allow_capabilities": allow_capabilities, "capability_checked": False, "capability_id": None,
             "fetch_failures": 0, "api_calls_used": 0, "data_need": None,
-            "ask_sources": ask_sources, "phase": "main", "premise": [], "premise_claim_ids": [], "sources_asked": 0, "outcome": None,
+            "ask_sources": ask_sources, "premise": [], "premise_status": "none", "premise_missing": [], "premise_claim_ids": [],
+            "premise_url": None, "corrections": [], "sources_asked": 0, "outcome": None, "route": "discover",
         }
         if subject:
             state["subject"] = subject
@@ -381,14 +388,15 @@ class Runner:
                      "capability", "report"):
             g.add_node(name, getattr(self, f"n_{name}"))
         g.add_edge(START, "plan")
-        g.add_edge("plan", "approve")
-        g.add_conditional_edges("approve", lambda s: "premise" if s.get("approved") else END, {"premise": "premise", END: END})
-        g.add_edge("premise", "discover")
+        g.add_edge("plan", "premise")
+        g.add_edge("premise", "approve")
+        g.add_conditional_edges("approve", lambda s: s.get("route", "discover"), {
+            "discover": "discover", "plan": "plan", "premise": "premise", "report": "report", "end": END})
         for a, b in (("discover", "select"), ("select", "fetch"), ("fetch", "api_lookup"), ("api_lookup", "extract"),
                      ("extract", "check"), ("check", "assess")):
             g.add_edge(a, b)
         g.add_conditional_edges("assess", self._more_or_report, {"capability": "capability", "discover": "discover", "gate": "gate", "report": "report"})
-        g.add_conditional_edges("gate", lambda s: s.get("gate", "stop"), {"continue": "discover", "read": "fetch", "stop": "report"})
+        g.add_conditional_edges("gate", lambda s: s.get("gate", "stop"), {"read": "fetch", "stop": "report"})
         g.add_conditional_edges("capability", lambda s: "discover" if s.get("capability_id") else "report", {"discover": "discover", "report": "report"})
         g.add_edge("report", END)
         return g.compile(checkpointer=checkpointer)
@@ -397,8 +405,6 @@ class Runner:
     def _more_or_report(s: State) -> str:
         b = s["budgets"]
         gaps = [i for i in range(len(s["checklist"])) if i not in s["covered"]]
-        if s.get("phase") == "premise":
-            return "gate"
         room = (s["iteration"] < b["max_iterations"] and s["searches_used"] < b["max_searches"]
                 and s["fetches_used"] < b["max_fetches"])
         attempts = s["fetches_used"]
@@ -420,7 +426,9 @@ class Runner:
             f"TODAY: {now.describe()}. Your training data is older than today, so never assume what the current year is.\n"
             f"TIME SCOPE (worked out from the question): {scope.guidance(now)}\n"
             f"SEARCH ADVICE: {sources.search_advice()}\n"
-            f"QUESTION: {s['question']}\n\n"
+            + (f"THE PERSON CORRECTED YOUR EARLIER READING: {'; '.join(s['corrections'])}. The correction overrides the original "
+               f"wording: plan for the corrected question.\n" if s.get("corrections") else "")
+            + f"QUESTION: {s['question']}\n\n"
             f"Return: subject (what the question is about); company (the official company name only if the "
             f"company's own website matters, else null); page_categories (company pages worth reading, from "
             f"{list(CATEGORY_NAMES)}; empty if no company); queries (up to {b['max_queries_per_iter']} distinct "
@@ -431,9 +439,7 @@ class Runner:
             f"(headquarters, funding, history, sources). Write each item as a short label for the fact (for example 'Year "
             f"Dropbox was founded'), never the answer or any value, even if you think you know it: your guess may be wrong and "
             f"would mislead the search. Never add steps such as verifying, cross-checking or confirming sources; the system "
-            f"does that itself.\n"
-            f"premise: list what the question takes for granted that could be false (an event, document, statement or role it "
-            f"assumes exists, written as a plain statement). Leave it empty for a plain lookup that assumes nothing."
+            f"does that itself."
         )
         plan = self._ask("plan", Plan, prompt, rid, "plan")
         warnings = list(s.get("warnings", []))
@@ -449,67 +455,137 @@ class Runner:
         entity_id = self.store.add_entity(entity_name, kind="subject")
         self.runs.emit(rid, "plan", "plan_ready", {"subject": subject, "company": plan.company,
                        "page_categories": categories, "queries": queries, "checklist": checklist,
-                       "today": now.as_dict(), "time_scope": scope.as_dict(), "premise": _dedupe(plan.premise)[:3]})
+                       "today": now.as_dict(), "time_scope": scope.as_dict()})
         return {"subject": subject, "company": plan.company, "entity_name": entity_name, "entity_id": entity_id,
                 "page_categories": categories, "queries": queries, "checklist": checklist, "warnings": warnings,
                 "data_need": plan.needs_data_source, "time_scope": scope.as_dict(),
-                "premise": _dedupe(plan.premise)[:3]}
-
-    def n_approve(self, s: State) -> dict:
-        if not s.get("require_approval") or s.get("approved"):
-            return {"approved": True}
-        decision = interrupt({"question": s["question"], "subject": s["subject"], "queries": s["queries"],
-                              "checklist": s["checklist"], "page_categories": s["page_categories"]}) or {}
-        if not decision.get("approved", True):
-            return {"approved": False}
-        update = {"approved": True}
-        if decision.get("queries"):
-            update["queries"] = _dedupe(decision["queries"])[:s["budgets"]["max_queries_per_iter"]]
-        if decision.get("checklist"):
-            update["checklist"] = _dedupe(decision["checklist"])[:6]
-        self.runs.emit(s["run_id"], "approve", "approved", {k: v for k, v in update.items() if k != "approved"})
-        return update
+                "premise": self._premise_of(s, subject),
+                # a fresh plan starts clean: nothing from an earlier reading of the question carries over
+                "approved": False, "outcome": None, "premise_status": "none", "premise_missing": [], "premise_claim_ids": [],
+                "premise_url": None, "all_claim_ids": [], "verdicts": {}, "relevant": {}, "claim_items": {}, "covered": [],
+                "new_sources": [], "rejected": 0, "fetched_keys": []}
 
     # Verify first, act later: what the question takes for granted is established like any other claim (search, read,
-    # verbatim quote, support check) before the real research starts. Nothing is decided from the date or from the model's memory.
+    # verbatim quote, support check) before the person is asked to approve anything. Nothing is decided from the date or
+    # from the model's memory, and the person sees the finding together with the plan and can answer it.
     PREMISE_BUDGETS = {"max_iterations": 1, "max_searches": 2, "max_fetches": 4}
 
     def n_premise(self, s: State) -> dict:
         premise = s.get("premise") or []
-        if not premise or s.get("phase") == "premise":
-            return {}
-        b = s["budgets"]
-        self.runs.emit(s["run_id"], "premise", "premise_check", {"premise": premise})
-        return {"phase": "premise", "main": {"checklist": s["checklist"], "queries": s["queries"], "budgets": b},
-                "checklist": premise, "queries": premise[:b["max_queries_per_iter"]], "covered": [],
-                "budgets": {**b, **self.PREMISE_BUDGETS}}
+        if not premise:
+            return {"premise_status": "none", "premise_missing": []}
+        rid, b = s["run_id"], s["budgets"]
+        self.runs.emit(rid, "premise", "premise_check", {"premise": premise, "given_source": s.get("premise_url")})
+        sub = {**s, "checklist": premise, "queries": premise[:b["max_queries_per_iter"]], "covered": [], "iteration": 0,
+               "budgets": {**b, **self.PREMISE_BUDGETS}, "searches_used": 0, "fetches_used": 0, "fetch_failures": 0, "fetched_keys": [],
+               "claim_items": {}, "new_sources": [], "new_claim_ids": [], "all_claim_ids": [], "verdicts": {}, "relevant": {},
+               "rejected": 0, "selected": [], "candidates": [], "page_categories": [], "company": None, "warnings": []}
+        for step in (self.n_discover, self.n_select, "extra", self.n_fetch, self.n_extract, self.n_check):
+            if step == "extra":                 # a source the person gave is read as well, never instead of the search
+                if s.get("premise_url"):
+                    sub["selected"] = sub["selected"] + [{"url": s["premise_url"], "title": s["premise_url"], "snippet": "",
+                                                          "score": 1.0, "tier": "user_suggested"}]
+                continue
+            sub.update(step(sub))
+        covered = {sub["claim_items"][c] for c, v in sub["verdicts"].items()
+                   if v == "supported" and sub["relevant"].get(c) and c in sub["claim_items"]}
+        missing = [t for i, t in enumerate(premise) if i not in covered]
+        status = "unverified" if missing else "verified"
+        self.runs.emit(rid, "premise", "premise_checked", {"status": status, "missing": missing, "claims": list(sub["all_claim_ids"])})
+        return {"premise_status": status, "premise_missing": missing, "premise_claim_ids": list(sub["all_claim_ids"]),
+                "all_claim_ids": list(sub["all_claim_ids"]), "verdicts": sub["verdicts"], "relevant": sub["relevant"],
+                "rejected": sub["rejected"], "warnings": list(s.get("warnings", [])) + sub["warnings"], "premise_url": None,
+                # the real research starts clean: its own budget, no pages marked as already read, no fact marked as covered
+                "claim_items": {}, "covered": [], "new_sources": [], "new_claim_ids": [], "fetched_keys": [], "selected": [],
+                "candidates": [], "searches_used": 0, "fetches_used": 0, "fetch_failures": 0, "iteration": 0}
+
+    def _premise_view(self, s: State) -> dict:
+        claims = []
+        for cid in (s.get("premise_claim_ids") or [])[:4]:
+            if s["verdicts"].get(str(cid)) == "supported":
+                claim = self.store.get_claim(cid)
+                claims.append({"claim_id": cid, "claim": claim["claim_text"],
+                               "source_url": self.store.get_source(claim["source_sha256"])["final_url"]})
+        return {"status": s.get("premise_status", "none"), "items": s.get("premise") or [], "missing": s.get("premise_missing") or [],
+                "claims": claims}
+
+    def _premise_of(self, s: State, subject: str) -> list[str]:
+        """What the question refers to as if it existed (a document, event, statement, role): the things to verify first.
+        A focused call of its own, because the planner's prompt is already crowded and a small model then skips it."""
+        prompt = (
+            "A person asked a question. List the specific things the question refers to as if they certainly exist: a named "
+            "document, report, letter, paper, event, announcement, statement, deal or office. Write each as a plain statement "
+            "that could be true or false. List only what must exist for the question to make sense, never the thing the question asks for, "
+            "and never facts the question did not mention. "
+            "A question that only asks for a general fact (a number, a date, a name) and refers to nothing specific gets an empty list.\n\n"
+            "Examples:\n"
+            "Question: What did Acme's founder say in the 2040 annual report?\n"
+            "premise: [\"Acme published a 2040 annual report\"]\n"
+            "Question: Who wrote the paper 'Orange Lattices in Tuesday Space'?\n"
+            "premise: [\"A paper titled 'Orange Lattices in Tuesday Space' exists\"]\n"
+            "Question: What is the population of Norway?\n"
+            "premise: []\n\n"
+            + (f"The person later corrected the reading of the question: {'; '.join(s['corrections'])}.\n" if s.get("corrections") else "")
+            + f"Question: {s['question']}\npremise:")
+        out = self._ask("plan", PremiseList, prompt, s["run_id"], "plan")
+        return _dedupe(out.premise)[:3] if out else []
+
+    def n_approve(self, s: State) -> dict:
+        """The person answers the agent's plan and its finding about the question's premise: approve it, accept a refusal,
+        overrule a refusal, correct the agent in words (the plan is rebuilt), or hand it a source for the premise."""
+        rid, b = s["run_id"], s["budgets"]
+        unverified = s.get("premise_status") == "unverified"
+        if not s.get("require_approval"):
+            if unverified:
+                self.runs.emit(rid, "approve", "premise_unverified", {"missing": s["premise_missing"]})
+                return {"route": "report", "approved": True, "outcome": "premise_unverified"}
+            return {"route": "discover", "approved": True}
+        decision = interrupt({"question": s["question"], "subject": s["subject"], "queries": s["queries"],
+                              "checklist": s["checklist"], "page_categories": s["page_categories"],
+                              "premise": self._premise_view(s), "corrections": s.get("corrections") or []}) or {}
+        comment = str(decision.get("comment") or "").strip()
+        url = str(decision.get("url") or "").strip()
+        if comment:
+            original = s.get("original_question") or s["question"]
+            corrections = list(s.get("corrections") or []) + [comment]
+            self.runs.emit(rid, "approve", "plan_corrected", {"comment": comment})
+            return {"route": "plan", "original_question": original, "corrections": corrections,
+                    "question": f"{original} [Correction from the person: {'; '.join(corrections)}]"}
+        if url and re.match(r"https?://\S+$", url):
+            self.runs.emit(rid, "approve", "source_supplied", {"url": url, "stage": "premise"})
+            return {"route": "premise", "premise_url": url}
+        if not decision.get("approved", True):
+            return {"route": "end", "approved": False}
+        if unverified and not decision.get("override"):
+            self.runs.emit(rid, "approve", "premise_unverified", {"missing": s["premise_missing"], "accepted_by_person": True})
+            return {"route": "report", "approved": True, "outcome": "premise_unverified"}
+        update: dict = {"route": "discover", "approved": True}
+        if unverified:        # the person overruled the agent: the research goes ahead, and the report says the premise stands unverified
+            update["premise_status"] = "overridden"
+            update["warnings"] = list(s.get("warnings", [])) + [
+                "the premise was not established (" + "; ".join(s["premise_missing"]) + "); the research went ahead at your request"]
+        if decision.get("queries"):
+            update["queries"] = _dedupe(decision["queries"])[:b["max_queries_per_iter"]]
+        if decision.get("checklist"):
+            update["checklist"] = _dedupe(decision["checklist"])[:6]
+        self.runs.emit(rid, "approve", "approved", {k: v for k, v in update.items() if k not in ("approved", "route", "warnings")})
+        return update
 
     def n_gate(self, s: State) -> dict:
-        """After a round of checking: carry on, read a source the person gave, or stop and say what could not be established."""
+        """The research ended with something missing: ask the person for a source to read, or stop and say what is missing."""
         rid = s["run_id"]
-        premise = s.get("phase") == "premise"
         gaps = [t for i, t in enumerate(s["checklist"]) if i not in s["covered"]]
-        if premise and not gaps:
-            main = s["main"]
-            moved = [int(c) for c in s["claim_items"]]
-            self.runs.emit(rid, "gate", "premise_verified", {"premise": s["checklist"], "claims": moved})
-            return {"gate": "continue", "phase": "main", "checklist": main["checklist"], "queries": main["queries"],
-                    "budgets": main["budgets"], "covered": [], "iteration": 0, "searches_used": 0, "fetches_used": 0,
-                    "fetch_failures": 0, "premise_claim_ids": moved, "claim_items": {}, "sources_asked": 0,
-                    "fetched_keys": [], "new_sources": []}
         asked = s.get("sources_asked", 0)
-        outcome = "premise_unverified" if premise else None
         if not s.get("ask_sources") or asked >= 2:
-            self.runs.emit(rid, "gate", "gate_stopped", {"premise": premise, "missing": gaps, "sources_asked": asked})
-            return {"gate": "stop", "outcome": outcome}
-        decision = interrupt({"type": "source_needed", "stage": "premise" if premise else "answer", "missing": gaps,
+            self.runs.emit(rid, "gate", "gate_stopped", {"missing": gaps, "sources_asked": asked})
+            return {"gate": "stop"}
+        decision = interrupt({"type": "source_needed", "stage": "answer", "missing": gaps,
                               "question": s["question"], "sources_asked": asked}) or {}
         url = str(decision.get("url") or "").strip()
         if not re.match(r"https?://\S+$", url):
-            self.runs.emit(rid, "gate", "gate_stopped", {"premise": premise, "missing": gaps, "sources_asked": asked,
-                                                         "person_declined": True})
-            return {"gate": "stop", "outcome": outcome}
-        self.runs.emit(rid, "gate", "source_supplied", {"url": url, "stage": "premise" if premise else "answer"})
+            self.runs.emit(rid, "gate", "gate_stopped", {"missing": gaps, "sources_asked": asked, "person_declined": True})
+            return {"gate": "stop"}
+        self.runs.emit(rid, "gate", "source_supplied", {"url": url, "stage": "answer"})
         return {"gate": "read", "sources_asked": asked + 1,
                 "selected": [{"url": url, "title": url, "snippet": "", "score": 1.0, "tier": "user_suggested"}]}
 
@@ -855,8 +931,7 @@ class Runner:
             row = {"claim_id": cid, "claim": claim["claim_text"], "value": claim["value"], "quote": claim["quote"],
                    "source_url": source["final_url"], "source_sha256": claim["source_sha256"],
                    "source_tier": claim["source_tier"], "fact": s["claim_items"].get(str(cid)),
-                   "times": self.store.claim_times(cid), "premise": cid in set(s.get("premise_claim_ids") or []) or (
-                       s.get("phase") == "premise"),
+                   "times": self.store.claim_times(cid), "premise": cid in set(s.get("premise_claim_ids") or []),
                    "source_date": best.value if best else None, "source_date_kind": best.kind if best else None}
             checks = self.store.support_checks_for(cid)
             if checks:
@@ -907,7 +982,7 @@ class Runner:
         else:
             outcome = "partial" if len(gaps) < len(s["checklist"]) else "not_found"
         report = {
-            "outcome": outcome, "premise": [{"text": t, "verified": s.get("phase") == "main"} for t in (s.get("premise") or [])],
+            "outcome": outcome, "premise": [{"text": t, "verified": s.get("premise_status") == "verified"} for t in (s.get("premise") or [])],
             "question": s["question"], "subject": s["subject"], "summary": summary, "invalid_citations_removed": dropped,
             "established": rows["supported"], "partial": rows["partially_supported"],
             "not_supported": len(rows["not_supported"]), "unchecked": len(rows["unchecked"]),

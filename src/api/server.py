@@ -66,6 +66,9 @@ class Decision(BaseModel):
     note: str = ""
     queries: list[str] | None = None        # research plans only: the person's edits
     checklist: list[str] | None = None
+    comment: str | None = None              # a correction in words: the agent rebuilds its plan with it
+    url: str | None = None                  # a source for the question's premise, read and checked on the next look
+    override: bool = False                  # research anyway although the premise could not be established
 
 
 class SourceGiven(BaseModel):
@@ -277,6 +280,14 @@ def create_app(registry: Registry | None = None, token: str | None = None,
                 decision["queries"] = body.queries
             if body.checklist:
                 decision["checklist"] = body.checklist
+            if (body.comment or "").strip():
+                decision["comment"] = body.comment.strip()
+            if (body.url or "").strip():
+                if not re.match(r"https?://\S+$", body.url.strip()):
+                    raise HTTPException(422, {"problems": ["give a web address that starts with http:// or https://"]})
+                decision["url"] = body.url.strip()
+            if body.override:
+                decision["override"] = True
             jobs.resume_research(run_id, decision)
             return {"ok": True}
         try:

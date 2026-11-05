@@ -6,13 +6,13 @@
       "label": "Plan",
       "col": 0,
       "row": 1,
-      "does": "Works out today's date and the time frame of the question, then drafts the web searches and the list of facts that must be established."
+      "does": "Works out today's date and the time frame of the question, then drafts the web searches, the list of facts to establish, and what the question takes for granted (its premise)."
     },
     "approve": {
-      "label": "Your approval",
+      "label": "Your decision",
       "col": 1,
       "row": 1,
-      "does": "Pauses so you can edit the searches and the fact list, or reject the run. Nothing is searched before you approve."
+      "does": "You see the plan and what the premise check found. Approve it; accept a refusal; overrule a refusal and research anyway; give a source for the premise; or correct the agent in words (for example 'that should have been 2026') and it rebuilds the plan and checks again. Nothing real is searched before you decide."
     },
     "discover": {
       "label": "Search",
@@ -70,31 +70,48 @@
     },
     "premise": {
       "label": "Check the premise",
-      "col": 2,
+      "col": 1,
       "row": 0,
-      "does": "Verify first, act later. What the question takes for granted (an event, a document, a statement) is searched for and checked like any other claim: word-for-word quote, support check. Nothing is decided from the date or from the model's memory."
+      "does": "Verify first, act later. What the question takes for granted (an event, a document, a statement) is searched for and checked like any other claim: word-for-word quote, support check. Nothing is decided from the date or from the model's memory. This happens before you are asked to approve anything."
     },
     "gate": {
-      "label": "Verified? Else ask",
+      "label": "Missing? Ask",
       "col": 3,
       "row": 3.15,
-      "does": "Decides whether to carry on. If the premise is verified the real research starts. If something could not be established, the run pauses and asks you for a source (a web link, and soon a document or API); your source is read and checked like everything else. If you decline, the run stops and says what could not be established."
+      "does": "The research ended with something missing. The run pauses and asks you for a source (a web link today; documents and APIs next). A source you give is read and checked like everything else. If you decline, the run stops and says what could not be established."
     }
   },
   "edges": [
     {
       "from": "plan",
-      "to": "approve"
+      "to": "premise",
+      "via": [
+        [
+          0,
+          0
+        ]
+      ]
+    },
+    {
+      "from": "premise",
+      "to": "approve",
+      "label": "finding"
     },
     {
       "from": "approve",
       "to": "premise",
-      "label": "approved"
+      "label": "your source",
+      "via": [
+        [
+          1.55,
+          0.5
+        ]
+      ]
     },
     {
-      "from": "premise",
+      "from": "approve",
       "to": "discover",
-      "label": "premise held"
+      "label": "approved"
     },
     {
       "from": "discover",
@@ -172,21 +189,6 @@
     },
     {
       "from": "gate",
-      "to": "discover",
-      "label": "premise verified",
-      "via": [
-        [
-          2.5,
-          3.15
-        ],
-        [
-          2.5,
-          1.6
-        ]
-      ]
-    },
-    {
-      "from": "gate",
       "to": "fetch",
       "label": "your source",
       "via": [
@@ -214,6 +216,22 @@
           3.9
         ]
       ]
+    },
+    {
+      "from": "approve",
+      "to": "plan",
+      "label": "you corrected it",
+      "via": [
+        [
+          0.5,
+          0.55
+        ]
+      ]
+    },
+    {
+      "from": "approve",
+      "to": "report",
+      "label": "accepted: stop"
     }
   ]
 }

@@ -309,3 +309,12 @@ def test_a_run_that_needs_a_source_shows_the_request_and_takes_a_link_or_a_decli
     assert bad.status_code == 422
     assert client.post(f"/api/runs/{rid}/source", headers=H, json={"url": "https://x.example/letter"}).status_code == 202
     assert client.post(f"/api/runs/{rid}/source", headers=H, json={"url": None}).status_code in (202, 409)
+
+
+def test_the_decision_carries_a_comment_a_source_or_an_override_to_the_runner(client, parts):
+    rid = start_research(client)
+    r = client.post(f"/api/runs/{rid}/decision", headers=H, json={"approved": True, "url": "ftp://nope"})
+    assert r.status_code == 422                                                   # only web addresses are accepted
+    ok = client.post(f"/api/runs/{rid}/decision", headers=H, json={"approved": True, "comment": "  that should have been 2026  "})
+    assert ok.status_code == 202
+    assert parts["runner"].decisions[-1]["comment"] == "that should have been 2026"

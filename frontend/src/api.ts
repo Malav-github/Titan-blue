@@ -72,6 +72,8 @@ export interface Approval {
   queries: string[]
   checklist: string[]
   page_categories: string[]
+  premise?: { status: 'none' | 'verified' | 'unverified' | 'overridden'; items: string[]; missing: string[]; claims: { claim_id: number; claim: string; source_url: string }[] }
+  corrections?: string[]
 }
 export interface ReportClaim {
   claim_id: number
@@ -249,7 +251,7 @@ export const api = {
   runs: () => request<RunSummary[]>('/api/runs'),
   run: (id: string) => request<RunDetail>(`/api/runs/${id}`),
   runEvents: (id: string, after: number) => request<RunEvent[]>(`/api/runs/${id}/events?after=${after}`),
-  decide: (id: string, body: { approved: boolean; queries?: string[]; checklist?: string[] }) => post(`/api/runs/${id}/decision`, body),
+  decide: (id: string, body: { approved: boolean; queries?: string[]; checklist?: string[]; comment?: string; url?: string; override?: boolean }) => post(`/api/runs/${id}/decision`, body),
   giveSource: (id: string, url: string | null) => post(`/api/runs/${id}/source`, { url }),
   continueRun: (id: string, capability: string | null) => post(`/api/runs/${id}/continue`, { capability }),
   connectors: () => request<ConnectorSummary[]>('/api/connectors'),

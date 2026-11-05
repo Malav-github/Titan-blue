@@ -107,15 +107,38 @@ function ApprovalPanel({ runId, plan }: { runId: string; plan: Approval }) {
   const qc = useQueryClient()
   const [queries, setQueries] = useState(plan.queries.join('\n'))
   const [checklist, setChecklist] = useState(plan.checklist.join('\n'))
+  const [comment, setComment] = useState('')
+  const [url, setUrl] = useState('')
+  type Answer = { approved: boolean; override?: boolean; comment?: string; url?: string }
   const decide = useMutation({
-    mutationFn: (approved: boolean) => api.decide(runId, { approved, queries: lines(queries), checklist: lines(checklist) }),
+    mutationFn: (a: Answer) => api.decide(runId, { ...a, queries: lines(queries), checklist: lines(checklist) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['run', runId] }),
   })
+  const premise = plan.premise
+  const unverified = premise?.status === 'unverified'
+  const busy = decide.isPending
   return (
     <Card className="border-warn">
-      <h2 className="text-lg font-semibold">Approve the plan</h2>
-      <p className="mt-1 text-sm text-muted">
-        Titan will run these searches and then read pages looking for the facts listed. You can edit either list, one item per line.
+      <h2 className="text-lg font-semibold">{unverified ? 'The agent could not verify what your question assumes' : 'Your decision on the plan'}</h2>
+      {(plan.corrections ?? []).length > 0 && (
+        <p className="mt-1 text-sm text-muted">Rebuilt after your correction{(plan.corrections ?? []).length > 1 ? 's' : ''}: {(plan.corrections ?? []).join('; ')}</p>
+      )}
+      {premise && premise.items.length > 0 && (
+        <div role="status" className={`mt-3 rounded-md border p-3 text-sm ${unverified ? 'border-warn bg-warn-bg' : 'border-ok bg-ok-bg'}`}>
+          <strong>{unverified ? 'No source I could read and quote confirms this happened:' : 'Checked before anything else, and confirmed:'}</strong>
+          <ul className="mt-1 list-disc pl-5">{premise.items.map((p) => <li key={p}>{p}</li>)}</ul>
+          {!unverified && premise.claims.length > 0 && (
+            <ul className="mt-1 flex flex-col gap-1">
+              {premise.claims.map((c) => (
+                <li key={c.claim_id}>{c.claim} <Link className="text-accent underline" to={`/evidence/${c.claim_id}`}>claim {c.claim_id}</Link></li>
+              ))}
+            </ul>
+          )}
+          {unverified && <p className="mt-1">This is not a statement that it did not happen. Nothing else has been searched yet. You can accept this, correct me, or give me a source.</p>}
+        </div>
+      )}
+      <p className="mt-3 text-sm text-muted">
+        If you go ahead, Titan will run these searches and then read pages looking for the facts listed. You can edit either list, one item per line.
         {plan.page_categories.length > 0 && <> It will also look for the company’s own pages about: {plan.page_categories.join(', ')}.</>}
       </p>
       <div className="mt-3 grid gap-4 md:grid-cols-2">
@@ -130,10 +153,35 @@ function ApprovalPanel({ runId, plan }: { runId: string; plan: Approval }) {
             value={checklist} onChange={(e) => setChecklist(e.target.value)} />
         </div>
       </div>
+      <div className="mt-4">
+        <label htmlFor="plan-comment" className="text-sm font-medium">Correct the agent in your own words</label>
+        <textarea id="plan-comment" rows={2} placeholder="For example: that should have been 2026" className="mt-1 w-full rounded-md border border-line bg-surface px-3 py-2 text-sm"
+          value={comment} onChange={(e) => setComment(e.target.value)} />
+        <Button className="mt-2" variant="secondary" disabled={busy || !comment.trim()} onClick={() => decide.mutate({ approved: true, comment: comment.trim() })}>
+          Send correction and rebuild the plan
+        </Button>
+      </div>
+      {unverified && (
+        <form className="mt-4 flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); if (url.trim()) decide.mutate({ approved: true, url: url.trim() }) }}>
+          <div className="min-w-64 flex-1">
+            <label htmlFor="premise-url" className="block text-sm font-medium">Or give a source for it (web address)</label>
+            <input id="premise-url" type="url" placeholder="https://" value={url} onChange={(e) => setUrl(e.target.value)}
+              className="mt-1 w-full rounded-md border border-line bg-surface px-2 py-1.5 text-sm" />
+          </div>
+          <Button type="submit" variant="secondary" disabled={busy || !url.trim()}>Read and check this source</Button>
+        </form>
+      )}
       <div className="mt-3"><ErrorNote error={decide.error} /></div>
-      <div className="mt-3 flex gap-2">
-        <Button onClick={() => decide.mutate(true)} disabled={decide.isPending}>Approve and run</Button>
-        <Button variant="danger" onClick={() => decide.mutate(false)} disabled={decide.isPending}>Reject</Button>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {unverified ? (
+          <>
+            <Button onClick={() => decide.mutate({ approved: true })} disabled={busy}>Accept: stop here</Button>
+            <Button variant="secondary" onClick={() => decide.mutate({ approved: true, override: true })} disabled={busy}>Research anyway</Button>
+          </>
+        ) : (
+          <Button onClick={() => decide.mutate({ approved: true })} disabled={busy}>Approve and run</Button>
+        )}
+        <Button variant="danger" onClick={() => decide.mutate({ approved: false })} disabled={busy}>Reject the run</Button>
       </div>
     </Card>
   )
@@ -252,7 +300,7 @@ export function RunPage() {
         actions={<span aria-live="polite"><StatusBadge status={data.status} /></span>}
       />
       <div className="flex flex-col gap-6">
-        {data.status === 'awaiting_approval' && data.approval && <ApprovalPanel key={id} runId={id} plan={data.approval} />}
+        {data.status === 'awaiting_approval' && data.approval && <ApprovalPanel key={id + JSON.stringify(data.approval)} runId={id} plan={data.approval} />}
         {data.status === 'needs_capability' && <CapabilityPanel run={data} />}
         {data.status === 'needs_source' && <SourcePanel key={id + (data.source_request?.sources_asked ?? 0)} run={data} />}
         {data.status === 'failed' && (
