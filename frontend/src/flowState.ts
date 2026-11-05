@@ -8,12 +8,17 @@ export interface NodeView {
   state: NodeState
   badges: { text: string; warn?: boolean }[]
   events: RunEvent[]
+  models: string[]     // the language models that worked in this step
+  sources: string[]    // the search engines, data sources or kinds of page this step used
 }
 
 // Events written by the runner itself, not by a node, belong to the step they are about.
 const OWNER: Record<string, string> = { awaiting_approval: 'approve', approved: 'approve', capability_needed: 'capability', source_needed: 'gate' }
 const ownerOf = (e: RunEvent) => OWNER[e.type] ?? e.node
 
+const uniq = (xs: string[]) => [...new Set(xs.filter(Boolean))]
+/** One name per engine: brave and brave_context are the same engine. */
+const engineName = (n: string) => n.replace(/_context$/, '')
 const count = (events: RunEvent[], type: string) => events.filter((e) => e.type === type).length
 
 /** What each step of a run has done so far, worked out from the run's event log. */
@@ -35,9 +40,16 @@ export function flowView(ids: string[], events: RunEvent[], status: string | nul
     else if (id === 'gate' && status === 'needs_source') state = 'waiting'
     else if (status === 'running' && last && ownerOf(last) === id) state = 'active'
     if (status === 'failed' && last && ownerOf(last) === id) state = 'failed'
-    view[id] = { state, badges: [], events: mine }
+    view[id] = { state, badges: [], events: mine, models: uniq(mine.filter((e) => e.type === 'model_used').map((e) => String(e.payload.model))), sources: [] }
   }
 
+  const engines = (events: RunEvent[], type: string) =>
+    uniq(events.filter((e) => e.type === type).flatMap((e) => (e.payload.engines ?? (e.payload.providers ?? []).filter((p: { ok?: boolean }) => p.ok).map((p: { provider: string }) => p.provider)) as string[]).map(engineName))
+  if (view.scout) view.scout.sources = engines(by.scout ?? [], 'scout_done')
+  if (view.plan) view.plan.sources = engines(by.plan ?? [], 'premise_screened')
+  if (view.discover) view.discover.sources = engines(by.discover ?? [], 'search_done')
+  if (view.fetch) view.fetch.sources = uniq([count(by.fetch ?? [], 'source_fetched') ? 'web pages' : '', count(by.fetch ?? [], 'source_rendered') ? 'browser' : ''])
+  if (view.api_lookup) view.api_lookup.sources = uniq((by.api_lookup ?? []).filter((e) => e.type === 'api_called').map((e) => String(e.payload.connector)))
   const ok = (id: string, text: string, warn = false) => view[id] && view[id].badges.push({ text, warn })
   const searches = count(by.discover ?? [], 'search_done')
   if (searches) ok('discover', `${searches} search${searches === 1 ? '' : 'es'}`)

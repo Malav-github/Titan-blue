@@ -26,6 +26,7 @@ from skills.temporal import clock as tclock, freshness, intent as tintent, setti
 from skills.temporal.display import short_date
 from skills.temporal import periods as tperiods
 from skills import planning
+from skills.planning import sense as common_sense
 from skills.temporal.extract import DateFact, best_date, parse_date
 import corroboration
 import sources
@@ -72,6 +73,13 @@ class Plan(BaseModel):
 class PremiseList(BaseModel):
     premise: list[str] = Field(default_factory=list, description=(
         "Specific things the question refers to as if they exist, each written as a plain statement. Empty if it names none."))
+
+
+class PremiseScreen(BaseModel):
+    reported: list[int] = Field(default_factory=list, description=(
+        "Numbers of the search results whose title or snippet actually reports that the premise happened or exists. A result that "
+        "only mentions the same company or topic does not count. Empty if none."))
+    reason: str = Field("", description="One short sentence on what the results show")
 
 
 class SourceAdvice(BaseModel):
@@ -187,7 +195,9 @@ class State(TypedDict, total=False):
     brief: dict                # the planning skill's brief: kinds, ranked places, document types, target time
     advice: dict               # ranked places to look and an optional suggested correction, shown at the decision step
     premise: list[str]         # what the question takes for granted
-    premise_status: str        # none | verified | unverified | overridden
+    premise_status: str        # none | reported (search results report it) | verified (a source was read) | unverified | overridden
+    premise_screen: dict       # the one quick search that screened the premise: query, results, which ones report it
+    sense: list                # common-sense concerns about the question itself (planning skill)
     premise_missing: list[str]
     premise_claim_ids: list[int]
     premise_url: str | None    # a source the person gave for the premise, read on the next check
@@ -287,6 +297,7 @@ class Runner:
                  checkpoint_path: str | None = None, llm_factory=None, search_fn=None, fetch_fn=None,
                  render_fn=None, registry=None, call_api_fn=None, now_fn=None, scout: bool = True):
         self.now_fn = now_fn                  # replaceable clock (tests, replays); None means the real one
+        self._noted: set = set()              # (run, step, task) whose model has been logged
         self.network_workers = 4              # searches and page downloads run side by side; models stay one at a time
         self.scout_enabled = scout            # a first quick search before planning (tests that count searches switch it off)
         self.store = store or EvidenceStore()
@@ -411,12 +422,23 @@ class Runner:
         with ThreadPoolExecutor(max_workers=min(self.network_workers, len(items))) as pool:
             return list(pool.map(safe, items))
 
+    def _note_model(self, run_id: str, node: str, task: str, llm) -> None:
+        """Log once per step and task which model did the work, so the flowchart can show it."""
+        key = (run_id, node, task)
+        if key in self._noted:
+            return
+        self._noted.add(key)
+        name = getattr(llm, "model", None) or getattr(llm, "model_name", None) or type(llm).__name__
+        self.runs.emit(run_id, node, "model_used", {"task": task, "model": str(name)})
+
     def _ask(self, task: str, schema, prompt: str, run_id: str, node: str):
         """Structured LLM call, one retry. Returns None on failure; the caller falls back, and it is logged."""
         last = None
         for _ in range(2):
             try:
-                return self.llm_factory(task).with_structured_output(schema).invoke(prompt)
+                llm = self.llm_factory(task)
+                self._note_model(run_id, node, task, llm)
+                return llm.with_structured_output(schema).invoke(prompt)
             except Exception as exc:
                 last = exc
         self.runs.emit(run_id, node, "llm_failed", {"task": task, "schema": schema.__name__,
@@ -468,11 +490,12 @@ class Runner:
             return {"scout": []}
         rid, q = s["run_id"], s["question"]
         queries = _dedupe([q, f"{q} official"])[:self.SCOUT_SEARCHES]
-        results, warnings, seen = [], list(s.get("warnings", [])), set()
+        results, warnings, seen, engines = [], list(s.get("warnings", [])), set(), []
         for found in self._side_by_side(lambda query: self.search_fn(query, max_results=6), queries):
             if isinstance(found, Exception):               # the scout is a help, never a reason to stop the run
                 warnings.append(f"scout search failed: {type(found).__name__}: {str(found)[:120]}")
                 continue
+            engines += [p["provider"] for p in found.get("providers", []) if p.get("ok")]
             for hit in found["results"]:
                 key = normalize_url(hit["url"])
                 if key in seen:
@@ -481,7 +504,7 @@ class Runner:
                 results.append({"title": (hit.get("title") or "")[:120], "url": hit["url"], "site": corroboration.site(hit["url"]),
                                 "snippet": (hit.get("snippet") or "")[:220], "published": short_date(hit.get("published"))})
         results = results[:10]
-        self.runs.emit(rid, "scout", "scout_done", {"queries": queries, "results": len(results),
+        self.runs.emit(rid, "scout", "scout_done", {"queries": queries, "results": len(results), "engines": _dedupe(engines),
                                                     "sites": _dedupe([r["site"] for r in results])[:8],
                                                     "searched_at": tclock.now(self.now_fn).as_dict()})
         return {"scout": results, "warnings": warnings}
@@ -543,12 +566,14 @@ class Runner:
         now = tclock.now(self.now_fn)
         scope = tintent.classify(s["question"], now)
         brief = planning.build(s["question"], None, scope, now)
+        concerns = common_sense.check(s["question"], scope, now)
         prompt = (
             "You plan web research that must be backed by quoted evidence.\n"
             f"TODAY: {now.describe()}. Your training data is older than today, so never assume what the current year is.\n"
             f"TIME SCOPE (worked out from the question): {scope.guidance(now)}\n"
             f"SEARCH ADVICE: {sources.search_advice()}\n"
             f"{brief.guidance() + chr(10) if not brief.empty else ''}"
+            f"{self._sense_text(concerns)}"
             f"{self._scout_context(s)}"
             + (f"THE PERSON CORRECTED YOUR EARLIER READING: {'; '.join(s['corrections'])}. The correction overrides the original "
                f"wording: plan for the corrected question.\n" if s.get("corrections") else "")
@@ -581,23 +606,25 @@ class Runner:
         categories = [c for c in plan.page_categories if plan.company]
         entity_id = self.store.add_entity(entity_name, kind="subject")
         advice = self._advice_of(s)
-        self.runs.emit(rid, "plan", "plan_ready", {"subject": subject, "company": plan.company,
+        listed = self._premise_of(s, subject)
+        screen = self._screen_premise(s, listed)           # one quick search, top 10 results: is it reported anywhere?
+        warnings = warnings + screen.pop("warnings", [])
+        self.runs.emit(rid, "plan", "plan_ready", {"sense": concerns, "subject": subject, "company": plan.company,
                        "page_categories": categories, "queries": queries, "checklist": checklist,
                        "today": now.as_dict(), "time_scope": scope.as_dict(),
                        "advice": advice, "brief": brief.as_dict()})
         return {"subject": subject, "company": plan.company, "entity_name": entity_name, "entity_id": entity_id,
                 "page_categories": categories, "queries": queries, "checklist": checklist, "warnings": warnings,
                 "data_need": plan.needs_data_source, "time_scope": scope.as_dict(), "brief": brief.as_dict(),
-                "premise": (listed := self._premise_of(s, subject)), "premise_status": "pending" if listed else "none",
-                "advice": advice,
+                "premise": listed, "sense": concerns, "advice": advice, **screen,
                 # a fresh plan starts clean: nothing from an earlier reading of the question carries over
-                "approved": False, "outcome": None, "premise_missing": [], "premise_claim_ids": [],
+                "approved": False, "outcome": None, "premise_claim_ids": [],
                 "premise_url": None, "all_claim_ids": [], "verdicts": {}, "relevant": {}, "claim_items": {}, "covered": [],
                 "new_sources": [], "rejected": 0, "fetched_keys": [], "backlog": []}
 
-    # Verify first, act later: what the question takes for granted is established like any other claim (search, read,
-    # verbatim quote, support check) before the person is asked to approve anything. Nothing is decided from the date or
-    # from the model's memory, and the person sees the finding together with the plan and can answer it.
+    # Verify first, act later. Before the person is asked to approve anything, ONE quick search screens what the question takes
+    # for granted (_screen_premise). When the person hands over a source for it, this node reads and checks that source like any
+    # other evidence (search, read, verbatim quote, support check) and the person is asked again.
     PREMISE_BUDGETS = {"max_iterations": 1, "max_searches": 2, "max_fetches": 4}
 
     def n_premise(self, s: State) -> dict:
@@ -631,6 +658,47 @@ class Runner:
                 "candidates": [], "searches_used": 0, "fetches_used": 0, "fetch_failures": 0, "iteration": 0,
                 "backlog": [], "settle_sites": 2}
 
+    @staticmethod
+    def _sense_text(concerns: list[dict]) -> str:
+        if not concerns:
+            return ""
+        return ("COMMON-SENSE CONCERNS ABOUT THE QUESTION (the person will see them; plan around them, never plan as if they were "
+                "not there):\n" + "\n".join(f"- {c['text']}" for c in concerns) + "\n")
+
+    def _screen_premise(self, s: State, premise: list[str]) -> dict:
+        """The quick look at what the question takes for granted: one search, the top 10 results, one model call over their titles
+        and snippets. It only decides whether there is anything relevant reported. Nothing from it is evidence: it is a screen
+        for the person to see, and the claims that answer the question still need a page that was read and a verbatim quote."""
+        none = {"premise_status": "none", "premise_missing": [], "premise_screen": {}, "warnings": []}
+        if not premise:
+            return none
+        rid, claim = s["run_id"], premise[0]
+        try:
+            found = self.search_fn(claim, max_results=10)
+        except Exception as exc:                   # a screen that could not run must not refuse the question
+            self.runs.emit(rid, "plan", "premise_screen_failed", {"error": f"{type(exc).__name__}: {str(exc)[:160]}"})
+            return {**none, "warnings": [f"premise screen could not search: {type(exc).__name__}"]}
+        hits = found["results"][:10]
+        listing = "\n".join(f"{i}. {h['title'][:90]} | {corroboration.site(h['url'])} | {short_date(h.get('published')) or 'no date'} | "
+                            f"{(h.get('snippet') or '')[:200]}" for i, h in enumerate(hits, 1))
+        out = self._ask("premise_screen", PremiseScreen, (
+            f"QUESTION: {s['question']}\nPREMISE (what the question takes for granted): {claim}\n\nSearch results for the premise "
+            f"(titles and snippets only):\n{listing or '(no results)'}\n\nWhich results report that the premise happened or exists? "
+            "Count a result only if its title or snippet says so about this subject and this period; the same company or topic is "
+            "not enough. Return their numbers, or none."), rid, "plan")
+        reported = sorted({n for n in (out.reported if out else []) if 1 <= n <= len(hits)})
+        status = "none" if out is None else ("reported" if reported else "unverified")
+        screen = {"query": claim, "reason": (out.reason if out else "")[:200], "reported": reported,
+                  "not_screened": premise[1:], "providers": [p["provider"] for p in found.get("providers", []) if p.get("ok")],
+                  "results": [{"n": i, "title": h["title"][:120], "url": h["url"], "site": corroboration.site(h["url"]),
+                               "published": short_date(h.get("published")), "reports_it": i in reported}
+                              for i, h in enumerate(hits, 1)]}
+        self.runs.emit(rid, "plan", "premise_screened", {
+            "status": status, "query": claim, "results": len(hits), "reported": reported, "engines": screen["providers"],
+            "searched_at": tclock.now(self.now_fn).as_dict()})
+        return {"premise_status": status, "premise_missing": [claim] if status == "unverified" else [], "premise_screen": screen,
+                "warnings": [] if out else ["premise screen: the model call failed, so the premise was not judged"]}
+
     def _premise_view(self, s: State) -> dict:
         claims = []
         for cid in (s.get("premise_claim_ids") or [])[:4]:
@@ -639,7 +707,7 @@ class Runner:
                 claims.append({"claim_id": cid, "claim": claim["claim_text"],
                                "source_url": self.store.get_source(claim["source_sha256"])["final_url"]})
         return {"status": s.get("premise_status", "none"), "items": s.get("premise") or [], "missing": s.get("premise_missing") or [],
-                "claims": claims}
+                "claims": claims, "screen": s.get("premise_screen") or {}}
 
     def _premise_of(self, s: State, subject: str) -> list[str]:
         """What the question refers to as if it existed (a document, event, statement, role): the things to verify first.
@@ -666,14 +734,8 @@ class Runner:
         """The person answers the agent's plan and its finding about the question's premise: approve it, accept a refusal,
         overrule a refusal, correct the agent in words (the plan is rebuilt), or hand it a source for the premise."""
         rid, b = s["run_id"], s["budgets"]
-        status = s.get("premise_status")
-        unverified = status == "unverified"
-        if status == "verified":             # the person approved the plan and the premise held up: nothing more to ask
-            self.runs.emit(rid, "approve", "approved", {"premise": "verified"})
-            return {"route": "discover", "approved": True}
+        unverified = s.get("premise_status") == "unverified"
         if not s.get("require_approval"):
-            if status == "pending":
-                return {"route": "premise"}
             if unverified:
                 self.runs.emit(rid, "approve", "premise_unverified", {"missing": s["premise_missing"]})
                 return {"route": "report", "approved": True, "outcome": "premise_unverified"}
@@ -682,7 +744,7 @@ class Runner:
                               "checklist": s["checklist"], "page_categories": s["page_categories"],
                               "premise": self._premise_view(s), "corrections": s.get("corrections") or [],
                               "advice": s.get("advice") or {"sources": [], "suggestion": None},
-                              "brief": s.get("brief") or {}}) or {}
+                              "brief": s.get("brief") or {}, "sense": s.get("sense") or []}) or {}
         comment = str(decision.get("comment") or "").strip()
         url = str(decision.get("url") or "").strip()
         if comment:
@@ -699,7 +761,7 @@ class Runner:
         if unverified and not decision.get("override"):
             self.runs.emit(rid, "approve", "premise_unverified", {"missing": s["premise_missing"], "accepted_by_person": True})
             return {"route": "report", "approved": True, "outcome": "premise_unverified"}
-        update: dict = {"route": "premise" if status == "pending" else "discover", "approved": True}
+        update: dict = {"route": "discover", "approved": True}
         if unverified:        # the person overruled the agent: the research goes ahead, and the report says the premise stands unverified
             update["premise_status"] = "overridden"
             update["warnings"] = list(s.get("warnings", [])) + [
@@ -1085,7 +1147,9 @@ class Runner:
             supported = []
             for cid in wave:
                 try:
-                    res = check_claim(self.store, cid, llm=self.llm_factory("claim_support"))
+                    llm = self.llm_factory("claim_support")
+                    self._note_model(rid, "check", "claim_support", llm)
+                    res = check_claim(self.store, cid, llm=llm)
                 except Exception as exc:
                     self.runs.emit(rid, "check", "llm_failed", {"task": "claim_support", "claim_id": cid,
                                                                "error": f"{type(exc).__name__}: {str(exc)[:200]}"})
@@ -1195,7 +1259,9 @@ class Runner:
         else:
             outcome = "partial" if len(gaps) < len(s["checklist"]) else "not_found"
         report = {
-            "outcome": outcome, "premise": [{"text": t, "verified": s.get("premise_status") == "verified"} for t in (s.get("premise") or [])],
+            "outcome": outcome, "premise": [{"text": t, "verified": s.get("premise_status") in ("verified", "reported"),
+                         "basis": {"verified": "a source was read and quoted", "reported": "search results report it (not read)"}.get(
+                             s.get("premise_status"), "not established")} for t in (s.get("premise") or [])],
             "question": s["question"], "subject": s["subject"], "summary": summary, "invalid_citations_removed": dropped,
             "established": rows["supported"], "partial": rows["partially_supported"],
             "not_supported": len(rows["not_supported"]), "unchecked": len(rows["unchecked"]),

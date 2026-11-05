@@ -164,7 +164,7 @@ def test_research_from_form_to_verified_claim(page: Page):
 
 def test_the_flowchart_shows_every_step_and_explains_one_on_click(page: Page):
     page.goto("/how-it-works")
-    steps = ["Plan", "Check the premise", "Your decision", "Search", "Choose pages", "Read pages", "Data sources", "Extract claims", "Check claims",
+    steps = ["Plan", "Your decision", "Check your source", "Search", "Choose pages", "Read pages", "Data sources", "Extract claims", "Check claims",
              "Assess coverage", "Ask for a data source", "Report"]
     for name in steps:
         expect(page.get_by_role("button", name=name).first).to_be_visible()

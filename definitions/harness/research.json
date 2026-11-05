@@ -6,13 +6,13 @@
       "label": "Plan",
       "col": 0,
       "row": 1,
-      "does": "Reads the quick look and the source-priority policy, then drafts the web searches, the facts to establish, what the question takes for granted (its premise), and a ranked list of places to look first. It may suggest a correction (for example a different year) for you to accept or ignore; it never changes your question by itself."
+      "does": "Reads the quick look, the source-priority policy and a common-sense check of the question (does it ask for something dated after today, or for a quarter that has not ended?), then drafts the web searches, the facts to establish and what the question takes for granted (its premise). It screens that premise with ONE search and the top 10 results: is anything relevant reported at all? It may suggest a correction (for example a different year); it never changes your question by itself."
     },
     "approve": {
       "label": "Your decision",
       "col": 1,
       "row": 1,
-      "does": "You see the plan after only three steps (quick look, plan, your decision). Approve it, correct the agent in words (for example 'that should have been 2026') and it rebuilds the plan, or reject it. Approving starts with the premise check: what your question takes for granted is verified first, and only if it cannot be verified are you asked again (accept the refusal, overrule it and research anyway, give a source, or correct the agent)."
+      "does": "You see the plan, the common-sense concerns and what the premise screen found, after only three steps (quick look, plan, your decision). Approve it; accept a refusal; overrule a refusal and research anyway; give a source for the premise; or correct the agent in words (for example 'that should have been 2026') and it rebuilds the plan. Nothing real is read or searched before you decide."
     },
     "discover": {
       "label": "Search",
@@ -69,10 +69,10 @@
       "does": "Writes a short answer from the verified claims only, labels how well each fact is backed, flags disagreements and stale sources, and lists what was not established."
     },
     "premise": {
-      "label": "Check the premise",
+      "label": "Check your source",
       "col": 1,
       "row": 0,
-      "does": "Verify first, act later. What the question takes for granted (an event, a document, a statement) is searched for and checked like any other claim: word-for-word quote, support check. Nothing is decided from the date or from the model's memory. This happens before you are asked to approve anything."
+      "does": "Only when you hand over a source for what the question takes for granted: it is read and checked like any other evidence (word-for-word quote, support check), and then you decide again."
     },
     "gate": {
       "label": "Missing? Ask",
@@ -104,7 +104,7 @@
     {
       "from": "approve",
       "to": "premise",
-      "label": "approved: check premise",
+      "label": "your source",
       "via": [
         [
           1.55,

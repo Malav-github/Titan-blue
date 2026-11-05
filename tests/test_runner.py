@@ -4,7 +4,7 @@ import pytest
 
 from connectors.registry import ConnectorRegistry
 from evidence import EvidenceStore
-from runner import (Extraction, ExtractedClaim, Advice, FollowUps, Plan, PremiseList, Relevance, Runner, Selection, Summary, top_chunks)
+from runner import (Extraction, ExtractedClaim, Advice, FollowUps, Plan, PremiseList, PremiseScreen, Relevance, Runner, Selection, Summary, top_chunks)
 from runs import RunStore
 from support import SupportVerdict
 from tools.archive import archive_bytes, utc_now
@@ -35,6 +35,7 @@ def default_handlers(**override):
     handlers = {
         "Plan": lambda p: Plan(subject="Acme", queries=["acme pricing"], checklist=["Starter plan price"]),
         "PremiseList": lambda p: PremiseList(premise=[]),
+        "PremiseScreen": lambda p: PremiseScreen(reported=[1], reason="the first result reports it"),
         "Advice": lambda p: Advice(),
         "Selection": lambda p: Selection(numbers=[1, 99]),  # 99 does not exist and must be ignored
         "Extraction": lambda p: Extraction(claims=[

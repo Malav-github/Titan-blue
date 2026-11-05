@@ -162,3 +162,56 @@ def test_a_subject_that_is_the_whole_question_is_replaced_by_the_name_in_it():
     assert planning.the_subject(q, None, q) == "S&P Global"
     out = run_diversify(q, ["strategic move 2026"], subject=q)
     assert all(x.startswith("S&P Global") and "What is" not in x for x in out)
+
+
+# --- the common-sense check and the step tags ----------------------------------------------------------------------
+
+def sense(question):
+    return planning.sense.check(question, classify(question, NOW), NOW)
+
+
+def test_something_dated_after_today_cannot_have_been_said_yet():
+    out = sense("What did the CEO of Dropbox say in the 2031 shareholder letter?")
+    assert [c["id"] for c in out] == ["future_year"] and "2031" in out[0]["text"] and "2026-11-04" in out[0]["text"]
+
+
+def test_a_forecast_for_a_future_year_is_a_fair_question():
+    assert sense("What is Acme's revenue forecast for 2031?") == []
+    assert sense("What does Acme plan to launch by 2030?") == []
+
+
+def test_a_quarter_that_has_not_ended_has_no_results_yet():
+    assert [c["id"] for c in sense("What were Apple's Q4 2026 results?")] == ["period_not_over"]
+    assert sense("What were Apple's Q3 2026 results?") == []
+
+
+def test_asking_for_the_latest_while_naming_an_old_year_is_ambiguous():
+    assert [c["id"] for c in sense("What is the latest Acme pricing from 2021?")] == ["latest_vs_year"]
+    assert sense("What is the latest Acme pricing?") == []
+
+
+def test_concerns_reach_the_planner_and_the_decision_screen(env):
+    prompts = []
+
+    def planner(p):
+        prompts.append(p)
+        return Plan(subject="Acme", queries=["acme letter"], checklist=["What the CEO said"])
+
+    runner = make_runner(env, Plan=planner)
+    first = runner.start("What did the Acme CEO say in the 2031 shareholder letter?", require_approval=True)
+    assert "COMMON-SENSE CONCERNS" in prompts[0] and "2031" in prompts[0]
+    assert first["approval_request"]["sense"][0]["id"] == "future_year"
+    ready = next(e["payload"] for e in env["runs"].events(first["run_id"]) if e["type"] == "plan_ready")
+    assert ready["sense"][0]["id"] == "future_year"
+
+
+def test_every_step_logs_the_model_it_used_and_the_search_engines_that_answered(env):
+    runner = make_runner(env, scout=True)
+    result = runner.start("What does Acme charge?")
+    events = env["runs"].events(result["run_id"])
+    used = {(e["node"], e["payload"]["task"]): e["payload"]["model"] for e in events if e["type"] == "model_used"}
+    assert used[("plan", "plan")] == "scripted" and ("extract", "extract") in used and ("check", "claim_support") in used
+    assert len([e for e in events if e["type"] == "model_used" and e["node"] == "extract"]) == 1      # once per step, not per call
+    scout = next(e["payload"] for e in events if e["type"] == "scout_done")
+    assert scout["engines"] == ["fake"]
+    assert next(e["payload"] for e in events if e["type"] == "search_done")["providers"][0]["provider"] == "fake"

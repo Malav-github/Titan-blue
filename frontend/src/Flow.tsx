@@ -6,9 +6,9 @@ import { flowView, type NodeState } from './flowState'
 import { Badge, Card, Loading } from './ui'
 
 const W = 150
-const H = 62
+const H = 80
 const GX = 250
-const GY = 110
+const GY = 124
 const PAD = 20
 
 const FILL: Record<NodeState, string> = {
@@ -115,11 +115,16 @@ export function Flow({ events, status }: { events?: RunEvent[]; status?: string 
                 className="cursor-pointer outline-none focus-visible:[&>rect]:stroke-[3]">
                 <rect width={W} height={H} rx="10" strokeWidth={picked === n.id ? 3 : 1.5} className={`${FILL[live ? v.state : 'pending']} ${v.state === 'active' ? 'motion-safe:animate-pulse' : ''}`} />
                 {lines.map((l, i) => (
-                  <text key={i} x={W / 2} y={(lines.length === 1 ? 26 : 20) + i * 15} textAnchor="middle" fontSize="15" fontWeight="600" className="fill-fg">{l}</text>
+                  <text key={i} x={W / 2} y={(lines.length === 1 ? 28 : 22) + i * 15} textAnchor="middle" fontSize="15" fontWeight="600" className="fill-fg">{l}</text>
                 ))}
                 {live && v.badges.length > 0 && (
-                  <text x={W / 2} y={H - 8} textAnchor="middle" fontSize="11.5" className={v.badges.some((b) => b.warn) ? 'fill-warn' : 'fill-muted'}>
+                  <text x={W / 2} y={H - 24} textAnchor="middle" fontSize="11.5" className={v.badges.some((b) => b.warn) ? 'fill-warn' : 'fill-muted'}>
                     {v.badges.map((b) => b.text).join(' · ').slice(0, 30)}
+                  </text>
+                )}
+                {live && (v.models.length > 0 || v.sources.length > 0) && (
+                  <text x={W / 2} y={H - 8} textAnchor="middle" fontSize="10.5" className="fill-info">
+                    {(() => { const t = [...v.models, ...v.sources].join(' · '); return t.length > 30 ? t.slice(0, 29) + '…' : t })()}
                   </text>
                 )}
               </g>
@@ -137,6 +142,12 @@ export function Flow({ events, status }: { events?: RunEvent[]; status?: string 
         <Card>
           <h3 className="font-semibold">{selected.label}{live && <> <Badge tone={{ done: 'ok', active: 'info', waiting: 'warn', failed: 'bad', pending: 'neutral' }[view[selected.id].state] as 'ok'}>{STATE_WORDS[view[selected.id].state]}</Badge></>}</h3>
           <p className="mt-1 text-sm">{selected.does}</p>
+          {live && (view[selected.id].models.length > 0 || view[selected.id].sources.length > 0) && (
+            <p className="mt-2 text-sm">
+              {view[selected.id].models.length > 0 && <><strong>Language model:</strong> {view[selected.id].models.join(', ')}. </>}
+              {view[selected.id].sources.length > 0 && <><strong>Search engine or data source:</strong> {view[selected.id].sources.join(', ')}.</>}
+            </p>
+          )}
           {live && view[selected.id].events.length > 0 && (
             <ul className="mt-2 flex flex-col gap-1 border-t border-line pt-2 text-sm">
               {view[selected.id].events.slice(-12).map((e) => {

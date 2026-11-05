@@ -116,7 +116,7 @@ function ApprovalPanel({ runId, plan }: { runId: string; plan: Approval }) {
   })
   const premise = plan.premise
   const unverified = premise?.status === 'unverified'
-  const pending = premise?.status === 'pending'
+  const screen = premise?.screen
   const busy = decide.isPending
   return (
     <Card className="border-warn">
@@ -124,9 +124,15 @@ function ApprovalPanel({ runId, plan }: { runId: string; plan: Approval }) {
       {(plan.corrections ?? []).length > 0 && (
         <p className="mt-1 text-sm text-muted">Rebuilt after your correction{(plan.corrections ?? []).length > 1 ? 's' : ''}: {(plan.corrections ?? []).join('; ')}</p>
       )}
+      {(plan.sense ?? []).length > 0 && (
+        <div role="status" className="mt-3 rounded-md border border-warn bg-warn-bg p-3 text-sm">
+          <strong>Common-sense check</strong>
+          <ul className="mt-1 list-disc pl-5">{(plan.sense ?? []).map((c) => <li key={c.id}>{c.text}</li>)}</ul>
+        </div>
+      )}
       {premise && premise.items.length > 0 && (
-        <div role="status" className={`mt-3 rounded-md border p-3 text-sm ${unverified ? 'border-warn bg-warn-bg' : pending ? 'border-line bg-surface-2/50' : 'border-ok bg-ok-bg'}`}>
-          <strong>{unverified ? 'No source I could read and quote confirms this happened:' : pending ? 'Your question assumes the following. I will check it first, once you approve, before any real research:' : 'Checked first, and confirmed:'}</strong>
+        <div role="status" className={`mt-3 rounded-md border p-3 text-sm ${unverified ? 'border-warn bg-warn-bg' : premise.status === 'reported' ? 'border-line bg-surface-2/50' : 'border-ok bg-ok-bg'}`}>
+          <strong>{unverified ? 'A quick search found nothing relevant that reports this:' : premise.status === 'reported' ? 'Your question assumes this. A quick search reports something relevant (not yet read):' : 'Checked from the source you gave, and confirmed:'}</strong>
           <ul className="mt-1 list-disc pl-5">{premise.items.map((p) => <li key={p}>{p}</li>)}</ul>
           {!unverified && premise.claims.length > 0 && (
             <ul className="mt-1 flex flex-col gap-1">
@@ -135,7 +141,20 @@ function ApprovalPanel({ runId, plan }: { runId: string; plan: Approval }) {
               ))}
             </ul>
           )}
-          {unverified && <p className="mt-1">This is not a statement that it did not happen. Nothing else has been searched yet. You can accept this, correct me, or give me a source.</p>}
+          {screen && (screen.results ?? []).length > 0 && (
+            <details className="mt-2" open={unverified}>
+              <summary className="cursor-pointer">The top {(screen.results ?? []).length} results for “{screen.query}”{(screen.providers ?? []).length > 0 && <span className="text-muted"> via {(screen.providers ?? []).join(', ')}</span>}</summary>
+              <ol className="mt-1 list-decimal pl-5">
+                {(screen.results ?? []).map((r) => (
+                  <li key={r.n} className={r.reports_it ? 'font-medium' : 'text-muted'}>
+                    <a className="underline" href={r.url} target="_blank" rel="noreferrer">{r.title || r.url}</a> ({r.site}{r.published ? `, ${r.published}` : ''}){r.reports_it ? ' reports it' : ''}
+                  </li>
+                ))}
+              </ol>
+              {screen.reason && <p className="mt-1 text-muted">{screen.reason}</p>}
+            </details>
+          )}
+          {unverified && <p className="mt-1">This is not a statement that it did not happen, only that the top results do not report it. You can accept this, correct me, or give me a source.</p>}
         </div>
       )}
       {plan.advice && (plan.advice.suggestion || plan.advice.sources.length > 0) && (
