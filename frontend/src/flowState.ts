@@ -1,7 +1,7 @@
 import type { RunEvent } from './api'
 
 /** The straight path through the pipeline, in order. Later steps imply the earlier ones ran, even if a step logged nothing. */
-export const MAIN_ORDER = ['plan', 'premise', 'approve', 'discover', 'select', 'fetch', 'api_lookup', 'extract', 'check', 'assess']
+export const MAIN_ORDER = ['scout', 'plan', 'premise', 'approve', 'discover', 'select', 'fetch', 'api_lookup', 'extract', 'check', 'assess']
 
 export type NodeState = 'pending' | 'done' | 'active' | 'waiting' | 'failed'
 export interface NodeView {
@@ -58,6 +58,8 @@ export function flowView(ids: string[], events: RunEvent[], status: string | nul
   if (rejected) ok('extract', `${rejected} rejected`, true)
   const checked = count(by.check ?? [], 'support_checked')
   if (checked) ok('check', `${checked} checked`)
+  const looked = (by.scout ?? []).find((e) => e.type === 'scout_done')
+  if (looked) ok('scout', `${looked.payload.results ?? 0} results`)
   const checkedPremise = (by.premise ?? []).filter((e) => e.type === 'premise_checked').pop()
   if (checkedPremise) ok('premise', checkedPremise.payload.status === 'verified' ? 'premise held' : 'not established', checkedPremise.payload.status !== 'verified')
   if (count(by.approve ?? [], 'plan_corrected')) ok('approve', `${count(by.approve ?? [], 'plan_corrected')} correction`)

@@ -51,3 +51,22 @@ def search_advice() -> str:
     """One paragraph for the planner about how to query the web and what it is bad at."""
     web = profiles()["web"]
     return f"{web['query_style']} Web search is weak at: {'; '.join(web['weak_at'])}."
+
+
+PRIORITY_PATH = PROJECT_ROOT / "definitions" / "guidance" / "source_priority.json"
+
+
+@lru_cache(maxsize=1)
+def priority() -> dict:
+    data = json.loads(PRIORITY_PATH.read_text(encoding="utf-8"))
+    ranks = [r["rank"] for r in data["ranks"]]
+    if ranks != sorted(set(ranks)) or not ranks:
+        raise ValueError("source_priority.json: ranks must be unique and in order")
+    return data
+
+
+def priority_advice() -> str:
+    """The source ranking as text for the scout's planner call."""
+    p = priority()
+    lines = [f"{r['rank']}. {r['kind']} ({r['examples']}): {r['why']}" for r in p["ranks"]]
+    return "Prefer sources in this order, best first:\n" + "\n".join(lines) + f"\nNever {p['never']}."

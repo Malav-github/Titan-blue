@@ -4,7 +4,7 @@ import pytest
 
 from connectors.registry import ConnectorRegistry
 from evidence import EvidenceStore
-from runner import (Extraction, ExtractedClaim, FollowUps, Plan, PremiseList, Relevance, Runner, Selection, Summary, top_chunks)
+from runner import (Extraction, ExtractedClaim, Advice, FollowUps, Plan, PremiseList, Relevance, Runner, Selection, Summary, top_chunks)
 from runs import RunStore
 from support import SupportVerdict
 from tools.archive import archive_bytes, utc_now
@@ -35,6 +35,7 @@ def default_handlers(**override):
     handlers = {
         "Plan": lambda p: Plan(subject="Acme", queries=["acme pricing"], checklist=["Starter plan price"]),
         "PremiseList": lambda p: PremiseList(premise=[]),
+        "Advice": lambda p: Advice(),
         "Selection": lambda p: Selection(numbers=[1, 99]),  # 99 does not exist and must be ignored
         "Extraction": lambda p: Extraction(claims=[
             ExtractedClaim(predicate="pricing.starter", value="$29", claim="Acme's Starter plan costs $29 per month.", quote=GOOD_QUOTE, needed_fact=1),
@@ -77,8 +78,8 @@ def env(tmp_path, monkeypatch):
             "ckpt": str(tmp_path / "ckpt.db"), "world": World(), "registry": ConnectorRegistry(tmp_path / "connectors.db")}
 
 
-def make_runner(env, **handler_overrides):
-    return Runner(store=env["store"], runs=env["runs"], checkpoint_path=env["ckpt"], registry=env["registry"],
+def make_runner(env, scout=False, **handler_overrides):
+    return Runner(scout=scout, store=env["store"], runs=env["runs"], checkpoint_path=env["ckpt"], registry=env["registry"],
                   llm_factory=lambda task: ScriptedLLM(default_handlers(**handler_overrides)),
                   search_fn=env["world"].search, fetch_fn=env["world"].fetch)
 

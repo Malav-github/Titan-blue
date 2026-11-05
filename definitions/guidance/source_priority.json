@@ -1,0 +1,14 @@
+{
+  "id": "source_priority",
+  "title": "Which sources to prefer, best first",
+  "note": "Read by the scout and the planner. A higher rank is a better place to look first and a stronger kind of evidence; a lower rank is still shown, labelled, and never hidden. Ranking is advice for the plan: every claim still needs a word-for-word quote from a page that was read.",
+  "ranks": [
+    {"rank": 1, "kind": "the subject's own site", "examples": "the company's investor-relations pages, newsroom, blog, filings page", "why": "the subject speaking for itself; use site: with its domain"},
+    {"rank": 2, "kind": "a regulator or official record", "examples": "sec.gov filings, patent offices, court and government registers", "why": "legally required, dated, and checkable"},
+    {"rank": 3, "kind": "a scholarly or standards body", "examples": "OpenAlex, arXiv, publisher pages, standards bodies", "why": "stable records with exact dates and authors"},
+    {"rank": 4, "kind": "established news or reference", "examples": "major newspapers, wire services, encyclopedias", "why": "independent, but a second-hand account; two independent sources count for more than one"},
+    {"rank": 5, "kind": "everything else", "examples": "blogs, forums, aggregators, transcripts sites, social media", "why": "weakest; use only to find a better source, or when nothing else exists"}
+  ],
+  "suggest_correction_when": "the scout finds nothing for something the question names (a year, a document, an event) but finds a close match nearby (the same document for another year, the same event under another name)",
+  "never": "copy a value, date or quote from a search result into the plan: results only show what exists and where"
+}

@@ -72,6 +72,18 @@ class PremiseList(BaseModel):
         "Specific things the question refers to as if they exist, each written as a plain statement. Empty if it names none."))
 
 
+class SourceAdvice(BaseModel):
+    site: str = Field(description="A website or domain worth looking at first, taken from the search results or the subject's own site")
+    why: str = Field(description="One short sentence: what kind of source it is and why it ranks where it does")
+
+
+class Advice(BaseModel):
+    sources: list[SourceAdvice] = Field(default_factory=list, description="Up to 4 places to look first, best first")
+    suggestion: str | None = Field(None, description=(
+        "Only if the question names something the results do not show but a close match appears (the same document for another "
+        "year, the same event under another name): one sentence asking whether that was meant. Otherwise null."))
+
+
 class ApiCall(BaseModel):
     connector: str
     endpoint: str
@@ -169,6 +181,8 @@ class State(TypedDict, total=False):
     claim_items: dict
     allow_capabilities: bool
     ask_sources: bool          # pause and ask the person for a source when something cannot be established
+    scout: list[dict]          # what a first quick search showed: context for the plan, never evidence
+    advice: dict               # ranked places to look and an optional suggested correction, shown at the decision step
     premise: list[str]         # what the question takes for granted
     premise_status: str        # none | verified | unverified | overridden
     premise_missing: list[str]
@@ -266,8 +280,9 @@ def top_chunks(text: str, terms: set[str], k: int) -> list[str]:
 class Runner:
     def __init__(self, store: EvidenceStore | None = None, runs: RunStore | None = None,
                  checkpoint_path: str | None = None, llm_factory=None, search_fn=None, fetch_fn=None,
-                 render_fn=None, registry=None, call_api_fn=None, now_fn=None):
+                 render_fn=None, registry=None, call_api_fn=None, now_fn=None, scout: bool = True):
         self.now_fn = now_fn                  # replaceable clock (tests, replays); None means the real one
+        self.scout_enabled = scout            # a first quick search before planning (tests that count searches switch it off)
         self.store = store or EvidenceStore()
         self.runs = runs or RunStore()
         self.registry = registry or ConnectorRegistry()
@@ -384,10 +399,11 @@ class Runner:
 
     def _build(self, checkpointer):
         g = StateGraph(State)
-        for name in ("plan", "approve", "premise", "gate", "discover", "select", "fetch", "api_lookup", "extract", "check", "assess",
+        for name in ("scout", "plan", "approve", "premise", "gate", "discover", "select", "fetch", "api_lookup", "extract", "check", "assess",
                      "capability", "report"):
             g.add_node(name, getattr(self, f"n_{name}"))
-        g.add_edge(START, "plan")
+        g.add_edge(START, "scout")
+        g.add_edge("scout", "plan")
         g.add_edge("plan", "premise")
         g.add_edge("premise", "approve")
         g.add_conditional_edges("approve", lambda s: s.get("route", "discover"), {
@@ -417,6 +433,87 @@ class Runner:
 
     # -- nodes -----------------------------------------------------------------------------------
 
+    # A first quick look before planning: two searches, titles and snippets only. What it shows is context for the plan (which
+    # entity is meant, which sites exist, which period is available). It is never evidence: no claim is taken from it.
+    SCOUT_SEARCHES = 2
+
+    def n_scout(self, s: State) -> dict:
+        if not self.scout_enabled:
+            return {"scout": []}
+        rid, q = s["run_id"], s["question"]
+        queries = _dedupe([q, f"{q} official"])[:self.SCOUT_SEARCHES]
+        results, warnings, seen = [], list(s.get("warnings", [])), set()
+        for query in queries:
+            try:
+                found = self.search_fn(query, max_results=6)
+            except Exception as exc:                       # the scout is a help, never a reason to stop the run
+                warnings.append(f"scout search failed: {type(exc).__name__}: {str(exc)[:120]}")
+                continue
+            for hit in found["results"]:
+                key = normalize_url(hit["url"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                results.append({"title": (hit.get("title") or "")[:120], "url": hit["url"], "site": corroboration.site(hit["url"]),
+                                "snippet": (hit.get("snippet") or "")[:220], "published": short_date(hit.get("published"))})
+        results = results[:10]
+        self.runs.emit(rid, "scout", "scout_done", {"queries": queries, "results": len(results),
+                                                    "sites": _dedupe([r["site"] for r in results])[:8],
+                                                    "searched_at": tclock.now(self.now_fn).as_dict()})
+        return {"scout": results, "warnings": warnings}
+
+    @staticmethod
+    def _scout_context(s: State) -> str:
+        hits = (s.get("scout") or [])[:6]
+        if not hits:
+            return ""
+        lines = "\n".join(f"- {h['title'][:80]} ({h['site']}{', ' + h['published'] if h['published'] else ''})" for h in hits)
+        return ("WEB CONTEXT (a first quick search; unverified, use it only to see which entity, sites and period exist, and never "
+                "copy a value from it into the checklist):\n" + lines + "\n")
+
+    def _year_suggestion(self, s: State) -> str | None:
+        """Plain arithmetic, not a model: the question names a year that no search result mentions, while results do mention
+        another year. A person may have mistyped it, so offer the nearest year the results show. It only asks; it never decides."""
+        named = {int(y) for y in re.findall(r"\b((?:19|20)\d{2})\b", s["question"])}
+        hits = s.get("scout") or []
+        if len(named) != 1 or not hits:
+            return None
+        year = next(iter(named))
+        seen: dict[int, set] = {}
+        for h in hits:
+            for y in re.findall(r"(?<!\d)((?:19|20)\d{2})(?!\d)", f"{h['title']} {h['url']} {h['snippet']} {h['published'] or ''}"):
+                seen.setdefault(int(y), set()).add(h["site"])
+        if year in seen or not seen:
+            return None
+        this_year = tclock.now(self.now_fn).local.year
+        reachable = {y: sites for y, sites in seen.items() if y <= this_year}
+        if not reachable:
+            return None
+        best = max(reachable, key=lambda y: (len(reachable[y]), y))     # the year most sites mention; the later one on a tie
+        where = ", ".join(sorted(reachable[best])[:3])
+        return (f"The question names {year}, but no search result mentions it. The results do mention {best} ({where}). "
+                f"Did you mean {best}?")
+
+    def _advice_of(self, s: State) -> dict:
+        """Ranked places to look and, when the question names something the results do not show but a close match exists, a
+        suggested correction for the person to accept or ignore. Nothing here changes the question by itself."""
+        hits = s.get("scout") or []
+        if not hits:
+            return {"sources": [], "suggestion": None}
+        listing = "\n".join(f"- {h['title'][:90]} | {h['site']} | {h['published'] or 'no date'} | {h['snippet'][:160]}" for h in hits)
+        prompt = (f"QUESTION: {s['question']}\n\nA first quick search showed (unverified; titles and snippets only):\n{listing}\n\n"
+                  f"{sources.priority_advice()}\n\n"
+                  "Return sources: up to 4 places to look first, best first, each a site taken from the results or the subject's own "
+                  "site, with one short reason. Return suggestion only if the question names something the results do not show but "
+                  f"a close match appears ({sources.priority()['suggest_correction_when']}); else null. "
+                  "Never state a value, date or quote from the snippets as an answer.")
+        out = self._ask("plan", Advice, prompt, s["run_id"], "plan")
+        suggestion = self._year_suggestion(s)       # computed by code; the model's own suggestion is used only when there is none
+        if out is None:
+            return {"sources": [], "suggestion": suggestion}
+        return {"sources": [{"site": a.site[:80], "why": a.why[:160]} for a in out.sources[:4] if a.site.strip()],
+                "suggestion": suggestion or (out.suggestion or "").strip()[:300] or None}
+
     def n_plan(self, s: State) -> dict:
         rid, b = s["run_id"], s["budgets"]
         now = tclock.now(self.now_fn)
@@ -426,6 +523,7 @@ class Runner:
             f"TODAY: {now.describe()}. Your training data is older than today, so never assume what the current year is.\n"
             f"TIME SCOPE (worked out from the question): {scope.guidance(now)}\n"
             f"SEARCH ADVICE: {sources.search_advice()}\n"
+            f"{self._scout_context(s)}"
             + (f"THE PERSON CORRECTED YOUR EARLIER READING: {'; '.join(s['corrections'])}. The correction overrides the original "
                f"wording: plan for the corrected question.\n" if s.get("corrections") else "")
             + f"QUESTION: {s['question']}\n\n"
@@ -453,13 +551,15 @@ class Runner:
         checklist = _dedupe(plan.checklist)[:6] or [s["question"]]
         categories = [c for c in plan.page_categories if plan.company]
         entity_id = self.store.add_entity(entity_name, kind="subject")
+        advice = self._advice_of(s)
         self.runs.emit(rid, "plan", "plan_ready", {"subject": subject, "company": plan.company,
                        "page_categories": categories, "queries": queries, "checklist": checklist,
-                       "today": now.as_dict(), "time_scope": scope.as_dict()})
+                       "today": now.as_dict(), "time_scope": scope.as_dict(),
+                       "advice": advice})
         return {"subject": subject, "company": plan.company, "entity_name": entity_name, "entity_id": entity_id,
                 "page_categories": categories, "queries": queries, "checklist": checklist, "warnings": warnings,
                 "data_need": plan.needs_data_source, "time_scope": scope.as_dict(),
-                "premise": self._premise_of(s, subject),
+                "premise": self._premise_of(s, subject), "advice": advice,
                 # a fresh plan starts clean: nothing from an earlier reading of the question carries over
                 "approved": False, "outcome": None, "premise_status": "none", "premise_missing": [], "premise_claim_ids": [],
                 "premise_url": None, "all_claim_ids": [], "verdicts": {}, "relevant": {}, "claim_items": {}, "covered": [],
@@ -542,7 +642,8 @@ class Runner:
             return {"route": "discover", "approved": True}
         decision = interrupt({"question": s["question"], "subject": s["subject"], "queries": s["queries"],
                               "checklist": s["checklist"], "page_categories": s["page_categories"],
-                              "premise": self._premise_view(s), "corrections": s.get("corrections") or []}) or {}
+                              "premise": self._premise_view(s), "corrections": s.get("corrections") or [],
+                              "advice": s.get("advice") or {"sources": [], "suggestion": None}}) or {}
         comment = str(decision.get("comment") or "").strip()
         url = str(decision.get("url") or "").strip()
         if comment:

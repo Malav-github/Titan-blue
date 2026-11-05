@@ -6,7 +6,7 @@
       "label": "Plan",
       "col": 0,
       "row": 1,
-      "does": "Works out today's date and the time frame of the question, then drafts the web searches, the list of facts to establish, and what the question takes for granted (its premise)."
+      "does": "Reads the quick look and the source-priority policy, then drafts the web searches, the facts to establish, what the question takes for granted (its premise), and a ranked list of places to look first. It may suggest a correction (for example a different year) for you to accept or ignore; it never changes your question by itself."
     },
     "approve": {
       "label": "Your decision",
@@ -79,18 +79,22 @@
       "col": 3,
       "row": 3.15,
       "does": "The research ended with something missing. The run pauses and asks you for a source (a web link today; documents and APIs next). A source you give is read and checked like everything else. If you decline, the run stops and says what could not be established."
+    },
+    "scout": {
+      "label": "Quick look",
+      "col": 0,
+      "row": 0,
+      "does": "Before planning, two web searches show what exists: which company or entity is meant, which sites carry it, which period is available. Only titles and snippets are read. This is context for the plan, never evidence: no claim is taken from it."
     }
   },
   "edges": [
     {
+      "from": "scout",
+      "to": "plan"
+    },
+    {
       "from": "plan",
-      "to": "premise",
-      "via": [
-        [
-          0,
-          0
-        ]
-      ]
+      "to": "premise"
     },
     {
       "from": "premise",
@@ -220,13 +224,7 @@
     {
       "from": "approve",
       "to": "plan",
-      "label": "you corrected it",
-      "via": [
-        [
-          0.5,
-          0.55
-        ]
-      ]
+      "label": "you corrected it"
     },
     {
       "from": "approve",

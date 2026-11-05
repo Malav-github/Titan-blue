@@ -79,6 +79,12 @@ like everything else and labelled as yours), or correct the agent in words ("tha
 premise checked again. If the answer itself cannot be found, the run pauses and asks for a source. The report says plainly when there
 was not enough information (`outcome`: answered, partial, not_found, premise_unverified).
 
+**Quick look before planning.** Two web searches (titles and snippets only) show which entity, sites and period exist. The plan reads them
+together with the source-priority policy (`definitions/guidance/source_priority.json`: the subject's own site, then regulators and
+official records, then scholarly bodies, then established news, then everything else) and the decision screen shows the ranked places
+to look first. If the question names a year that no result mentions while another year appears, code (not the model) offers
+"Did you mean 2026?" for you to accept or ignore. What the quick look shows is context, never evidence: no claim is taken from it.
+
 ## Comparing local models
 
 ```powershell

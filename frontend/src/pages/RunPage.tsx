@@ -137,6 +137,29 @@ function ApprovalPanel({ runId, plan }: { runId: string; plan: Approval }) {
           {unverified && <p className="mt-1">This is not a statement that it did not happen. Nothing else has been searched yet. You can accept this, correct me, or give me a source.</p>}
         </div>
       )}
+      {plan.advice && (plan.advice.suggestion || plan.advice.sources.length > 0) && (
+        <div className="mt-3 rounded-md border border-line bg-surface-2/50 p-3 text-sm">
+          <strong>From a quick look at the web</strong>
+          <span className="text-muted"> (unverified: a guide to where to look, never evidence)</span>
+          {plan.advice.suggestion && (
+            <p className="mt-2">
+              {plan.advice.suggestion}{' '}
+              <Button type="button" variant="secondary" className="ml-1" disabled={busy}
+                onClick={() => { setComment(`Please use this: ${plan.advice?.suggestion}`); document.getElementById('plan-comment')?.focus() }}>
+                Use this suggestion
+              </Button>
+            </p>
+          )}
+          {plan.advice.sources.length > 0 && (
+            <>
+              <p className="mt-2 font-medium">Places to look first, best first</p>
+              <ol className="mt-1 list-decimal pl-5">
+                {plan.advice.sources.map((a) => <li key={a.site}><strong>{a.site}</strong>: {a.why}</li>)}
+              </ol>
+            </>
+          )}
+        </div>
+      )}
       <p className="mt-3 text-sm text-muted">
         If you go ahead, Titan will run these searches and then read pages looking for the facts listed. You can edit either list, one item per line.
         {plan.page_categories.length > 0 && <> It will also look for the company’s own pages about: {plan.page_categories.join(', ')}.</>}
