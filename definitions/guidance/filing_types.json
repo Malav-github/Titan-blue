@@ -1,0 +1,97 @@
+{
+  "id": "filing_types",
+  "title": "Document and filing types: what each holds, how often, and how late",
+  "note": "Read by the planning skill so the planner can name the right document and the period it covers before any search. `period_kind` says what one document spans; `lag_days` is the usual longest gap between the end of that period and the filing (US rules; the largest filers are fastest, small ones may take longer), used only to estimate which document is the newest by now. Fiscal calendars differ by company, so the estimate is a hint and the filing's own 'period of report' wins. Not legal advice.",
+  "documents": [
+    {
+      "id": "10-K", "family": "sec", "label": "Form 10-K, annual report",
+      "route_when": "\\b(10-?K|annual report|full[- ]year|fiscal year|annual (?:revenue|results|net income)|risk factors?|business overview|number of employees|headcount|properties)\\b",
+      "holds": "business description, risk factors, management discussion, audited financial statements for the fiscal year, and exhibits (subsidiaries, material contracts)",
+      "period_kind": "year", "lag_days": 60,
+      "lag_note": "due 60 days after the fiscal year end for the largest filers, 75 for mid-size, 90 for the rest",
+      "metadata": ["period of report (fiscal year end)", "filing date", "fiscal year", "accession number"],
+      "tip": "The fourth quarter has no 10-Q: its figures are in the 10-K and the earnings 8-K."
+    },
+    {
+      "id": "10-Q", "family": "sec", "label": "Form 10-Q, quarterly report",
+      "route_when": "\\b(10-?Q|quarterly|latest (?:\\w+ )?(?:net sales|revenues?|earnings|results|net income)|last quarter|latest quarter|three months ended|nine months ended|Q[1-3]\\b|quarter ended)\\b",
+      "holds": "unaudited financial statements and management discussion for the first three fiscal quarters (year-to-date figures included)",
+      "period_kind": "quarter", "lag_days": 40,
+      "lag_note": "due 40 days after the quarter end for the largest filers, 45 for the rest",
+      "metadata": ["period of report (quarter end)", "filing date", "fiscal quarter", "accession number"],
+      "tip": "Only three per fiscal year; the fourth quarter appears in the 10-K."
+    },
+    {
+      "id": "8-K", "family": "sec", "label": "Form 8-K, current report",
+      "route_when": "\\b(8-?K|announced|announces|results of operations|earnings release|acquisition|completed the acquisition|material agreement|appointed|resign(?:ed|s|ation)|departure|stepped down|new (?:ceo|cfo)|shareholder vote|annual meeting results|bankruptcy|delist)\\b",
+      "holds": "an event, filed within four business days. Items: 1.01 material agreement; 2.01 acquisition or disposal completed; 2.02 results of operations (the earnings release, usually Exhibit 99.1); 5.02 departure or appointment of a director or senior officer; 5.07 shareholder vote results; 7.01 and 8.01 other disclosures; 9.01 exhibits",
+      "period_kind": "event", "lag_days": 4,
+      "lag_note": "four business days after the event",
+      "metadata": ["item numbers", "date of report (event date)", "filing date", "exhibit list"],
+      "tip": "The event date and the filing date differ; give both."
+    },
+    {
+      "id": "DEF 14A", "family": "sec", "label": "Proxy statement (DEF 14A)",
+      "route_when": "\\b(DEF ?14A|proxy (?:statement)?|executive (?:pay|compensation)|ceo pay|say[- ]on[- ]pay|shareholder proposals?|annual meeting|board (?:members|composition)|director independence|letter to (?:share|stock)holders|shareholder letter)\\b",
+      "holds": "annual meeting agenda, director nominees and biographies, executive pay tables, beneficial ownership of 5% holders and insiders, shareholder proposals; often opens with a letter to shareholders",
+      "period_kind": "year", "lag_days": 120,
+      "lag_note": "filed before the annual meeting, usually within four months of the fiscal year end",
+      "metadata": ["meeting date", "record date", "filing date", "fiscal year covered"],
+      "tip": "Pay is for the last completed fiscal year; say which."
+    },
+    {
+      "id": "S-1", "family": "sec", "label": "Form S-1 and prospectus (424B4)",
+      "route_when": "\\b(S-1|IPO|initial public offering|prospectus|424B4|going public|direct listing|F-1)\\b",
+      "holds": "registration of a first public offering: business, financials for recent years, risk factors, use of proceeds, ownership before and after",
+      "period_kind": "event", "lag_days": 0,
+      "lag_note": "no fixed schedule; the final prospectus (424B4) is filed at pricing",
+      "metadata": ["filing date", "pricing date", "ticker and exchange", "shares offered"],
+      "tip": "Amendments (S-1/A) change numbers; use the latest amendment or the 424B4."
+    },
+    {
+      "id": "20-F", "family": "sec", "label": "Forms 20-F, 40-F and 6-K (foreign issuers)",
+      "route_when": "\\b(20-?F|40-?F|6-?K|foreign private issuer|ADR|files? (?:a )?20-F)\\b",
+      "holds": "annual report (20-F, 40-F) and interim or event reports (6-K) of non-US companies listed in the US; accounting may be IFRS",
+      "period_kind": "year", "lag_days": 120,
+      "lag_note": "20-F is due four months after the fiscal year end; 6-K has no fixed schedule",
+      "metadata": ["period of report", "filing date", "accounting standard"],
+      "tip": "There is no 10-Q: interim figures arrive in 6-K filings, if at all."
+    },
+    {
+      "id": "Form 4", "family": "sec", "label": "Insider and large-holder forms (Form 4, 13F, 13D/G, Form D)",
+      "route_when": "\\b(form 4|insider (?:buying|selling|trading|transactions?)|13F|13D|13G|institutional holdings|hedge fund holdings|form D|private placement|bought shares|sold shares)\\b",
+      "holds": "Form 4: insider trades, filed within two business days. 13F: quarterly holdings of large managers, due 45 days after quarter end. 13D/13G: stakes above 5%. Form D: a private fundraising",
+      "period_kind": "event", "lag_days": 2,
+      "lag_note": "Form 4 within two business days; 13F within 45 days of quarter end",
+      "metadata": ["transaction date", "filing date", "reporting person", "security"],
+      "tip": "Transaction date is not filing date."
+    },
+    {
+      "id": "patent", "family": "patent", "label": "Patent documents and kind codes",
+      "route_when": "\\b(patents?|patent applications?|granted|prior art|assignee|inventors?|priority date|kind code|patent famil(?:y|ies))\\b",
+      "holds": "A1/A2 = published application (about 18 months after the earliest filing); B1/B2 = granted patent (B1 had no earlier publication, B2 did); US numbers read US 11,234,567 B2; EP and WO numbers carry their own kind codes",
+      "period_kind": "event", "lag_days": 548,
+      "lag_note": "applications are usually published about 18 months after the priority date, so recent filings are not visible yet",
+      "metadata": ["priority date", "filing date", "publication date", "grant date", "legal status", "assignee at filing and now"],
+      "tip": "Three dates differ: priority, filing and publication. Ask for the one the question means."
+    },
+    {
+      "id": "preprint", "family": "paper", "label": "Preprints and journal articles",
+      "route_when": "\\b(arxiv|preprint|paper|journal article|peer[- ]reviewed|first submitted|published in|version [1-9]|v[1-9]\\b)\\b",
+      "holds": "arXiv: the authors' submission, with v1, v2 ... each dated; the abstract page lists the first submission date. Journal articles: the publisher's version of record, with received, accepted and published dates",
+      "period_kind": "event", "lag_days": 0,
+      "lag_note": "no schedule",
+      "metadata": ["v1 submission date", "latest revision date", "publication date", "venue", "DOI"],
+      "tip": "A preprint and its journal version have different dates; say which."
+    },
+    {
+      "id": "press_release", "family": "press", "label": "Press releases (wire and company newsroom)",
+      "route_when": "\\b(press releases?|newswire|announced|announces|announcement)\\b",
+      "holds": "the company's announcement as issued, with a dateline and timestamp; wire services republish it unchanged",
+      "period_kind": "event", "lag_days": 0,
+      "lag_note": "same day as the event, normally",
+      "metadata": ["release date and time", "dateline", "originating company"],
+      "tip": "A news article about the release is second-hand; prefer the release itself."
+    }
+  ]
+}

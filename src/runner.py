@@ -24,6 +24,7 @@ import tracing
 from skills.temporal import clock as tclock, freshness, intent as tintent, setting as temporal_setting
 from skills.temporal.display import short_date
 from skills.temporal import periods as tperiods
+from skills import planning
 from skills.temporal.extract import DateFact, best_date, parse_date
 import corroboration
 import sources
@@ -182,6 +183,7 @@ class State(TypedDict, total=False):
     allow_capabilities: bool
     ask_sources: bool          # pause and ask the person for a source when something cannot be established
     scout: list[dict]          # what a first quick search showed: context for the plan, never evidence
+    brief: dict                # the planning skill's brief: kinds, ranked places, document types, target time
     advice: dict               # ranked places to look and an optional suggested correction, shown at the decision step
     premise: list[str]         # what the question takes for granted
     premise_status: str        # none | verified | unverified | overridden
@@ -518,11 +520,13 @@ class Runner:
         rid, b = s["run_id"], s["budgets"]
         now = tclock.now(self.now_fn)
         scope = tintent.classify(s["question"], now)
+        brief = planning.build(s["question"], None, scope, now)
         prompt = (
             "You plan web research that must be backed by quoted evidence.\n"
             f"TODAY: {now.describe()}. Your training data is older than today, so never assume what the current year is.\n"
             f"TIME SCOPE (worked out from the question): {scope.guidance(now)}\n"
             f"SEARCH ADVICE: {sources.search_advice()}\n"
+            f"{brief.guidance() + chr(10) if not brief.empty else ''}"
             f"{self._scout_context(s)}"
             + (f"THE PERSON CORRECTED YOUR EARLIER READING: {'; '.join(s['corrections'])}. The correction overrides the original "
                f"wording: plan for the corrected question.\n" if s.get("corrections") else "")
@@ -548,6 +552,7 @@ class Runner:
         entity_name = plan.company or subject
         queries = _dedupe(plan.queries)[:b["max_queries_per_iter"]] or [s["question"]]
         queries = _dedupe(tintent.apply_year_terms(queries, scope, now))[:b["max_queries_per_iter"]]
+        queries = _dedupe(planning.ensure_sources(queries, brief, subject, scope, now, b["max_queries_per_iter"]))
         checklist = _dedupe(plan.checklist)[:6] or [s["question"]]
         categories = [c for c in plan.page_categories if plan.company]
         entity_id = self.store.add_entity(entity_name, kind="subject")
@@ -555,10 +560,10 @@ class Runner:
         self.runs.emit(rid, "plan", "plan_ready", {"subject": subject, "company": plan.company,
                        "page_categories": categories, "queries": queries, "checklist": checklist,
                        "today": now.as_dict(), "time_scope": scope.as_dict(),
-                       "advice": advice})
+                       "advice": advice, "brief": brief.as_dict()})
         return {"subject": subject, "company": plan.company, "entity_name": entity_name, "entity_id": entity_id,
                 "page_categories": categories, "queries": queries, "checklist": checklist, "warnings": warnings,
-                "data_need": plan.needs_data_source, "time_scope": scope.as_dict(),
+                "data_need": plan.needs_data_source, "time_scope": scope.as_dict(), "brief": brief.as_dict(),
                 "premise": self._premise_of(s, subject), "advice": advice,
                 # a fresh plan starts clean: nothing from an earlier reading of the question carries over
                 "approved": False, "outcome": None, "premise_status": "none", "premise_missing": [], "premise_claim_ids": [],
@@ -643,7 +648,8 @@ class Runner:
         decision = interrupt({"question": s["question"], "subject": s["subject"], "queries": s["queries"],
                               "checklist": s["checklist"], "page_categories": s["page_categories"],
                               "premise": self._premise_view(s), "corrections": s.get("corrections") or [],
-                              "advice": s.get("advice") or {"sources": [], "suggestion": None}}) or {}
+                              "advice": s.get("advice") or {"sources": [], "suggestion": None},
+                              "brief": s.get("brief") or {}}) or {}
         comment = str(decision.get("comment") or "").strip()
         url = str(decision.get("url") or "").strip()
         if comment:

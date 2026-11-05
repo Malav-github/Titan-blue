@@ -160,6 +160,24 @@ function ApprovalPanel({ runId, plan }: { runId: string; plan: Approval }) {
           )}
         </div>
       )}
+      {plan.brief && (plan.brief.places.length > 0 || plan.brief.documents.length > 0) && (
+        <div className="mt-3 rounded-md border border-line bg-surface-2/50 p-3 text-sm">
+          <strong>Planning brief</strong>
+          <span className="text-muted"> ({plan.brief.kinds.join('; ') || 'general'})</span>
+          <p className="mt-2"><strong>Target time:</strong> {plan.brief.target}</p>
+          {plan.brief.places.length > 0 && (
+            <ol className="mt-2 list-decimal pl-5">
+              {plan.brief.places.map((p) => (
+                <li key={p.site}><strong>{p.site}</strong> <span className="text-muted">({p.role === 'keeps_original' ? 'unchanged copy' : p.role})</span>: {p.why}</li>
+              ))}
+            </ol>
+          )}
+          {plan.brief.documents.map((d) => (
+            <p key={d.id} className="mt-2"><strong>{d.id}</strong> ({d.label}): {d.expect}</p>
+          ))}
+          {plan.brief.metadata.length > 0 && <p className="mt-2 text-muted">Expect on the source: {plan.brief.metadata.join(', ')}</p>}
+        </div>
+      )}
       <p className="mt-3 text-sm text-muted">
         If you go ahead, Titan will run these searches and then read pages looking for the facts listed. You can edit either list, one item per line.
         {plan.page_categories.length > 0 && <> It will also look for the company’s own pages about: {plan.page_categories.join(', ')}.</>}

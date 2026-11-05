@@ -16,7 +16,7 @@ from skills.temporal.clock import Now
 INTENTS = ("historical", "point_in_time", "latest", "period", "timeline")
 
 YEAR = re.compile(r"\b(19[5-9]\d|20\d{2}|21\d{2})\b")
-_LATEST = (r"latest|current(?:ly)?|now|today|tonight|recent(?:ly)?|newest|most recent|up[- ]to[- ]date|so far|these days|"
+_LATEST = (r"latest|current(?:ly)?|now|at present|presently|ongoing|nowadays|as it stands|today|tonight|recent(?:ly)?|newest|most recent|up[- ]to[- ]date|so far|these days|"
            r"as of now|this (?:year|quarter|month|week|season)|last (?:year|quarter|month|week)|"
            r"past (?:year|quarter|month|week|\d+ (?:days?|weeks?|months?|years?))")
 LATEST = re.compile(rf"\b(?:{_LATEST})\b")

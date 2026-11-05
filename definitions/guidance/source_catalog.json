@@ -1,0 +1,115 @@
+{
+  "id": "source_catalog",
+  "title": "Where each kind of information is best found, best place first",
+  "note": "Read by the planning skill. Each entry names a kind of information, the pattern in a question that points to it, and the places to look in order. `keeps_original` marks a place that republishes the original record unchanged (a mirror or wire), so it counts nearly as a primary source; `primary` marks the originator itself. This is advice for the plan: every claim still needs a word-for-word quote from a page that was read. Order within `places` is the order to try.",
+  "types": [
+    {
+      "id": "company_disclosure",
+      "label": "Company disclosures and financial filings",
+      "route_when": "\\b(10-?K|10-?Q|8-?K|20-?F|6-?K|DEF ?14A|proxy|S-1|SEC|EDGAR|filings?|filed|annual report|quarterly report|10-K|balance sheet|net sales|revenues?|net income|earnings|EPS|shares outstanding|total assets|cash flow|segment|risk factors?)\\b",
+      "places": [
+        {"site": "sec.gov", "operator": "site:sec.gov", "role": "primary", "why": "EDGAR holds the filing itself, with form type, period of report and filing date", "connector": "sec_edgar"},
+        {"site": "the company's investor-relations site", "operator": "site:<company domain>", "role": "primary", "why": "the company's own copy, often with the earnings release and presentation next to it"}
+      ],
+      "metadata": ["form type", "period of report", "fiscal year and period", "filing date", "accession number"],
+      "needs_company_domain": true
+    },
+    {
+      "id": "earnings_materials",
+      "label": "Earnings releases, shareholder letters and presentations",
+      "route_when": "\\b(shareholder letters?|letter to (?:share|stock)holders|earnings (?:release|call|presentation|report)|results for the (?:quarter|year)|investor presentation|guidance|outlook|prepared remarks)\\b",
+      "places": [
+        {"site": "the company's investor-relations site", "operator": "site:<company domain>", "role": "primary", "why": "the shareholder letter and the earnings presentation are published there first"},
+        {"site": "sec.gov", "operator": "site:sec.gov", "role": "primary", "why": "the earnings release is filed as Exhibit 99.1 to an 8-K (Item 2.02); a shareholder letter may sit in the proxy statement or annual report", "connector": "sec_edgar"},
+        {"site": "prnewswire.com", "operator": "site:prnewswire.com", "role": "keeps_original", "why": "wire services carry the release word for word"},
+        {"site": "businesswire.com", "operator": "site:businesswire.com", "role": "keeps_original", "why": "same release, same wording"}
+      ],
+      "metadata": ["period reported", "release date", "fiscal or calendar basis"],
+      "needs_company_domain": true
+    },
+    {
+      "id": "press_release",
+      "label": "Press releases and announcements",
+      "route_when": "\\b(press releases?|announced|announces|announcement|launch(?:ed|es)?|unveil(?:ed|s)?|partnership|acquisition|acquires?|acquired|merger|funding round|raised|series [a-f]\\b|appoints?|appointed)\\b",
+      "places": [
+        {"site": "the company's newsroom", "operator": "site:<company domain>", "role": "primary", "why": "the originator's own announcement", "needs_company_domain": true},
+        {"site": "prnewswire.com", "operator": "site:prnewswire.com", "role": "keeps_original", "why": "wire services publish the release unchanged, with a timestamp"},
+        {"site": "businesswire.com", "operator": "site:businesswire.com", "role": "keeps_original", "why": "wire service; unchanged text, timestamp"},
+        {"site": "globenewswire.com", "operator": "site:globenewswire.com", "role": "keeps_original", "why": "wire service; unchanged text, timestamp"}
+      ],
+      "metadata": ["release date and time", "originating company", "dateline"],
+      "needs_company_domain": true
+    },
+    {
+      "id": "leadership",
+      "label": "Leaders, directors and ownership",
+      "route_when": "\\b(ceo|cfo|coo|cto|chair(?:man|woman|person)?|president|board of directors|directors?|executives?|management team|insider|beneficial owners?|major shareholders?|executive (?:pay|compensation))\\b",
+      "places": [
+        {"site": "the company's own site", "operator": "site:<company domain>", "role": "primary", "why": "leadership and board pages", "needs_company_domain": true},
+        {"site": "sec.gov", "operator": "site:sec.gov", "role": "primary", "why": "8-K Item 5.02 reports a change of officer or director; the proxy statement lists directors and pay; Forms 3, 4 and 13D/G show holdings", "connector": "sec_edgar"}
+      ],
+      "metadata": ["effective date of the appointment", "filing date"],
+      "needs_company_domain": true
+    },
+    {
+      "id": "patent",
+      "label": "Patents and patent applications",
+      "route_when": "\\b(patents?|patent applications?|prior art|claims? of (?:the )?patent|assignee|inventors?|filed a patent|patent famil(?:y|ies)|US ?\\d{1,2},?\\d{3},?\\d{3}|EP ?\\d{6,7}|WO ?\\d{4}/?\\d+)\\b",
+      "places": [
+        {"site": "patents.google.com", "operator": "site:patents.google.com", "role": "keeps_original", "why": "carries the patent office record unchanged, with family, citations and legal status in one place", "connector": "bigquery_patents"},
+        {"site": "worldwide.espacenet.com", "operator": "site:worldwide.espacenet.com", "role": "keeps_original", "why": "the European Patent Office's database; bibliographic data and families", "connector": "epo"},
+        {"site": "patentcenter.uspto.gov", "operator": "site:uspto.gov", "role": "primary", "why": "the US office itself"},
+        {"site": "patentscope.wipo.int", "operator": "site:patentscope.wipo.int", "role": "primary", "why": "international (PCT) applications"}
+      ],
+      "metadata": ["publication number and kind code", "priority date", "filing date", "publication date", "grant date", "assignee", "legal status", "family"],
+      "needs_company_domain": false
+    },
+    {
+      "id": "research_paper",
+      "label": "Research papers and preprints",
+      "route_when": "\\b(papers?|preprints?|arxiv|study|studies|researchers?|journal|peer[- ]reviewed|citations?|cited|doi|authors?|conference|proceedings|abstract|dataset|benchmark)\\b",
+      "places": [
+        {"site": "arxiv.org", "operator": "site:arxiv.org", "role": "keeps_original", "why": "the authors' own submission, versioned and dated; the abstract page shows the first submission date", "connector": "openalex"},
+        {"site": "openalex.org", "operator": "site:openalex.org", "role": "keeps_original", "why": "open index of papers with exact publication dates, authors and citation counts", "connector": "openalex"},
+        {"site": "doi.org", "operator": "site:doi.org", "role": "primary", "why": "resolves to the publisher's page, the version of record"},
+        {"site": "semanticscholar.org", "operator": "site:semanticscholar.org", "role": "secondary", "why": "index and summaries; use to find the paper, then read the original"}
+      ],
+      "metadata": ["first submitted date", "version and revision dates", "publication date", "authors", "venue", "DOI"],
+      "needs_company_domain": false
+    },
+    {
+      "id": "biomedical",
+      "label": "Biomedical literature, trials and drug approvals",
+      "route_when": "\\b(clinical trials?|nct ?\\d{8}|pubmed|fda|approved by the fda|drug approval|phase [123i]+\\b|medical study|randomi[sz]ed)\\b",
+      "places": [
+        {"site": "clinicaltrials.gov", "operator": "site:clinicaltrials.gov", "role": "primary", "why": "the registry of record for trials, with status and dates"},
+        {"site": "pubmed.ncbi.nlm.nih.gov", "operator": "site:pubmed.ncbi.nlm.nih.gov", "role": "keeps_original", "why": "abstracts as published, with exact dates"},
+        {"site": "fda.gov", "operator": "site:fda.gov", "role": "primary", "why": "approvals, labels and safety communications"}
+      ],
+      "metadata": ["registration date", "status and last update", "phase", "approval date"],
+      "needs_company_domain": false
+    },
+    {
+      "id": "official_statistics",
+      "label": "Official statistics and government records",
+      "route_when": "\\b(unemployment rate|inflation|cpi|gdp|census|population of|interest rate|federal reserve|bls|labor statistics|economic data|government data|statistics)\\b",
+      "places": [
+        {"site": "the statistics agency", "operator": "site:gov", "role": "primary", "why": "bls.gov, census.gov, bea.gov or the national equivalent publish the figure and its reference period"},
+        {"site": "fred.stlouisfed.org", "operator": "site:fred.stlouisfed.org", "role": "keeps_original", "why": "republishes official series unchanged, with the release date"}
+      ],
+      "metadata": ["reference period", "release date", "revision status"],
+      "needs_company_domain": false
+    },
+    {
+      "id": "company_facts",
+      "label": "What a company is, makes, charges or says about itself",
+      "route_when": "\\b(pricing|price of|plans?|features?|products?|founded|headquarters?|employees|about the company|mission|careers?|terms of service|privacy policy)\\b",
+      "places": [
+        {"site": "the company's own site", "operator": "site:<company domain>", "role": "primary", "why": "pricing, product and about pages, as the company states them", "needs_company_domain": true},
+        {"site": "sec.gov", "operator": "site:sec.gov", "role": "primary", "why": "for a public company, the annual report states founding, headcount and business in one dated place", "connector": "sec_edgar"}
+      ],
+      "metadata": ["page last updated", "retrieval date"],
+      "needs_company_domain": true
+    }
+  ]
+}

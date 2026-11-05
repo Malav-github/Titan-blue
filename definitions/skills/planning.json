@@ -1,0 +1,10 @@
+{
+  "name": "planning",
+  "version": 1,
+  "summary": "Planning a search or deep research: what kind of information the question wants, which source types and document types hold it (best first), what time the answer should come from, and which metadata to expect. Planning only: it never searches, reads or judges evidence.",
+  "settings": {
+    "max_places": 4,
+    "max_documents": 3,
+    "latest_fallback_note": "If nothing from the target period exists, say what the newest available is and how old it is. Never present an older item as the latest."
+  }
+}
