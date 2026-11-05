@@ -72,7 +72,7 @@ export interface Approval {
   queries: string[]
   checklist: string[]
   page_categories: string[]
-  premise?: { status: 'none' | 'verified' | 'unverified' | 'overridden'; items: string[]; missing: string[]; claims: { claim_id: number; claim: string; source_url: string }[] }
+  premise?: { status: 'none' | 'pending' | 'verified' | 'unverified' | 'overridden'; items: string[]; missing: string[]; claims: { claim_id: number; claim: string; source_url: string }[] }
   corrections?: string[]
   advice?: { sources: { site: string; why: string }[]; suggestion: string | null }
   brief?: { kinds: string[]; places: { site: string; role: string; why: string }[]; documents: { id: string; label: string; holds: string; expect: string }[]; metadata: string[]; target: string }

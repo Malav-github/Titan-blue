@@ -12,7 +12,7 @@
       "label": "Your decision",
       "col": 1,
       "row": 1,
-      "does": "You see the plan and what the premise check found. Approve it; accept a refusal; overrule a refusal and research anyway; give a source for the premise; or correct the agent in words (for example 'that should have been 2026') and it rebuilds the plan and checks again. Nothing real is searched before you decide."
+      "does": "You see the plan after only three steps (quick look, plan, your decision). Approve it, correct the agent in words (for example 'that should have been 2026') and it rebuilds the plan, or reject it. Approving starts with the premise check: what your question takes for granted is verified first, and only if it cannot be verified are you asked again (accept the refusal, overrule it and research anyway, give a source, or correct the agent)."
     },
     "discover": {
       "label": "Search",
@@ -94,7 +94,7 @@
     },
     {
       "from": "plan",
-      "to": "premise"
+      "to": "approve"
     },
     {
       "from": "premise",
@@ -104,7 +104,7 @@
     {
       "from": "approve",
       "to": "premise",
-      "label": "your source",
+      "label": "approved: check premise",
       "via": [
         [
           1.55,

@@ -116,6 +116,7 @@ function ApprovalPanel({ runId, plan }: { runId: string; plan: Approval }) {
   })
   const premise = plan.premise
   const unverified = premise?.status === 'unverified'
+  const pending = premise?.status === 'pending'
   const busy = decide.isPending
   return (
     <Card className="border-warn">
@@ -124,8 +125,8 @@ function ApprovalPanel({ runId, plan }: { runId: string; plan: Approval }) {
         <p className="mt-1 text-sm text-muted">Rebuilt after your correction{(plan.corrections ?? []).length > 1 ? 's' : ''}: {(plan.corrections ?? []).join('; ')}</p>
       )}
       {premise && premise.items.length > 0 && (
-        <div role="status" className={`mt-3 rounded-md border p-3 text-sm ${unverified ? 'border-warn bg-warn-bg' : 'border-ok bg-ok-bg'}`}>
-          <strong>{unverified ? 'No source I could read and quote confirms this happened:' : 'Checked before anything else, and confirmed:'}</strong>
+        <div role="status" className={`mt-3 rounded-md border p-3 text-sm ${unverified ? 'border-warn bg-warn-bg' : pending ? 'border-line bg-surface-2/50' : 'border-ok bg-ok-bg'}`}>
+          <strong>{unverified ? 'No source I could read and quote confirms this happened:' : pending ? 'Your question assumes the following. I will check it first, once you approve, before any real research:' : 'Checked first, and confirmed:'}</strong>
           <ul className="mt-1 list-disc pl-5">{premise.items.map((p) => <li key={p}>{p}</li>)}</ul>
           {!unverified && premise.claims.length > 0 && (
             <ul className="mt-1 flex flex-col gap-1">

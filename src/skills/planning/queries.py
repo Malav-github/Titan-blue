@@ -60,7 +60,8 @@ def the_subject(subject: str, company: str | None, question: str) -> str:
     name = (company or subject or "").strip()
     generic = {g.lower() for g in lenses()["generic_subjects"]}
     q = question.lower()
-    unusable = not name or name.lower() in generic or not (_tokens(name, generic) & _tokens(q, set()))
+    sentence = len(name.split()) >= 5 or "?" in name          # a whole question is not a name
+    unusable = not name or sentence or name.lower() in generic or not (_tokens(name, generic) & _tokens(q, set()))
     if unusable and (found := named_in_question(question)):
         return found
     return name

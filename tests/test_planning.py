@@ -155,3 +155,10 @@ def test_a_specific_filing_question_goes_to_the_company_and_the_filing():
 def test_queries_that_already_differ_and_name_the_subject_are_left_alone():
     qs = ["Acme investor relations annual report", "Acme layoffs restructuring", "Acme acquisition merger"]
     assert run_diversify("What is Acme's strategy?", qs, subject="Acme", company="Acme") == qs
+
+
+def test_a_subject_that_is_the_whole_question_is_replaced_by_the_name_in_it():
+    q = "What is S&P Global's latest strategic move?"
+    assert planning.the_subject(q, None, q) == "S&P Global"
+    out = run_diversify(q, ["strategic move 2026"], subject=q)
+    assert all(x.startswith("S&P Global") and "What is" not in x for x in out)

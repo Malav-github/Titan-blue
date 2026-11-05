@@ -430,7 +430,7 @@ class Runner:
             g.add_node(name, getattr(self, f"n_{name}"))
         g.add_edge(START, "scout")
         g.add_edge("scout", "plan")
-        g.add_edge("plan", "premise")
+        g.add_edge("plan", "approve")
         g.add_edge("premise", "approve")
         g.add_conditional_edges("approve", lambda s: s.get("route", "discover"), {
             "discover": "discover", "plan": "plan", "premise": "premise", "report": "report", "end": END})
@@ -588,9 +588,10 @@ class Runner:
         return {"subject": subject, "company": plan.company, "entity_name": entity_name, "entity_id": entity_id,
                 "page_categories": categories, "queries": queries, "checklist": checklist, "warnings": warnings,
                 "data_need": plan.needs_data_source, "time_scope": scope.as_dict(), "brief": brief.as_dict(),
-                "premise": self._premise_of(s, subject), "advice": advice,
+                "premise": (listed := self._premise_of(s, subject)), "premise_status": "pending" if listed else "none",
+                "advice": advice,
                 # a fresh plan starts clean: nothing from an earlier reading of the question carries over
-                "approved": False, "outcome": None, "premise_status": "none", "premise_missing": [], "premise_claim_ids": [],
+                "approved": False, "outcome": None, "premise_missing": [], "premise_claim_ids": [],
                 "premise_url": None, "all_claim_ids": [], "verdicts": {}, "relevant": {}, "claim_items": {}, "covered": [],
                 "new_sources": [], "rejected": 0, "fetched_keys": [], "backlog": []}
 
@@ -665,8 +666,14 @@ class Runner:
         """The person answers the agent's plan and its finding about the question's premise: approve it, accept a refusal,
         overrule a refusal, correct the agent in words (the plan is rebuilt), or hand it a source for the premise."""
         rid, b = s["run_id"], s["budgets"]
-        unverified = s.get("premise_status") == "unverified"
+        status = s.get("premise_status")
+        unverified = status == "unverified"
+        if status == "verified":             # the person approved the plan and the premise held up: nothing more to ask
+            self.runs.emit(rid, "approve", "approved", {"premise": "verified"})
+            return {"route": "discover", "approved": True}
         if not s.get("require_approval"):
+            if status == "pending":
+                return {"route": "premise"}
             if unverified:
                 self.runs.emit(rid, "approve", "premise_unverified", {"missing": s["premise_missing"]})
                 return {"route": "report", "approved": True, "outcome": "premise_unverified"}
@@ -692,7 +699,7 @@ class Runner:
         if unverified and not decision.get("override"):
             self.runs.emit(rid, "approve", "premise_unverified", {"missing": s["premise_missing"], "accepted_by_person": True})
             return {"route": "report", "approved": True, "outcome": "premise_unverified"}
-        update: dict = {"route": "discover", "approved": True}
+        update: dict = {"route": "premise" if status == "pending" else "discover", "approved": True}
         if unverified:        # the person overruled the agent: the research goes ahead, and the report says the premise stands unverified
             update["premise_status"] = "overridden"
             update["warnings"] = list(s.get("warnings", [])) + [

@@ -1,7 +1,7 @@
 import type { RunEvent } from './api'
 
 /** The straight path through the pipeline, in order. Later steps imply the earlier ones ran, even if a step logged nothing. */
-export const MAIN_ORDER = ['scout', 'plan', 'premise', 'approve', 'discover', 'select', 'fetch', 'api_lookup', 'extract', 'check', 'assess']
+export const MAIN_ORDER = ['scout', 'plan', 'approve', 'premise', 'discover', 'select', 'fetch', 'api_lookup', 'extract', 'check', 'assess']
 
 export type NodeState = 'pending' | 'done' | 'active' | 'waiting' | 'failed'
 export interface NodeView {
