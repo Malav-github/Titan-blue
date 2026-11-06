@@ -14,6 +14,9 @@ import { Evidence } from './pages/Evidence'
 import { ClaimPage } from './pages/ClaimPage'
 import { HealthPage } from './pages/HealthPage'
 import { HowItWorks } from './pages/HowItWorks'
+import { Stores } from './pages/Stores'
+import { ArchivePage } from './pages/ArchivePage'
+import { InArchive } from './scope'
 import { PageHeader } from './ui'
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } } })
@@ -38,6 +41,10 @@ createRoot(document.getElementById('root')!).render(
             <Route path="evidence/:id" element={<ClaimPage />} />
             <Route path="how-it-works" element={<HowItWorks />} />
             <Route path="health" element={<HealthPage />} />
+            <Route path="stores" element={<Stores />} />
+            <Route path="archives/:aid" element={<ArchivePage />} />
+            <Route path="archives/:aid/runs/:id" element={<InArchive><RunPage /></InArchive>} />
+            <Route path="archives/:aid/evidence/:id" element={<InArchive><ClaimPage /></InArchive>} />
             <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>

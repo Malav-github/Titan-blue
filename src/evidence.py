@@ -201,8 +201,15 @@ def _sha256_file(path: str) -> str:
 
 
 class EvidenceStore:
-    def __init__(self, path=EVIDENCE_DB_PATH):
+    def __init__(self, path=EVIDENCE_DB_PATH, *, files_dir=None, readonly: bool = False):
+        """`readonly` opens an archived store without any way to write to it. `files_dir` is where its archived pages
+        now live (an archived store's pages move with it); the stored paths are then read from there, by file name,
+        which is the file's own hash."""
         self.path = Path(path)
+        self.files_dir = Path(files_dir) if files_dir else None
+        self.readonly = readonly
+        if readonly:
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -216,10 +223,22 @@ class EvidenceStore:
             db.commit()
 
     def _connect(self) -> sqlite3.Connection:
-        db = sqlite3.connect(self.path, timeout=30)
+        if self.readonly:
+            db = sqlite3.connect(f"file:{self.path.resolve().as_posix()}?mode=ro", uri=True, timeout=30)
+        else:
+            db = sqlite3.connect(self.path, timeout=30)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
         return db
+
+    def _located(self, row):
+        """A source row with its file paths pointing where the files are now (see `files_dir`)."""
+        if row is None or self.files_dir is None:
+            return row
+        out = dict(row)
+        for key in ("archive_path", "text_path"):
+            out[key] = str(self.files_dir / Path(out[key]).name)
+        return out
 
     # -- sources ----------------------------------------------------------------------------
 
@@ -270,7 +289,7 @@ class EvidenceStore:
 
     def get_source(self, source_sha256: str) -> sqlite3.Row | None:
         with closing(self._connect()) as db:
-            return db.execute("SELECT * FROM sources WHERE source_sha256 = ?", (source_sha256,)).fetchone()
+            return self._located(db.execute("SELECT * FROM sources WHERE source_sha256 = ?", (source_sha256,)).fetchone())
 
     # -- entities ---------------------------------------------------------------------------
 
@@ -470,7 +489,7 @@ class EvidenceStore:
         """Re-verify everything stored. An empty list means every claim still checks out."""
         problems = []
         with closing(self._connect()) as db:
-            sources = {r["source_sha256"]: r for r in db.execute("SELECT * FROM sources")}
+            sources = {r["source_sha256"]: self._located(r) for r in db.execute("SELECT * FROM sources")}
             claims = db.execute("SELECT * FROM claims").fetchall()
         bad_sources = set()
         for sha, src in sources.items():

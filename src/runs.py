@@ -36,15 +36,22 @@ STATUS_BY_EVENT = {
 
 
 class RunStore:
-    def __init__(self, path=RUNS_DB_PATH):
+    def __init__(self, path=RUNS_DB_PATH, *, readonly: bool = False):
         self.path = path
+        self.readonly = readonly              # an archived run log: read, never written
         self.listener = None  # optional callable(event dict), e.g. a CLI printing progress live
+        if readonly:
+            return
         with closing(self._connect()) as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript(SCHEMA)
 
     def _connect(self) -> sqlite3.Connection:
-        db = sqlite3.connect(self.path, timeout=30)
+        if self.readonly:
+            from pathlib import Path
+            db = sqlite3.connect(f"file:{Path(self.path).resolve().as_posix()}?mode=ro", uri=True, timeout=30)
+        else:
+            db = sqlite3.connect(self.path, timeout=30)
         db.row_factory = sqlite3.Row
         return db
 

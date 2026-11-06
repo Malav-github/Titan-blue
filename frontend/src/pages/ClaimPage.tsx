@@ -1,12 +1,15 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api'
+import { useArchive, useLinks } from '../scope'
 import { time } from '../format'
 import { Badge, Card, ErrorNote, ExternalLink, Loading, Mono, PageHeader, TierBadge, VerdictBadge, timeChips } from '../ui'
 
 export function ClaimPage() {
   const { id = '' } = useParams()
-  const claim = useQuery({ queryKey: ['claim', id], queryFn: () => api.claim(id) })
+  const archive = useArchive()
+  const links = useLinks()
+  const claim = useQuery({ queryKey: ['claim', archive, id], queryFn: () => api.claim(id, archive) })
   if (claim.isLoading) return <Loading />
   if (claim.error || !claim.data) return <><PageHeader title="Claim not found" /><ErrorNote error={claim.error} /></>
   const c = claim.data
@@ -15,6 +18,11 @@ export function ClaimPage() {
     <>
       <PageHeader title={`Claim #${c.claim_id}`} subtitle={c.claim_text} actions={<VerdictBadge verdict={latest?.verdict} />} />
       <div className="flex flex-col gap-4">
+        {archive && (
+          <p role="note" className="rounded-md border border-line bg-surface-2 p-3 text-sm">
+            Archived claim, read only: from the evidence store archived as <Link className="text-accent underline" to={`/archives/${archive}`}>{archive}</Link>. Its page and text are kept in the archive and were re-checked against their hashes when it was made.
+          </p>
+        )}
         <Card>
           <h2 className="font-semibold">The quote, in its page</h2>
           <p className="mt-2 text-sm leading-relaxed">…{c.before}<mark>{c.quote}</mark>{c.after}…</p>
@@ -33,7 +41,7 @@ export function ClaimPage() {
           </ul>
           {timeChips(c.times).length > 0 && <p className="mt-2 flex flex-wrap gap-2">{timeChips(c.times).map((x, i) => <Badge key={i} tone={x.tone}>{x.text}</Badge>)}</p>}
           {(c.conflicts ?? []).map((x, i) => (
-            <p key={i} className="mt-2 text-sm text-bad">Conflicts with <Link className="underline" to={`/evidence/${x.other_claim}`}>claim #{x.other_claim}</Link>: {x.note}</p>
+            <p key={i} className="mt-2 text-sm text-bad">Conflicts with <Link className="underline" to={links.claim(x.other_claim)}>claim #{x.other_claim}</Link>: {x.note}</p>
           ))}
         </Card>
         <Card>
@@ -70,7 +78,7 @@ export function ClaimPage() {
             <dt className="text-muted">Recorded</dt><dd>{time(c.created_at)} by {c.created_by}</dd>
           </dl>
         </Card>
-        <p><Link className="text-accent underline" to="/evidence">Back to all claims</Link></p>
+        <p><Link className="text-accent underline" to={links.claims}>{archive ? 'Back to this archive' : 'Back to all claims'}</Link></p>
       </div>
     </>
   )

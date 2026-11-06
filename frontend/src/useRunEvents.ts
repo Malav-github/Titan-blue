@@ -3,18 +3,18 @@ import { api, type RunEvent } from './api'
 import { ACTIVE } from './format'
 
 /** The run's history, appended to as it happens. Polls once a second while the run is working. */
-export function useRunEvents(runId: string, status: string | null | undefined): RunEvent[] {
+export function useRunEvents(runId: string, status: string | null | undefined, archive: string | null = null): RunEvent[] {
   const [events, setEvents] = useState<RunEvent[]>([])
   const cursor = useRef(0)
 
   useEffect(() => {
     setEvents([])
     cursor.current = 0
-  }, [runId])
+  }, [runId, archive])
 
   const load = useCallback(async () => {
     try {
-      const next = await api.runEvents(runId, cursor.current)
+      const next = await api.runEvents(runId, cursor.current, archive)
       if (next.length) {
         cursor.current = Math.max(cursor.current, next[next.length - 1].event_id)
         // two fetches can overlap (the timer and a status change), so never add an event twice
@@ -26,9 +26,9 @@ export function useRunEvents(runId: string, status: string | null | undefined): 
     } catch {
       /* the next poll retries */
     }
-  }, [runId])
+  }, [runId, archive])
 
-  const working = status === undefined || status === null || ACTIVE.has(status)
+  const working = !archive && (status === undefined || status === null || ACTIVE.has(status))   // an archive never changes
   useEffect(() => {
     void load()
     if (!working) return

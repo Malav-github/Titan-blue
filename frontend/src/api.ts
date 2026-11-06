@@ -248,6 +248,34 @@ export interface Health {
   langfuse_configured: boolean
   evidence: Record<string, number | string[]>
 }
+export interface ArchiveManifest {
+  id: string
+  label: string
+  reason: string
+  archived_at: string
+  archived_by: string
+  titan_commit: string | null
+  live_since: string | null
+  counts: Record<string, Record<string, number>>
+  folders: Record<string, { files: number; bytes: number }>
+  runs: number
+  unfinished_runs: { run_id: string; question: string | null; status: string }[]
+  audit: { problems: number; same_as_live: boolean; examples: string[] }
+  contains: string[]
+}
+export interface StoreOverview {
+  live: {
+    counts: Record<string, Record<string, number>>
+    folders: Record<string, { files: number; bytes: number }>
+    runs: number
+    waiting: { run_id: string; question: string | null; status: string }[]
+    abandoned: { run_id: string; question: string; status: string; last_activity: string }[]
+    blockers: string[]
+    since: string | null
+  }
+  archives: ArchiveManifest[]
+  log: { at: string; action: string; id?: string; label?: string; reason?: string; by?: string; runs?: number; claims?: number }[]
+}
 export interface Models {
   ollama_reachable: boolean
   installed: string[]
@@ -267,8 +295,9 @@ export const api = {
   runTemplate: (id: string, inputs: Record<string, unknown>) =>
     post<{ kind: 'research' | 'capability'; run_id?: string; request_id?: string }>(`/api/templates/${id}/run`, { inputs }),
   runs: () => request<RunSummary[]>('/api/runs'),
-  run: (id: string) => request<RunDetail>(`/api/runs/${id}`),
-  runEvents: (id: string, after: number) => request<RunEvent[]>(`/api/runs/${id}/events?after=${after}`),
+  // `archive` names an archived store: the same data, read only, from /api/archives/<id>/...
+  run: (id: string, archive?: string | null) => request<RunDetail>(`${scope(archive)}/runs/${id}`),
+  runEvents: (id: string, after: number, archive?: string | null) => request<RunEvent[]>(`${scope(archive)}/runs/${id}/events?after=${after}`),
   decide: (id: string, body: { approved: boolean; queries?: string[]; checklist?: string[]; comment?: string; url?: string; override?: boolean }) => post(`/api/runs/${id}/decision`, body),
   giveSource: (id: string, url: string | null) => post(`/api/runs/${id}/source`, { url }),
   continueRun: (id: string, capability: string | null) => post(`/api/runs/${id}/continue`, { capability }),
@@ -276,8 +305,18 @@ export const api = {
   requests: () => request<Omit<CapabilityRequest, 'events' | 'gate'>[]>('/api/capability/requests'),
   request: (id: string) => request<CapabilityRequest>(`/api/capability/requests/${id}`),
   decideRequest: (id: string, body: { approve: string | null; terms_ok: boolean }) => post(`/api/capability/requests/${id}/decision`, body),
-  claims: (entity?: string) => request<ClaimRow[]>(`/api/evidence/claims${entity ? `?entity=${encodeURIComponent(entity)}` : ''}`),
-  claim: (id: string) => request<ClaimDetail>(`/api/evidence/claims/${id}`),
+  claims: (entity?: string, archive?: string | null) =>
+    request<ClaimRow[]>(`${scope(archive)}/evidence/claims${entity ? `?entity=${encodeURIComponent(entity)}` : ''}`),
+  claim: (id: string, archive?: string | null) => request<ClaimDetail>(`${scope(archive)}/evidence/claims/${id}`),
   health: () => request<Health>('/api/health'),
   models: () => request<Models>('/api/models'),
+  stores: () => request<StoreOverview>('/api/stores'),
+  archiveStore: (body: { label: string; reason: string; confirm: boolean }) => post<ArchiveManifest>('/api/stores/archive', body),
+  reloadDefinitions: () => post<{ cleared: string[] }>('/api/maintenance/reload', {}),
+  archive: (id: string) => request<{ manifest: ArchiveManifest; runs: RunSummary[] }>(`/api/archives/${encodeURIComponent(id)}`),
+  verifyArchive: (id: string) => post<{ problems: number; recorded_at_archive: number; unchanged: boolean; examples: string[] }>(`/api/archives/${encodeURIComponent(id)}/verify`, {}),
+}
+
+function scope(archive?: string | null): string {
+  return archive ? `/api/archives/${encodeURIComponent(archive)}` : '/api'
 }

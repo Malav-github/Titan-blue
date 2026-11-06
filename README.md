@@ -94,6 +94,28 @@ reading is the tier the report shows. `company_events.json` lists the kinds of c
 results, guidance ...) with their required parts, cues, a worked example (made-up companies only) and rules such as "completion is not
 before announcement"; it is not yet used in extraction (next step: offer the model only the few predicates that fit the question).
 
+## Evidence stores and archives
+
+Nothing Titan records is deleted. To start clean (after changing how sources are labelled, say), open **Stores and archives** in
+the app, name the archive, tick the box and choose *Archive and start a new store*. Titan copies the evidence, the run logs, the
+saved run states (which hold each run's report), the search ledger, the archived pages and uploads into
+`data/archives/<date>-<time>-<name>/`, checks the copy (row counts, database integrity, and an audit that re-hashes every page
+and re-verifies every quote), and only then empties the live store. If a check fails the archive is undone and the live store is
+left as it was. Connectors, approvals, budgets and settings are not part of a store and stay. It refuses while a run is working;
+a run still marked as working but silent for 30 minutes (cut off by a restart) is closed in its own log as abandoned first.
+
+Archived stores are read-only on disk and open read-only. Each is browsed in the app at `/archives/<name>`: its runs with their
+reports, its claims with the quote in context, and *Check it again now* to re-audit it. From a terminal:
+
+```powershell
+cd src
+uv run python -m stores list                                   # the live store and every archive
+uv run python -m stores archive --label "before ontologies"    # shows what would be archived; add --yes (server stopped)
+uv run python -m stores verify <archive name>                  # re-audit an archive
+```
+
+*Reload definitions* on the same page makes Titan re-read its definition files (ontologies, skills, guidance) without a restart.
+
 ## Comparing local models
 
 ```powershell

@@ -5,9 +5,11 @@ import { api, type Approval, type Report, type ReportClaim, type RunDetail, type
 import { ACTIVE, describeEvent, lines, time } from '../format'
 import { Flow } from '../Flow'
 import { useRunEvents } from '../useRunEvents'
+import { useArchive, useLinks } from '../scope'
 import { Badge, Button, Card, ErrorNote, ExternalLink, Loading, Mono, PageHeader, StatusBadge, TierBadge, timeChips } from '../ui'
 
 function ClaimCard({ claim, caution }: { claim: ReportClaim; caution?: boolean }) {
+  const links = useLinks()
   return (
     <li className={`rounded-lg border bg-surface p-4 ${caution ? 'border-warn' : 'border-line'}`}>
       <p className="font-medium">{claim.claim}</p>
@@ -25,16 +27,17 @@ function ClaimCard({ claim, caution }: { claim: ReportClaim; caution?: boolean }
         <p className="mt-2 flex flex-wrap gap-2">{timeChips(claim.times).map((c, i) => <Badge key={i} tone={c.tone}>{c.text}</Badge>)}</p>
       )}
       {claim.why && <p className="mt-2 text-sm text-muted">Why: {claim.why}</p>}
-      <p className="mt-2 text-sm"><Link className="text-accent underline" to={`/evidence/${claim.claim_id}`}>Open claim #{claim.claim_id} with the quote in context</Link></p>
+      <p className="mt-2 text-sm"><Link className="text-accent underline" to={links.claim(claim.claim_id)}>Open claim #{claim.claim_id} with the quote in context</Link></p>
     </li>
   )
 }
 
 /** The written answer, with each [claim:N] marker turned into a link to that claim. */
 function Answer({ text }: { text: string }) {
+  const links = useLinks()
   return <>{text.split(/(\[claim:\d+\])/g).map((part, i) => {
     const m = /^\[claim:(\d+)\]$/.exec(part)
-    return m ? <Link key={i} className="text-accent underline" to={`/evidence/${m[1]}`}>[claim {m[1]}]</Link> : part
+    return m ? <Link key={i} className="text-accent underline" to={links.claim(m[1])}>[claim {m[1]}]</Link> : part
   })}</>
 }
 
@@ -371,12 +374,13 @@ function Timeline({ events, working }: { events: RunEvent[]; working: boolean })
 
 export function RunPage() {
   const { id = '' } = useParams()
+  const archive = useArchive()
   const run = useQuery({
-    queryKey: ['run', id],
-    queryFn: () => api.run(id),
-    refetchInterval: (q) => (q.state.data && ACTIVE.has(q.state.data.status ?? '') ? 1500 : false),
+    queryKey: archive ? ['archived-run', archive, id] : ['run', id],     // the panels below refresh ['run', id]
+    queryFn: () => api.run(id, archive),
+    refetchInterval: (q) => (!archive && q.state.data && ACTIVE.has(q.state.data.status ?? '') ? 1500 : false),
   })
-  const events = useRunEvents(id, run.data?.status)
+  const events = useRunEvents(id, run.data?.status, archive)
   const data = run.data
 
   if (run.isLoading) return <Loading />
@@ -392,9 +396,15 @@ export function RunPage() {
         actions={<span aria-live="polite"><StatusBadge status={data.status} /></span>}
       />
       <div className="flex flex-col gap-6">
-        {data.status === 'awaiting_approval' && data.approval && <ApprovalPanel key={id + JSON.stringify(data.approval)} runId={id} plan={data.approval} />}
-        {data.status === 'needs_capability' && <CapabilityPanel run={data} />}
-        {data.status === 'needs_source' && <SourcePanel key={id + (data.source_request?.sources_asked ?? 0)} run={data} />}
+        {archive && (
+          <div role="note" className="rounded-md border border-line bg-surface-2 p-3 text-sm">
+            Archived run, read only: from the evidence store archived as <Link className="text-accent underline" to={`/archives/${archive}`}>{archive}</Link>.
+            {ACTIVE.has(data.status ?? '') || ['awaiting_approval', 'needs_capability', 'needs_source', 'paused'].includes(data.status ?? '') ? ' It was archived before it finished and cannot be continued.' : ''}
+          </div>
+        )}
+        {!archive && data.status === 'awaiting_approval' && data.approval && <ApprovalPanel key={id + JSON.stringify(data.approval)} runId={id} plan={data.approval} />}
+        {!archive && data.status === 'needs_capability' && <CapabilityPanel run={data} />}
+        {!archive && data.status === 'needs_source' && <SourcePanel key={id + (data.source_request?.sources_asked ?? 0)} run={data} />}
         {data.status === 'failed' && (
           <div role="alert" className="rounded-md border border-bad bg-bad-bg p-3 text-sm text-bad">
             The run failed: {String(failure?.payload.error ?? 'unknown error')}

@@ -27,6 +27,7 @@ from api.templates import Template, load_templates
 import harness
 import policy as usage_policy
 from app import ollama_models
+import stores
 from evidence import EvidenceStore
 from runs import RunStore
 
@@ -84,6 +85,12 @@ class TemplateRun(BaseModel):
     ask_sources: bool = True                # pause for a source when something cannot be established (headless callers send false)
 
 
+class ArchiveRequest(BaseModel):
+    label: str = Field("", max_length=60)
+    reason: str = Field("", max_length=300)
+    confirm: bool = False                   # the person ticked "archive the current store and start a new one"
+
+
 class CapabilityDecision(BaseModel):
     approve: str | None = None              # connector id, or null to cancel
     terms_ok: bool = False
@@ -110,7 +117,8 @@ def terms_documents(candidate: dict) -> list[dict]:
 def create_app(registry: Registry | None = None, token: str | None = None,
                probe_map: dict | None = None, store: EvidenceStore | None = None,
                engine: Engine | None = None, jobs: Jobs | None = None, templates: dict[str, Template] | None = None,
-               dist_dir=None) -> FastAPI:
+               dist_dir=None, layout: stores.Layout | None = None) -> FastAPI:
+    layout = layout or stores.Layout.live()
     registry = registry or Registry.load()
     token = token or load_token()
     probe_map = probe_map if probe_map is not None else probes.PROBES
@@ -135,6 +143,8 @@ def create_app(registry: Registry | None = None, token: str | None = None,
             supplied = request.headers.get("x-titan-token", "")
             if not hmac.compare_digest(supplied, token):
                 return JSONResponse({"detail": "Missing or wrong session token"}, status_code=401)
+            if request.method == "POST" and stores.busy() and not request.url.path.startswith("/api/stores"):
+                return JSONResponse({"detail": {"problems": ["the evidence store is being archived; try again in a moment"]}}, status_code=409)
         return await call_next(request)
 
     def block_json(block: BlockDef, availability: dict | None = None) -> dict:
@@ -396,6 +406,93 @@ def create_app(registry: Registry | None = None, token: str | None = None,
         detail = engine.store.claim_detail(claim_id)
         if detail is None:
             raise HTTPException(404, "No such claim")
+        return detail
+
+    # -- evidence stores: archive the live one and start a new one; browse archived ones (read only) -------
+
+    def outside_blockers() -> list[str]:
+        """Work that keeps its state in the live store but is not a run: a capability request under way or waiting."""
+        try:
+            pending = [r for r in connectors.requests(100) if r["status"] in ("requested", "researching", "integrating", "awaiting_user")]
+        except Exception:
+            pending = []
+        return [f"data-source request {r['request_id'][:8]} is {r['status'].replace('_', ' ')} ({r['need'][:60]}); "
+                "finish or cancel it first" for r in pending]
+
+    def forget_in_memory() -> list[str]:
+        cleared = stores.reload_definitions()
+        probes.clear_cache()
+        runner = getattr(jobs, "_runner", None)
+        if runner is not None and hasattr(runner, "_profiles"):
+            runner._profiles.clear()
+            cleared.append("runner source descriptions")
+        return cleared
+
+    @app.get("/api/stores")
+    def store_overview():
+        return {"live": stores.preview(layout, outside_blockers()), "archives": stores.list_archives(layout),
+                "log": stores.read_log(layout)[-20:]}
+
+    @app.post("/api/stores/archive")
+    def archive_store(body: ArchiveRequest):
+        if not body.confirm:
+            raise HTTPException(422, {"problems": ["tick the box to confirm: the current store is archived and a new, empty one is started"]})
+        try:
+            manifest = stores.archive(body.label, body.reason, by="app", layout=layout, git_commit=stores._commit(),
+                                      extra_blockers=outside_blockers())
+        except stores.StoreError as exc:
+            raise HTTPException(409, {"problems": exc.problems})
+        except OSError as exc:              # a file in use: nothing was changed
+            raise HTTPException(409, {"problems": [f"could not move the store's files ({exc}); nothing was changed"]})
+        forget_in_memory()
+        return manifest
+
+    @app.post("/api/maintenance/reload")
+    def reload_definitions():
+        """Forget what Titan read into memory (definition files, health checks, source descriptions); nothing stored is touched."""
+        return {"cleared": forget_in_memory()}
+
+    def archived(aid: str) -> stores.ArchivedStore:
+        try:
+            return stores.ArchivedStore(aid, layout)
+        except KeyError:
+            raise HTTPException(404, "No such archive")
+
+    @app.get("/api/archives/{aid}")
+    def archive_overview(aid: str, limit: int = 200):
+        a = archived(aid)
+        return {"manifest": a.manifest, "runs": a.runs.runs(min(max(limit, 1), 1000))}
+
+    @app.post("/api/archives/{aid}/verify")
+    def archive_verify(aid: str):
+        return archived(aid).verify()
+
+    @app.get("/api/archives/{aid}/runs/{run_id}")
+    def archive_run(aid: str, run_id: str):
+        a = archived(aid)
+        events = a.runs.events(run_id)
+        kind = run_kind(events)
+        if kind is None:
+            raise HTTPException(404, "No such run in this archive")
+        started = next((e["payload"] for e in events if e["type"] in ("run_started", "queued")), {})
+        status = a.runs.status(run_id)
+        return {"run_id": run_id, "kind": kind, "status": status, "title": started.get("question") or started.get("title"),
+                "subject": started.get("subject"), "report": a.report(run_id) if kind == "research" and status == "finished" else None,
+                "archive": aid, "event_count": len(events)}
+
+    @app.get("/api/archives/{aid}/runs/{run_id}/events")
+    def archive_run_events(aid: str, run_id: str, after: int = 0):
+        return archived(aid).runs.events(run_id, after)
+
+    @app.get("/api/archives/{aid}/evidence/claims")
+    def archive_claims(aid: str, entity: str | None = None, limit: int = 100, offset: int = 0):
+        return archived(aid).evidence.list_claims(entity, min(max(limit, 1), 500), max(offset, 0))
+
+    @app.get("/api/archives/{aid}/evidence/claims/{claim_id}")
+    def archive_claim(aid: str, claim_id: int):
+        detail = archived(aid).evidence.claim_detail(claim_id)
+        if detail is None:
+            raise HTTPException(404, "No such claim in this archive")
         return detail
 
     @app.post("/api/uploads", status_code=201)
