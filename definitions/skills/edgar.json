@@ -1,0 +1,40 @@
+{
+  "id": "edgar",
+  "version": "1.0",
+  "about": "How Titan reads SEC EDGAR without asking a model for anything it cannot know. A local model does not know a company's CIK (it invented 320196 for Apple, whose CIK is 320193, and 0001564590 for S&P Global, whose CIK is 64040), so code looks the CIK up in the SEC's own company list, reads the filing list, chooses the filings that fit the question by form and 8-K item, and reads those documents (the 8-K's Exhibit 99 press releases first). Every step is logged; the company list and every filing read are archived like any other source.",
+  "tickers_url": "https://www.sec.gov/files/company_tickers.json",
+  "archives_url": "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/",
+  "max_filings": 6,
+  "max_documents": 8,
+  "max_exhibits_per_filing": 2,
+  "lookback_days": {"latest": 200, "default": 400},
+  "item_groups": [
+    {"id": "deals", "cues": "acqui\\w*|merg\\w*|deal|transaction|divest\\w*|sale of|sell\\w*|spin[- ]?off|separat\\w*|joint venture|tender offer",
+     "items": ["1.01", "2.01", "8.01", "7.01"], "forms": ["S-4", "425"],
+     "why": "8-K Item 1.01 (material agreement), 2.01 (acquisition or disposal completed), 7.01 and 8.01 (announcements); S-4 and 425 (merger documents)"},
+    {"id": "strategy", "cues": "strateg\\w*|initiativ\\w*|announc\\w*|launch\\w*|partner\\w*|news|latest|recent|moves?|plans?|review|alternatives|restructur\\w*|layoffs?|invest\\w*",
+     "items": ["7.01", "8.01", "1.01", "2.01", "2.05"],
+     "why": "8-K Items 7.01 and 8.01 carry the company's announcements as Exhibit 99 press releases; 1.01 and 2.01 deals; 2.05 restructuring costs"},
+    {"id": "results", "cues": "results?|earnings|revenues?|net sales|net income|profit|margin|EPS|quarter\\w*|guidance|outlook|fiscal",
+     "items": ["2.02"], "forms": ["10-Q", "10-K"],
+     "why": "8-K Item 2.02 (results of operations: the earnings release is Exhibit 99.1), and the 10-Q or 10-K for the period"},
+    {"id": "leadership", "cues": "ceo|cfo|coo|chief \\w+ officer|president|chair\\w*|board|directors?|appoint\\w*|resign\\w*|retir\\w*|succe\\w*|leadership|executive",
+     "items": ["5.02"], "forms": ["DEF 14A"],
+     "why": "8-K Item 5.02 (departure or appointment of officers and directors) and the proxy statement"},
+    {"id": "company", "cues": "founded|headquarter\\w*|employees|headcount|business|segments?|what does .* do|describe|overview|risk factors?",
+     "items": [], "forms": ["10-K"],
+     "why": "the 10-K describes the business, its segments, headcount and risks"}
+  ],
+  "default_groups": ["strategy", "deals"],
+  "metrics": [
+    {"cues": "revenues?|net sales|sales", "taxonomy": "us-gaap", "tags": ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"]},
+    {"cues": "net income|net earnings|profit", "taxonomy": "us-gaap", "tags": ["NetIncomeLoss"]},
+    {"cues": "earnings per share|\\bEPS\\b", "taxonomy": "us-gaap", "tags": ["EarningsPerShareDiluted", "EarningsPerShareBasic"]},
+    {"cues": "operating income", "taxonomy": "us-gaap", "tags": ["OperatingIncomeLoss"]},
+    {"cues": "total assets", "taxonomy": "us-gaap", "tags": ["Assets"]},
+    {"cues": "shares outstanding", "taxonomy": "dei", "tags": ["EntityCommonStockSharesOutstanding"]}
+  ],
+  "max_metrics": 2,
+  "exhibit_pattern": "ex[-_]?99|exhibit[-_]?99",
+  "skip_documents": "\\.(?:jpg|jpeg|png|gif|xml|xsd|zip|txt|css|js)$|FilingSummary|R\\d+\\.htm|-index"
+}

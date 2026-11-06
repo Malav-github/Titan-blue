@@ -34,11 +34,15 @@ def search(query: str, max_results: int = 10, recency: str | None = None,
          "degraded_engines": r.degraded, "latency_ms": r.latency_ms}
         for r in reports.values()
     ]
+    # A provider that failed, or a search with nothing in it, is a warning. One engine inside SearXNG timing out while the
+    # other providers answered is a note: the search still had results, and the engine is rested (tools.search.health).
     warnings = [f"{h['provider']} failed: {h['error']}" for h in health if not h["ok"]]
-    warnings += [f"{h['provider']} degraded engine {d}" for h in health for d in h["degraded_engines"]]
+    notes = [f"{h['provider']} engine {d}" for h in health for d in h["degraded_engines"]]
     if not any(h["ok"] for h in health):
         warnings.append("ALL providers failed: an empty result here says nothing about the web")
+    elif not results:
+        warnings.append("every provider answered but none found anything")
 
     search_id = ledger.record(full_query, recency, health, results, path=ledger_path)
     return {"search_id": search_id, "query": full_query, "results": results,
-            "providers": health, "warnings": warnings}
+            "providers": health, "warnings": warnings, "notes": notes}

@@ -1,0 +1,179 @@
+{
+  "about": "Why parts of a run failed, read by code from the run's own log (diagnosis.py) and shown with the report. Each cause names its kind (llm: a limit of the local model; source: a site or database refused or was unreadable; search: a search provider failed; design: a rule of Titan's own; input: something the question did not give), what Titan already does about it (handled_by) and what could be done next (workaround).",
+  "kinds": {
+    "llm": "Local model capability",
+    "source": "Source access",
+    "search": "Search provider",
+    "design": "Titan's own rules",
+    "input": "The question"
+  },
+  "causes": [
+    {
+      "id": "misquoted",
+      "kind": "llm",
+      "event": "claim_rejected",
+      "match": "quote not found verbatim|quote shorter than",
+      "label": "The model quoted words the page does not contain, or too few of them",
+      "handled_by": "the claim is refused (every claim needs a word-for-word quote); quotes are narrowed or widened by code where they nearly match",
+      "workaround": "a larger extraction model, or extraction by sentence selection (the model picks sentence numbers; code copies the text)"
+    },
+    {
+      "id": "not_a_fact",
+      "kind": "llm",
+      "event": "claim_rejected",
+      "match": "not a statement of a fact|does not address any needed fact",
+      "label": "The model returned remarks about the page, or claims that answer nothing asked",
+      "handled_by": "refused by code",
+      "workaround": "fewer, tighter extraction fields; the company-events ontology as a fixed list of claim kinds"
+    },
+    {
+      "id": "malformed",
+      "kind": "llm",
+      "event": "claims_malformed",
+      "label": "The model's output did not fit the required shape",
+      "handled_by": "the malformed items are dropped and counted",
+      "workaround": "a smaller schema per call, or a model with stronger structured output"
+    },
+    {
+      "id": "llm_failed",
+      "kind": "llm",
+      "event": "llm_failed",
+      "label": "A model call failed or returned nothing usable",
+      "handled_by": "retried once, then that step is skipped",
+      "workaround": "check that Ollama is running and the model fits in memory; a smaller context for the call"
+    },
+    {
+      "id": "guessed_id",
+      "kind": "llm",
+      "event": "api_skipped",
+      "label": "The model invented an identifier (a CIK, a paper id) the question never gave",
+      "handled_by": "the call is refused; EDGAR is now read by the EDGAR skill, which looks the CIK up in the SEC's own list",
+      "workaround": "a lookup skill for each connector that needs ids (OpenAlex ids by title search)"
+    },
+    {
+      "id": "guessed_answer",
+      "kind": "llm",
+      "event": "queries_cleaned",
+      "label": "The planner wrote a guessed figure into a search query",
+      "handled_by": "the figure is removed before searching",
+      "workaround": "queries built from templates for known question shapes"
+    },
+    {
+      "id": "vague_premise",
+      "kind": "llm",
+      "event": "premise_dropped",
+      "label": "The planner listed a premise that names nothing specific",
+      "handled_by": "dropped by code before the premise check",
+      "workaround": "none needed beyond the code filter"
+    },
+    {
+      "id": "invented_sentence",
+      "kind": "llm",
+      "event": "uncited_removed",
+      "label": "The writer added sentences no claim backs",
+      "handled_by": "removed from the answer and listed with the report",
+      "workaround": "writing event by event from a fixed template, with the model only phrasing each cited claim"
+    },
+    {
+      "id": "rewrite",
+      "kind": "llm",
+      "event": "summary_revised",
+      "label": "The first draft broke writing rules and was rewritten",
+      "handled_by": "scored by the matrix; a worse rewrite never replaces a better draft",
+      "workaround": "the golden set, to tune the rules the model breaks most"
+    },
+    {
+      "id": "blocked",
+      "kind": "source",
+      "event": "source_failed",
+      "match": "HTTP 40[13]|HTTP 429",
+      "label": "A site refused Titan's request (blocked or rate-limited)",
+      "handled_by": "the page is skipped; other copies of the same document (a wire service, EDGAR) can still be read",
+      "workaround": "read the company's filings on EDGAR and its releases on wire services, which serve automated readers; never evade a block"
+    },
+    {
+      "id": "missing",
+      "kind": "source",
+      "event": "source_failed",
+      "match": "HTTP 404|HTTP 410",
+      "label": "A page no longer exists",
+      "handled_by": "skipped",
+      "workaround": "the Internet Archive's copy, if the archive is added as a source"
+    },
+    {
+      "id": "unreadable",
+      "kind": "source",
+      "event": "source_failed",
+      "match": "readable characters|timed out|Timeout|SSL|ConnectError",
+      "label": "A page could not be read (no text, scanned, or the connection failed)",
+      "handled_by": "pages with no text are rendered in a browser once; otherwise skipped",
+      "workaround": "OCR for scanned PDFs"
+    },
+    {
+      "id": "connector_failed",
+      "kind": "source",
+      "event": "api_failed",
+      "label": "A data-source call failed",
+      "handled_by": "logged; the web search carries on",
+      "workaround": "fix the call parameters in the connector's profile"
+    },
+    {
+      "id": "edgar_failed",
+      "kind": "source",
+      "event": "edgar_failed",
+      "label": "Part of the EDGAR reading failed",
+      "handled_by": "logged; other filings and the web carry on",
+      "workaround": "retry later (sec.gov rate limits apply)"
+    },
+    {
+      "id": "search_failed",
+      "kind": "search",
+      "event": "search_done",
+      "field": "warnings",
+      "label": "A search provider failed, or a search found nothing at all",
+      "handled_by": "results from the other providers are used; SearXNG is started again once if it does not answer",
+      "workaround": "check WSL and Docker (SearXNG runs there); the Brave API key and its quota"
+    },
+    {
+      "id": "search_degraded",
+      "kind": "search",
+      "event": "search_done",
+      "field": "notes",
+      "label": "An engine inside SearXNG timed out, was blocked (CAPTCHA) or rate-limited, while the search still had results",
+      "handled_by": "the engine is rested for 10 to 30 minutes and left out of SearXNG queries; the Brave API and the other engines carried the search",
+      "workaround": "none needed unless it repeats; SearXNG no longer scrapes Brave (the Brave API is used directly)"
+    },
+    {
+      "id": "stopped_early",
+      "kind": "design",
+      "event": "extract_stopped",
+      "label": "Reading stopped once the needed facts had claims from enough sources",
+      "handled_by": "the unread pages are kept and read if a gap remains",
+      "workaround": "list questions never stop early (they collect every event)"
+    },
+    {
+      "id": "unchecked",
+      "kind": "design",
+      "event": "check_skipped",
+      "label": "Claims were left unchecked because the fact was already backed",
+      "handled_by": "they stay on record, marked unchecked",
+      "workaround": "a larger check budget when speed matters less"
+    },
+    {
+      "id": "budget",
+      "kind": "design",
+      "event": "budget_reached",
+      "label": "A search or reading budget ran out",
+      "handled_by": "the run reports what it found",
+      "workaround": "raise the budget for this kind of question"
+    },
+    {
+      "id": "no_cik",
+      "kind": "input",
+      "event": "edgar_no_cik",
+      "label": "The subject is not an SEC registrant under that name",
+      "handled_by": "EDGAR is not read; the web carries on",
+      "workaround": "give the ticker or the CIK in the question, or the SEC's registrant name (e.g. Alphabet for Google)"
+    }
+  ]
+}

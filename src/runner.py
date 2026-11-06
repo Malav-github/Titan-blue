@@ -9,8 +9,10 @@ event log, state is checkpointed to SQLite so a run can pause and resume (even f
 and Langfuse traces are tagged with the run id.
 """
 
+import json
 import re
 import sqlite3
+from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 import uuid
 from pathlib import Path
@@ -25,10 +27,11 @@ import tracing
 from skills.temporal import clock as tclock, freshness, intent as tintent, setting as temporal_setting
 from skills.temporal.display import short_date
 from skills.temporal import periods as tperiods
-from skills import planning, writing
+from skills import edgar, planning, writing
 from skills.planning import sense as common_sense
 from skills.temporal.extract import DateFact, best_date, parse_date
 import corroboration
+import diagnosis
 import source_class
 import sources
 from config import DATA_DIR, LLM_MODE
@@ -217,6 +220,9 @@ class State(TypedDict, total=False):
     capability_id: str | None
     fetch_failures: int
     api_calls_used: int
+    enumerate: dict | None     # a list question (skills.planning.enumerate): collect every distinct event, write a round-up
+    edgar_done: bool           # the EDGAR skill has run for this run
+    cik: str | None            # the subject's SEC CIK, looked up by code in the SEC's own company list
     covered: list[int]
     fetched_keys: list[str]
     backlog: list[str]         # sources fetched but not read yet because the needed facts were already backed
@@ -289,6 +295,34 @@ def invented_values(params: dict | None, *texts: str) -> list[str]:
         if v not in haystack and not (stripped and stripped in haystack):
             bad.append(str(value))
     return bad
+
+
+_VAGUE = {"made", "make", "makes", "an", "a", "the", "one", "some", "any", "announcement", "announcements", "announced", "announce",
+          "announces", "news", "update", "updates", "development", "developments", "initiative", "initiatives", "move", "moves",
+          "event", "events", "statement", "statements", "something", "exists", "existed", "occurred", "happened", "took", "place",
+          "has", "had", "have", "did", "was", "were", "is", "are", "in", "on", "at", "of", "for", "during", "by", "its", "their", "there",
+          "strategic", "strategy", "latest", "recent", "new", "least", "plan", "plans", "made"}
+
+
+def specific_premise(premise: str, names: list[str], question: str = "") -> bool:
+    """Does the premise name something specific that could fail to exist (a titled document, a named deal or product, an
+    office)? 'S&P Global made an announcement in 2026' names only the subject, a year and vague words: checking it can only
+    produce a wrong refusal, since a small model then judges ten search results as not reporting it."""
+    subject = {w for n in names for w in re.findall(r"[a-z0-9&]+", n.lower())}
+    words = [w for w in re.findall(r"[a-z0-9&'.-]+", premise.lower()) if w.strip("'.") not in _VAGUE and w not in subject
+             and not re.fullmatch(r"(?:19|20)\d\d", w) and len(w.strip("'.")) > 1]
+    return bool(words) or bool(re.search(r"['\"‘“]", premise))
+
+
+def no_guessed_figures(query: str, question: str) -> str:
+    """The query without amounts and percentages the question never gave: a planner that writes 'revenue $3.68B' into a
+    search has guessed the answer, and the search then finds pages that repeat the guess."""
+    q_low = question.lower()
+    def keep(m):
+        return m.group(0) if m.group(0).lower().strip() in q_low else ""
+    cleaned = re.sub(r"\$\s?\d[\d,.]*\s?(?:[bmk]n?|billion|million|thousand)?\b|\b\d[\d,.]*\s?(?:%|(?:percent|billion|million|bn)\b)",
+                     keep, query, flags=re.I)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
 
 
 def _terms(*texts: str) -> set[str]:
@@ -610,11 +644,29 @@ class Runner:
             warnings.append("planner failed: using the question itself as the only query and checklist item")
             plan = Plan(subject=s["question"][:60], queries=[s["question"]], checklist=[s["question"]])
         subject = s.get("subject") or plan.subject
+        if not plan.company:                 # the planner left it empty; an SEC registrant the question names is a company
+            registrant = self._registrant(s, planning.the_subject(subject, None, s["question"]))
+            if registrant:
+                plan.company = registrant
         entity_name = plan.company or subject
-        queries = _dedupe(plan.queries)[:b["max_queries_per_iter"]] or [s["question"]]
+        cleaned = [no_guessed_figures(q, s["question"]) for q in plan.queries]
+        if guessed := [q for q, c in zip(plan.queries, cleaned) if q != c]:
+            self.runs.emit(rid, "plan", "queries_cleaned", {"queries": guessed, "why": "they carried figures the question never gave (a guessed answer)"})
+        queries = _dedupe([c for c in cleaned if c])[:b["max_queries_per_iter"]] or [s["question"]]
         queries = _dedupe(tintent.apply_year_terms(queries, scope, now))[:b["max_queries_per_iter"]]
         queries = _dedupe(planning.diversify(queries, s["question"], subject, plan.company, brief, scope, now, b["max_queries_per_iter"]))
         checklist = _dedupe(plan.checklist)[:6] or [s["question"]]
+        # A question asking for a list of events is planned by code: a small model plans it as one fact and stops at the first event.
+        listing = planning.enumeration(s["question"], planning.the_subject(subject, plan.company, s["question"]), scope.as_dict())
+        listing_state: dict = {"enumerate": None}
+        if listing:
+            raised = {k: max(b.get(k, 0), v) for k, v in listing["budgets"].items()}
+            checklist = [listing["item"]]
+            queries = _dedupe(queries[:1] + listing["queries"])[:raised["max_queries_per_iter"]]
+            listing_state = {"enumerate": listing, "settle_sites": 99, "budgets": {**b, **raised}}
+            self.runs.emit(rid, "plan", "list_question", {
+                "item": listing["item"], "queries": queries, "budgets": raised,
+                "why": "the question asks for a list of events: every distinct one is collected, so reading does not stop at the first"})
         categories = [c for c in plan.page_categories if plan.company]
         entity_id = self.store.add_entity(entity_name, kind="subject")
         advice = self._advice_of(s)
@@ -628,7 +680,7 @@ class Runner:
         return {"subject": subject, "company": plan.company, "entity_name": entity_name, "entity_id": entity_id,
                 "page_categories": categories, "queries": queries, "checklist": checklist, "warnings": warnings,
                 "data_need": plan.needs_data_source, "time_scope": scope.as_dict(), "brief": brief.as_dict(),
-                "premise": listed, "sense": concerns, "advice": advice, **screen,
+                "premise": listed, "sense": concerns, "advice": advice, **screen, **listing_state,
                 # a fresh plan starts clean: nothing from an earlier reading of the question carries over
                 "approved": False, "outcome": None, "premise_claim_ids": [],
                 "premise_url": None, "all_claim_ids": [], "verdicts": {}, "relevant": {}, "claim_items": {}, "covered": [],
@@ -744,7 +796,13 @@ class Runner:
             + (f"The person later corrected the reading of the question: {'; '.join(s['corrections'])}.\n" if s.get("corrections") else "")
             + f"Question: {s['question']}\npremise:")
         out = self._ask("plan", PremiseList, prompt, s["run_id"], "plan")
-        return _dedupe(out.premise)[:3] if out else []
+        listed = _dedupe(out.premise)[:3] if out else []
+        kept = [p for p in listed if specific_premise(p, self._names({**s, "subject": subject}), s["question"])]
+        if dropped := [p for p in listed if p not in kept]:
+            self.runs.emit(s["run_id"], "plan", "premise_dropped", {
+                "premise": dropped, "why": "names nothing specific to check (only the subject, a year and words like 'announcement'); "
+                                          "a small model lists such statements, and checking them can only wrongly refuse the question"})
+        return kept
 
     def n_approve(self, s: State) -> dict:
         """The person answers the agent's plan and its finding about the question's premise: approve it, accept a refusal,
@@ -813,7 +871,7 @@ class Runner:
         warnings = list(s.get("warnings", []))
         domain, entity_id = s.get("domain"), s["entity_id"]
 
-        if s["iteration"] == 0 and s.get("company") and s["page_categories"] and not domain:
+        if s["iteration"] == 0 and s.get("company") and not domain:      # the official domain labels the company's own pages
             try:
                 resolution = primary.resolve_domain(s["company"])
                 self.store.register_resolution(resolution)
@@ -822,7 +880,7 @@ class Runner:
                 if confirmed:
                     domain = confirmed[0]["domain"]
                     entity_id = self.store.find_entity(s["entity_name"])["entity_id"]
-                    pages = primary.discover_pages(domain, per_category=3)
+                    pages = primary.discover_pages(domain, per_category=3) if s["page_categories"] else {"pages": [], "categories_not_found": []}
                     for p in pages["pages"]:
                         if p["category"] in s["page_categories"]:
                             found[normalize_url(p["url"])] = {"url": p["url"], "title": f"[{p['category']}] {p['url']}",
@@ -865,7 +923,7 @@ class Runner:
                                   "published": hit.get("published")}
             self.runs.emit(rid, "discover", "search_done", {
                 "query": query, "results": len(result["results"]), "search_id": result["search_id"],
-                "providers": result["providers"], "warnings": result["warnings"],
+                "providers": result["providers"], "warnings": result["warnings"], "notes": result.get("notes", []),
                 "searched_at": searched_at, "recency": recency})
             warnings += [f"search '{query}': {w}" for w in result["warnings"]]
 
@@ -913,6 +971,7 @@ class Runner:
         rid = s["run_id"]
         new_sources, fetches, keys = [], s["fetches_used"], list(s["fetched_keys"])
         warnings = list(s.get("warnings", []))
+        blocked: list[dict] = []
         downloads = self._side_by_side(lambda c: self.fetch_fn(c["url"], max_chars=2000), s["selected"])
         for cand, downloaded in zip(s["selected"], downloads):
             url = cand["url"]
@@ -937,20 +996,81 @@ class Runner:
             except Exception as exc:
                 warnings.append(f"could not use {url}: {exc}")
                 self.runs.emit(rid, "fetch", "source_failed", {"url": url, "error": f"{type(exc).__name__}: {exc}"})
+                if re.search(r"HTTP (?:401|403|429)\b", str(exc)) and cand.get("title"):
+                    blocked.append(cand)
                 continue
             new_sources.append(sha)
-            self._record_hit_date(sha, cand.get("published"))
-            facts = self._source_dates(sha)
-            best = best_date(facts)
-            profile = self._profile(s, sha, title=cand.get("title") or "")
-            self.runs.emit(rid, "fetch", "source_fetched", {
-                "url": url, "source_sha256": sha, "tier": profile["tier"], "readable_chars": len(text),
-                "source": {k: profile[k] for k in ("label", "issuer", "issuer_basis", "document_type", "venue", "publisher", "filed_as")},
-                "dates": [{"kind": f.kind, "value": f.value, "origin": f.origin} for f in facts][:8],
-                "best_date": best.value if best else None, "best_date_kind": best.kind if best else None})
+            self._fetched_event(s, url, sha, text, cand)
         failed = len(s["selected"]) - len(new_sources)
+        copies = self._other_copies(s, blocked[:self.COPY_SEARCHES], keys)
+        for cand, sha, text in copies:
+            new_sources.append(sha)
+            fetches += 1
+            self._fetched_event(s, cand["url"], sha, text, cand)
         return {"new_sources": list(s.get("backlog") or []) + new_sources, "backlog": [], "fetches_used": fetches,
                 "fetched_keys": keys, "warnings": warnings, "fetch_failures": s["fetch_failures"] + failed}
+
+    def _fetched_event(self, s: State, url: str, sha: str, text: str, cand: dict) -> None:
+        self._record_hit_date(sha, cand.get("published"))
+        facts = self._source_dates(sha)
+        best = best_date(facts)
+        profile = self._profile(s, sha, title=cand.get("title") or "")
+        self.runs.emit(s["run_id"], "fetch", "source_fetched", {
+            "url": url, "source_sha256": sha, "tier": profile["tier"], "readable_chars": len(text),
+            "source": {k: profile[k] for k in ("label", "issuer", "issuer_basis", "document_type", "venue", "publisher", "filed_as")},
+            "dates": [{"kind": f.kind, "value": f.value, "origin": f.origin} for f in facts][:8],
+            "best_date": best.value if best else None, "best_date_kind": best.kind if best else None,
+            **({"copy_of": cand["copy_of"]} if cand.get("copy_of") else {})})
+
+    COPY_SEARCHES = 2          # blocked pages per round whose document is looked for elsewhere
+    _COPY_CLASSES = ("wire_release", "company_site", "filing", "major_publication")
+
+    def _other_copies(self, s: State, blocked: list[dict], keys: list[str]) -> list[tuple[dict, str, str]]:
+        """A site that refuses Titan (HTTP 401, 403, 429) is never worked around. The same document is often published
+        elsewhere: a company release on PR Newswire or the company's press site, a filing on EDGAR. One search for the page's
+        exact title finds such a copy; it is read only if it is on one of those kinds of site."""
+        rid, out = s["run_id"], []
+        names = self._names(s)
+        domains = [s["domain"]] if s.get("domain") else []
+        for cand in blocked:
+            title = re.split(r"\s+[|\-–—]\s+(?=[^|\-–—]*$)", cand["title"].replace("...", "").replace("…", "").strip())[0]
+            title = " ".join(title.split()[:14])
+            if len(title.split()) < 4:
+                continue
+            query = f'"{title}"'
+            try:
+                result = self.search_fn(query, max_results=8)
+            except Exception as exc:
+                self.runs.emit(rid, "fetch", "copy_search_failed", {"blocked": cand["url"], "error": f"{type(exc).__name__}: {exc}"})
+                continue
+            host = urlparse(cand["url"]).hostname
+            found = None
+            for hit in result["results"]:
+                key = normalize_url(hit["url"])
+                if key in keys or urlparse(hit["url"]).hostname == host:
+                    continue
+                cls = source_class.classify(hit["url"], domains, text=hit.get("snippet") or "", title=hit.get("title") or "", names=names)
+                if cls["id"] in self._COPY_CLASSES:
+                    found = {**hit, "copy_of": cand["url"], "label": cls["label"], "tier": cls["tier"]}
+                    break
+            if not found:
+                self.runs.emit(rid, "fetch", "copy_not_found", {"blocked": cand["url"], "query": query})
+                continue
+            keys.append(normalize_url(found["url"]))
+            try:
+                r = self.fetch_fn(found["url"], max_chars=2000)
+                if r["status"] != 200:
+                    raise RuntimeError(f"HTTP {r['status']}")
+                sha = self.store.ingest(r)
+                text = Path(self.store.get_source(sha)["text_path"]).read_text(encoding="utf-8")
+                if len(text.strip()) < MIN_READABLE_CHARS:
+                    raise RuntimeError(f"only {len(text.strip())} readable characters")
+            except Exception as exc:
+                self.runs.emit(rid, "fetch", "source_failed", {"url": found["url"], "error": f"{type(exc).__name__}: {exc}"})
+                continue
+            self.runs.emit(rid, "fetch", "copy_found", {"blocked": cand["url"], "copy": found["url"], "label": found["label"], "query": query})
+            out.append((found, sha, text))
+        return out
 
     @staticmethod
     def _names(s: State) -> list[str]:
@@ -963,11 +1083,12 @@ class Runner:
         text. One description per source and subject, used by every step, so the tier that decides when to stop reading is the
         tier the report shows."""
         names, domains = tuple(self._names(s)), (s["domain"],) if s.get("domain") else ()
-        key = (sha, names, domains)
+        ciks = [s["cik"]] if s.get("cik") else []
+        key = (sha, names, domains, tuple(ciks))
         if key not in self._profiles:
             src = self.store.get_source(sha)
             text = Path(src["text_path"]).read_text(encoding="utf-8")
-            self._profiles[key] = source_class.classify(src["final_url"], list(domains), text=text, names=list(names), title=title)
+            self._profiles[key] = source_class.classify(src["final_url"], list(domains), text=text, names=list(names), title=title, ciks=ciks)
         return self._profiles[key]
 
     def _tier(self, s: State, claim: dict) -> str:
@@ -988,17 +1109,26 @@ class Runner:
             self.store.record_source_dates(sha, [DateFact("search_result", parsed[0], parsed[1], str(published)[:120], "search", parsed[2])])
 
     def n_api_lookup(self, s: State) -> dict:
-        """Ask the model which approved connector calls would help, then make them through the guarded path."""
+        """EDGAR by the EDGAR skill (code only: a model cannot know a CIK), then ask the model which other approved
+        connector calls would help, and make them through the guarded path."""
         rid, b = s["run_id"], s["budgets"]
         active = self.registry.list_active()
         room = b["max_api_calls"] - s["api_calls_used"]
         if not active or room <= 0:
             return {}
+        out: dict = {}
+        if any(m.connector_id == "sec_edgar" for _, m in active) and not s.get("edgar_done"):
+            filed, calls, cik = self._edgar(s, room)
+            out = {"edgar_done": True, "cik": cik, "api_calls_used": s["api_calls_used"] + calls,
+                   "new_sources": filed + list(s["new_sources"])}          # the company's own filings are read first
+            room -= calls
+        active = [(v, m) for v, m in active if m.connector_id != "sec_edgar"]
         routed = sources.route([m.connector_id for _, m in active], s["question"], " ".join(s["checklist"]))
         self.runs.emit(rid, "api_lookup", "sources_routed", routed)
         active = [(v, m) for v, m in active if m.connector_id in routed["offered"]]
-        if not active:     # no approved connector fits this question: skip the model call, the web search carries on
-            return {}
+        if not active or room <= 0:     # no other approved connector fits this question: the web search carries on
+            return out
+        s = {**s, **out}
         docs = "\n".join(
             f"{m.connector_id}: {m.description}\n" + "\n".join(
                 f"  - {e.name}({', '.join(p.name + ('*' if p.required else '') for p in e.params)}): {e.description}"
@@ -1031,7 +1161,102 @@ class Runner:
             self.runs.emit(rid, "api_lookup", "api_called", {
                 "connector": call.connector, "endpoint": call.endpoint, "params": call.params, "source_sha256": sha,
                 "source_tier": result.get("source_tier"), "url": result["url"]})
-        return {"new_sources": new_sources, "api_calls_used": used}
+        return {**out, "new_sources": new_sources, "api_calls_used": used}
+
+    # -- the EDGAR skill ------------------------------------------------------------------------------
+
+    def _fetched(self, url: str) -> tuple[str, bytes]:
+        """Fetch and archive one page (sec.gov's usage rules apply on every request). Returns (source, raw bytes)."""
+        r = self.fetch_fn(url, max_chars=2000)
+        if r["status"] != 200:
+            raise RuntimeError(f"HTTP {r['status']} for {url}")
+        return self.store.ingest(r), Path(r["archive_path"]).read_bytes()
+
+    def _registrant(self, s: State, name: str) -> str | None:
+        """`name` if it is an SEC registrant's name or ticker (and EDGAR is an approved source), else None. Code, not a model."""
+        if not name or not any(m.connector_id == "sec_edgar" for _, m in self.registry.list_active()):
+            return None
+        try:
+            match = edgar.resolve([name], self._sec_tickers()[0])
+        except Exception:
+            return None
+        if match.get("cik"):
+            self.runs.emit(s["run_id"], "plan", "company_from_sec", {"company": name, "registrant": match["title"], "cik": match["cik"]})
+            return name
+        return None
+
+    def _sec_tickers(self) -> tuple[list[dict], str]:
+        """The SEC's company list (CIK, ticker, name), archived as a source; read once a day."""
+        today = tclock.now(self.now_fn).local.date()
+        cached = getattr(self, "_tickers", None)
+        if cached and cached[0] == today:
+            return cached[1], cached[2]
+        sha, raw = self._fetched(edgar.manifest()["tickers_url"])
+        self._tickers = (today, edgar.parse_tickers(raw), sha)
+        return self._tickers[1], sha
+
+    def _edgar(self, s: State, room: int) -> tuple[list[str], int, str | None]:
+        """Find the subject's CIK in the SEC's list, read its filing list, and read the filings that fit the question.
+        Returns (sources read, connector calls made, CIK). Failures are logged and the run carries on with the web."""
+        rid, calls, read, history = s["run_id"], 0, [], []
+        try:
+            tickers, list_sha = self._sec_tickers()
+            match = edgar.resolve(self._names(s), tickers, f"{s['question']} {' '.join(s['checklist'])}")
+            if not match["cik"]:
+                self.runs.emit(rid, "api_lookup", "edgar_no_cik", {"reason": match["reason"]})
+                return [], 0, None
+            cik = match["cik"]
+            self.runs.emit(rid, "api_lookup", "edgar_cik", {**match, "source": edgar.manifest()["tickers_url"], "source_sha256": list_sha})
+            result = self.call_api_fn(self.registry, "sec_edgar", "submissions", {"cik": cik}, run_id=rid)
+            calls += 1
+            if not result["ok"]:
+                raise ConnectorError(f"submissions: HTTP {result['status']}")
+            listing = self.store.ingest(result)        # the filing list: read last, it is metadata
+            submissions = json.loads(Path(result["archive_path"]).read_bytes())
+            today = tclock.now(self.now_fn).local.date()
+            groups = edgar.groups_for(s["question"], s["checklist"])
+            start, end = edgar.window(s.get("time_scope"), today)
+            filings = edgar.select_filings(submissions, groups, start, end)
+            self.runs.emit(rid, "api_lookup", "edgar_filings", {
+                "cik": cik, "kinds": [g["id"] for g in groups], "window": [start.isoformat(), end.isoformat()],
+                "filings": [{k: f[k] for k in ("form", "filed", "items", "description", "why")} for f in filings]})
+            for metric in edgar.metric_calls(s["question"], s["checklist"]):
+                for tag in metric["tags"]:
+                    if calls >= room:
+                        break
+                    r = self.call_api_fn(self.registry, "sec_edgar", "company_concept",
+                                         {"cik": cik, "taxonomy": metric["taxonomy"], "tag": tag}, run_id=rid)
+                    calls += 1
+                    if r["ok"]:
+                        history.append(self.store.ingest(r))     # every period since the first filing: read after the filings
+                        self.runs.emit(rid, "api_lookup", "api_called", {"connector": "sec_edgar", "endpoint": "company_concept",
+                                                                         "params": {"tag": tag}, "url": r["url"], "by": "edgar skill"})
+                        break
+            budget = edgar.manifest()["max_documents"]
+            for f in filings:
+                if budget <= 0:
+                    break
+                try:
+                    _, html = self._fetched(edgar.index_url(cik, f["accession"]))
+                    urls = edgar.documents(f, cik, edgar.index_documents(html.decode("utf-8", "replace")))
+                except Exception as exc:
+                    self.runs.emit(rid, "api_lookup", "edgar_failed", {"filing": f["accession"], "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
+                    continue
+                for url in urls[:budget]:
+                    try:
+                        sha, _ = self._fetched(url)
+                    except Exception as exc:
+                        self.runs.emit(rid, "api_lookup", "edgar_failed", {"url": url, "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
+                        continue
+                    budget -= 1
+                    self.store.record_source_dates(sha, [DateFact("published", f["filed"], "day", f"filed {f['filed']}", "edgar:filingDate", False)])
+                    read.append(sha)
+                    self.runs.emit(rid, "api_lookup", "edgar_document_read", {"url": url, "form": f["form"], "filed": f["filed"],
+                                                                             "items": f["items"], "source_sha256": sha})
+            return list(dict.fromkeys(read + history + [listing])), calls, cik
+        except Exception as exc:
+            self.runs.emit(rid, "api_lookup", "edgar_failed", {"error": f"{type(exc).__name__}: {str(exc)[:200]}"})
+            return list(dict.fromkeys(read)), calls, None
 
     def n_capability(self, s: State) -> dict:
         """Pause: this run needs a data source it does not have. The capability manager (a person in the loop) provides it."""
@@ -1075,6 +1300,8 @@ class Runner:
                             "claim": c.claim, "quote": c.quote, "reason": "not a statement of a fact",
                             "source_url": source["final_url"]})
                         continue
+                    if len(s["checklist"]) == 1 and c.needed_fact in (0, 2):
+                        c.needed_fact = 1          # one fact asked: a small model numbers it 0 or 2 at times; the relevance check still judges it
                     if not 1 <= c.needed_fact <= len(s["checklist"]):
                         self.runs.emit(rid, "extract", "claim_rejected", {
                             "claim": c.claim, "quote": c.quote, "reason": "does not address any needed fact",
@@ -1115,13 +1342,61 @@ class Runner:
         return {"new_claim_ids": new_ids, "all_claim_ids": s["all_claim_ids"] + new_ids, "rejected": rejected,
                 "new_sources": [], "claim_items": items, "backlog": backlog}
 
+    def _documents(self, shas: list[str]) -> dict[str, str]:
+        """Source -> the first source holding the same document (itself if it has no copy among `shas`)."""
+        cache = self.__dict__.setdefault("_prints", {})
+        order = list(dict.fromkeys(shas))
+        for sha in order:
+            if sha not in cache:
+                cache[sha] = corroboration.fingerprint(Path(self.store.get_source(sha)["text_path"]).read_text(encoding="utf-8"))
+        return corroboration.copy_groups({sha: cache[sha] for sha in order})
+
+    def _independent(self, shas: list[str]) -> dict[str, str]:
+        """Source -> what makes it independent: the site of the first copy of its document. A release on the company's
+        newsroom and the same release on PR Newswire are one source, not two (they share long sentences word for word)."""
+        groups = self._documents(shas)
+        return {sha: corroboration.site(self.store.get_source(root)["final_url"]) for sha, root in groups.items()}
+
+    _GENERIC_WORDS = {"the", "and", "for", "with", "from", "that", "this", "its", "their", "what", "which", "who", "when", "how", "did",
+                      "does", "was", "were", "has", "have", "had", "about", "company", "companies", "announce", "announced", "announcement",
+                      "announcements", "latest", "recent", "new", "news", "year", "years", "inc", "corp"}
+
+    def _on_point(self, s: State, fact: str, claim_text: str) -> bool:
+        """Does the claim share a content word with the needed fact (the subject's name, years and filler aside)? A cheap test
+        used only to decide when to stop reading: the model files every claim under some needed fact, and a page of company
+        metadata ('its ticker is SPGI') must not stop the reading of the 10-Q that holds the revenue."""
+        names = {w for n in self._names(s) for w in re.findall(r"[a-z0-9&]+", n.lower())}
+        words = lambda t: {w.rstrip("s") for w in re.findall(r"[a-z0-9&]+", t.lower())                    # noqa: E731
+                           if len(w) > 2 and w not in self._GENERIC_WORDS and w not in names and not re.fullmatch(r"(?:19|20)\d\d", w)}
+        want = words(fact)
+        years_wanted = set(re.findall(r"\b(?:19|20)\d\d\b", fact)) | {str(y) for y in (s.get("time_scope") or {}).get("years") or []}
+        years_said = set(re.findall(r"\b(?:19|20)\d\d\b", claim_text))
+        if years_wanted and years_said and not years_wanted & years_said:
+            return False          # revenue for 2010 is not on point for a question about 2026
+        return not want or bool(want & words(claim_text))
+
+    _EVENT_VERBS = re.compile(r"\b(?:announc|launch|introduc|unveil|acquir|agree|complet|partner|invest|nam|appoint|expand|releas|"
+                              r"form|open|sign|select|separat|spin|sell|sold|buy|bought|merg|enter|start|establish|debut|roll)\w*", re.I)
+
+    def _event_like(self, s: State, text: str) -> bool:
+        """Does a claim state an event (and, for a list about a topic, mention the topic)? For ordering checks only."""
+        topic = ((s.get("enumerate") or {}).get("topic") or "").lower().split()
+        return bool(self._EVENT_VERBS.search(text)) and (not topic or any(t in text.lower() for t in topic))
+
     def _backed(self, s: State, items: dict, facts: int, need_sites: int) -> bool:
-        """Does every needed fact have recorded claims from at least `need_sites` independent sites (or one primary source)?"""
+        """Does every needed fact have recorded claims from at least `need_sites` independent sites (or one primary source)?
+        Only claims on point for their fact count (see `_on_point`). A list question is never backed early: every event counts."""
+        if s.get("enumerate"):
+            return False
         sites: dict[int, set] = {}
         primary: set[int] = set()
+        claims = {cid: self.store.get_claim(int(cid)) for cid in items}
+        claims = {cid: c for cid, c in claims.items() if self._on_point(s, s["checklist"][items[cid]], c["claim_text"])}
+        items = {cid: f for cid, f in items.items() if cid in claims}
+        where = self._independent([c["source_sha256"] for c in claims.values()])
         for cid, fact in items.items():
-            claim = self.store.get_claim(int(cid))
-            sites.setdefault(fact, set()).add(corroboration.site(self.store.get_source(claim["source_sha256"])["final_url"]))
+            claim = claims[cid]
+            sites.setdefault(fact, set()).add(where[claim["source_sha256"]])
             if self._tier(s, claim) == "primary":
                 primary.add(fact)
         return all(i in primary or len(sites.get(i, ())) >= need_sites for i in range(facts))
@@ -1154,14 +1429,16 @@ class Runner:
     CHECK_WAVE = 3
 
     def _settled_facts(self, s: State, verdicts: dict, relevant: dict, items: dict, need_sites: int) -> set[int]:
+        if s.get("enumerate"):           # a list question: one event never settles the list
+            return set()
         sites: dict[int, set] = {}
         primary: set[int] = set()
-        for c, v in verdicts.items():
-            if v == "supported" and relevant.get(c) and c in items:
-                claim = self.store.get_claim(int(c))
-                sites.setdefault(items[c], set()).add(corroboration.site(self.store.get_source(claim["source_sha256"])["final_url"]))
-                if self._tier(s, claim) == "primary":
-                    primary.add(items[c])
+        good = {c: self.store.get_claim(int(c)) for c, v in verdicts.items() if v == "supported" and relevant.get(c) and c in items}
+        where = self._independent([claim["source_sha256"] for claim in good.values()])
+        for c, claim in good.items():
+            sites.setdefault(items[c], set()).add(where[claim["source_sha256"]])
+            if self._tier(s, claim) == "primary":
+                primary.add(items[c])
         return primary | {f for f, found in sites.items() if len(found) >= need_sites}
 
     def _check_order(self, s: State, ids: list[int]) -> list[int]:
@@ -1180,6 +1457,27 @@ class Runner:
         verdicts, relevant, context = dict(s["verdicts"]), dict(s["relevant"]), dict(s.get("context") or {})
         need = s.get("settle_sites", 2)
         pending = self._check_order(s, list(s["new_claim_ids"]))
+        per_doc = (s.get("enumerate") or {}).get("checks_per_document")
+        if per_doc:          # a list question: each document is one candidate event; check its first claims, not all of them
+            docs = self._documents([self.store.get_claim(c)["source_sha256"] for c in list(map(int, verdicts)) + pending])
+            done: dict[str, int] = {}
+            for c in map(int, verdicts):
+                key = docs[self.store.get_claim(c)["source_sha256"]]
+                done[key] = done.get(key, 0) + 1
+            keep = []
+            # the claims that state an event (and the topic asked about) are checked first: a release's first claims are often
+            # its figures, and checking those two left the event itself unchecked
+            pending = sorted(pending, key=lambda c: not self._event_like(s, self.store.get_claim(c)["claim_text"]))
+            for cid in pending:
+                key = docs[self.store.get_claim(cid)["source_sha256"]]
+                if done.get(key, 0) >= per_doc:
+                    self.runs.emit(rid, "check", "check_skipped", {
+                        "claim_id": cid, "reason": f"{per_doc} claims from this document are already checked; a document is one event, "
+                                                   "and the claim stays on record, unchecked"})
+                    continue
+                done[key] = done.get(key, 0) + 1
+                keep.append(cid)
+            pending = keep
         while pending:
             settled = self._settled_facts(s, verdicts, relevant, s["claim_items"], need)
             wave, rest = [], []
@@ -1256,7 +1554,8 @@ class Runner:
         then score the draft with the evaluation matrix and, if it has a blocking fault, write it once more with the faults named."""
         today = tclock.now(self.now_fn).local.date()
         scope = s.get("time_scope") or {}
-        form = writing.written_as(writing.choose_form(s["question"], scope))
+        listing = s.get("enumerate")
+        form = writing.form_by_id(listing["form"]) if listing else writing.written_as(writing.choose_form(s["question"], scope))
         facts = writing.build_facts(rows) + writing.build_facts(context_rows, role="context")
         allowed = {r["claim_id"] for r in rows + context_rows}
         prompt = writing.draft_prompt(s["question"], facts, form, scope, today, gaps)
@@ -1269,6 +1568,12 @@ class Runner:
             return writing.score(text, facts, question=s["question"], subject=s["subject"], scope=scope, today=today, gaps=gaps, form=form,
                                  checklist=s["checklist"], established_ids=allowed)
 
+        if listing:      # a round-up is put together by code from the claims: every sentence cited and dated, none invented
+            text = self._roundup(s, rows, context_rows, facts, gaps)
+            result = rate(text)
+            self.runs.emit(rid, "report", "summary_scored", {"form": form["id"], "score": result["score"], "grade": result["grade"],
+                                                             "blockers": [b["id"] for b in result["blockers"]], "revisions": 0, "writer": "code"})
+            return text, [], {**result, "revisions": 0, "uncited_removed": [], "requested_form": form["id"], "writer": "code"}
         draft = self._ask("synthesis", Summary, prompt, rid, "report")
         if not draft:
             return "", [], {}
@@ -1292,6 +1597,48 @@ class Runner:
         self.runs.emit(rid, "report", "summary_scored", {"form": form["id"], "score": result["score"], "grade": result["grade"],
                                                          "blockers": [b["id"] for b in result["blockers"]], "revisions": revisions})
         return text, dropped, {**result, "revisions": revisions, "uncited_removed": uncited, "requested_form": writing.choose_form(s["question"], scope)["id"]}
+
+    @staticmethod
+    def _sentence(text: str, cid: int) -> str:
+        body = text.strip().rstrip(".")
+        return f"{body} [claim:{cid}]."
+
+    def _roundup(self, s: State, rows: list[dict], context_rows: list[dict], facts: list, gaps: list[str]) -> str:
+        """The round-up for a list question, by code. Claims are grouped by the document they come from (one document is one
+        event, and copies of a document are one); each event is a paragraph: its date, its claims, its context claims. Events
+        run newest first; events with no reliable date come last, said to be undated. A small model asked to write this kept
+        one or two events and wrote sentences no claim backs."""
+        by_id = {f.claim_id: f for f in facts}
+        every = rows + context_rows
+        docs = self._documents([r["source_sha256"] for r in every])
+        events: dict[str, list[dict]] = {}
+        for r in every:
+            events.setdefault(docs[r["source_sha256"]], []).append(r)
+        def when(group):
+            dated = [by_id[r["claim_id"]] for r in group if by_id.get(r["claim_id"]) and by_id[r["claim_id"]].dated]
+            return min(dated, key=lambda f: f.ordinal) if dated else None
+        ordered = sorted(events.values(), key=lambda g: (when(g) is None, -(when(g).ordinal if when(g) else 0)))
+        listing = s.get("enumerate") or {}
+        what = listing.get("what") or "event"
+        years = (s.get("time_scope") or {}).get("years") or []
+        period = f" in {years[0]}" if len(years) == 1 else (f" from {years[0]} to {years[-1]}" if years else "")
+        main = [g for g in ordered if any(r in rows for r in g)]
+        n = len(main)
+        parts = [f"The evidence read establishes {n} distinct {what}{'' if n == 1 else 's'} by {self._names(s)[0] if self._names(s) else 'the subject'}"
+                 f"{period}, listed newest first. The list covers what could be read and checked, not everything that happened."]
+        for group in main + [g for g in ordered if g not in main]:
+            first = when(group)
+            lead = f"On {first.human()}, " if first else "Undated: "
+            group = sorted(group, key=lambda r: (r not in rows, r["claim_id"]))
+            sentences = [self._sentence(r["claim"], r["claim_id"]) for r in group]
+            opening = sentences[0]
+            if first and re.match(r"(?:The|A|An|Its|This)\b", opening):
+                opening = opening[0].lower() + opening[1:]          # 'On 15 October 2026, the company ...'; names keep their capitals
+            sentences[0] = lead + opening
+            parts.append(" ".join(sentences))
+        if gaps:
+            parts.append("Not established from what was read: " + "; ".join(gaps) + ".")
+        return "\n\n".join(parts)
 
     def n_report(self, s: State) -> dict:
         rid = s["run_id"]
@@ -1329,8 +1676,16 @@ class Runner:
             self.store.flag_contradiction(a, b, c["note"], created_by=f"runner:{rid[:8]}")
         disputed = {cid for c in conflicts for cid in c["claims"]}
         sites: dict = {}
+        listed = [r["source_sha256"] for r in shown + rows["context"]]
+        where, docs = self._independent(listed), self._documents(listed)
+        docs_of_shown = docs
         for r in rows["supported"]:
-            sites.setdefault(r["fact"], set()).add(corroboration.site(r["source_url"]))
+            sites.setdefault(r["fact"], set()).add(where[r["source_sha256"]])
+        for r in shown + rows["context"]:
+            copies = sorted({corroboration.site(x["source_url"]) for x in shown + rows["context"]
+                             if docs[x["source_sha256"]] == docs[r["source_sha256"]]} - {corroboration.site(r["source_url"])})
+            if copies:
+                r["copies"] = copies          # the same document on other sites: one source, not several
         for r in shown:
             r["corroboration"] = corroboration.label(r, sites.get(r["fact"], set()), r["claim_id"] in disputed)
             r["as_of"] = next((t["value"] for t in r["times"] if t["kind"] == "as_of"), None)
@@ -1367,6 +1722,9 @@ class Runner:
             "time": timing, "quality": quality,
             "budget_used": {"searches": s["searches_used"], "fetches": s["fetches_used"], "iterations": s["iteration"]},
             "domain": s.get("domain"),
+            "list_question": (s.get("enumerate") or {}).get("item"),
+            "events_found": len({docs_of_shown.get(r["source_sha256"]) for r in rows["supported"]}) if s.get("enumerate") else None,
+            "diagnosis": diagnosis.diagnose(self.runs.events(rid)),     # why parts failed: model limits, sources, search, rules
         }
         self.runs.emit(rid, "report", "report_ready", {k: (len(v) if isinstance(v, list) else v)
                                                        for k, v in report.items() if k not in ("summary", "quality")})

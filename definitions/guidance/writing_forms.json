@@ -9,12 +9,13 @@
       "purpose": "Answer one factual question.",
       "reader": "Someone who wants the fact and its date, and will move on.",
       "words": [
-        8,
-        90
+        20,
+        160
       ],
       "structure": [
         "The answer in the first sentence, with its date or period.",
-        "One sentence of support or limit if needed."
+        "Then what makes it complete: the period it covers, how it compares (change, prior period) and who states it, when the claims give it.",
+        "One sentence on what is not established, if anything."
       ],
       "rules": [
         "Do not repeat the question.",
@@ -29,8 +30,8 @@
       "purpose": "Tell the reader what happened most recently and what came before it that matters.",
       "reader": "A decision maker scanning for what changed.",
       "words": [
-        30,
-        220
+        80,
+        350
       ],
       "structure": [
         "Lead: who did what, when, in one sentence of at most 35 words (the inverted pyramid).",
@@ -43,6 +44,30 @@
         "Attribute: say who stated it (the company's press release, a filing, a news agency).",
         "No adjectives that praise or alarm.",
         "Separate what the company said from what others reported about it."
+      ]
+    },
+    {
+      "id": "roundup",
+      "label": "Round-up of events",
+      "generated": true,
+      "route_when": null,
+      "purpose": "List every distinct event the evidence establishes for the period asked about, each dated and attributed.",
+      "reader": "A decision maker who wants the full set of moves, not the most recent one.",
+      "words": [
+        120,
+        650
+      ],
+      "structure": [
+        "One opening sentence: how many distinct events the evidence establishes for the period, and that the list follows newest first.",
+        "One short paragraph per event, newest first: its date, who announced what, then its material terms and context, with citations.",
+        "Events with no reliable date last, labelled as undated.",
+        "Last sentence: what the evidence does not cover (months or kinds of event with nothing found, sources that could not be read)."
+      ],
+      "rules": [
+        "One paragraph per event; never merge two events into one sentence.",
+        "Never call the list complete: say it covers what was found.",
+        "Keep each event at its own date; do not imply one led to another.",
+        "Attribute each event: the company announced it, or a publication reported it."
       ]
     },
     {

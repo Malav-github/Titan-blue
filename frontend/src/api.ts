@@ -97,6 +97,7 @@ export interface ReportClaim {
   source_date_kind?: string | null
   times?: ClaimTime[]
   corroboration?: string
+  copies?: string[]
   as_of?: string | null
   why?: string
 }
@@ -127,6 +128,9 @@ export interface Report {
   rejected_quotes: number
   warnings: string[]
   budget_used: { searches: number; fetches: number; iterations: number }
+  list_question?: string | null
+  events_found?: number | null
+  diagnosis?: { id: string; kind: string; kind_label: string; label: string; count: number; examples: string[]; handled_by: string; workaround: string }[]
   quality?: {
     score: number | null; grade: string | null; form?: string; revisions?: number; uncited_removed?: string[]
     blockers: { id: string; cap: number; detail: string }[]

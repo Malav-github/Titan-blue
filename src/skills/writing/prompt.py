@@ -73,7 +73,10 @@ def draft_prompt(question: str, facts: list[Fact], form: dict, scope: dict | Non
           "reinforced another unless a claim says so. Do not add anything that is not in the claims.\n"
           "Credit the source in the sentence: what a company said, announced or filed is its own statement ('S&P Global said ...'); what a "
           "publication reported is second-hand, so name it ('Reuters reported ...'). Include the material context claims, the terms and "
-          "circumstances of an event, where they exist.")
+          "circumstances of an event, where they exist.\n"
+          f"Use the room the form gives ({form['words'][0]} to {form['words'][1]} words): state every established claim that bears on "
+          "the question, with its date and its terms, rather than one or two. Length must come from the claims, never from filler or "
+          "from anything not in them.")
 
 
 def revision_prompt(first_prompt: str, draft: str, issues: list[str]) -> str:

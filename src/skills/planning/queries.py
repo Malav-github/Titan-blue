@@ -37,21 +37,28 @@ def _tokens(text: str, drop: set[str]) -> set[str]:
     return {w.strip(".'-") for w in _WORD.findall(text.lower()) if w.strip(".'-") not in drop and len(w) > 1} - drop
 
 
-def named_in_question(question: str) -> str | None:
-    """The first run of capitalised words (or an all-caps ticker) that is not just the start of the sentence: 'S&P Global'."""
+def names_in_question(question: str) -> list[str]:
+    """Every run of capitalised words (or all-caps tickers) that is not just the start of the sentence, in order, without
+    generic acronyms ('AI', 'CEO', 'Q3'): 'What AI initiatives did S&P Global announce?' -> ['S&P Global']."""
     words = re.findall(r"[A-Za-z0-9&][A-Za-z0-9&.'-]*", question)
-    run, best = [], None
-    for i, w in enumerate(words):
-        bare = re.sub(r"'s$", "", w)
+    acronyms = {a.lower() for a in lenses().get("generic_acronyms", [])}
+    runs, run = [], []
+    for i, w in enumerate(words + [""]):
+        bare = re.sub(r"[’']s$", "", w)
         proper = bool(bare) and (bare[0].isupper() or "&" in bare) and bare.lower() not in _ASK and not (i == 0 and not bare.isupper())
-        if proper:
+        if proper and bare.lower().strip(".") not in acronyms and not re.fullmatch(r"(?:Q[1-4]|H[12]|FY\d{0,4}|\d+)", bare):
             run.append(bare)
         else:
-            if run and best is None:
-                best = " ".join(run)
+            if run:
+                runs.append(" ".join(run))
             run = []
-    best = best or (" ".join(run) if run else None)
-    return best
+    return runs
+
+
+def named_in_question(question: str) -> str | None:
+    """The organisation the question names: a run of two or more words or one with '&' first ('S&P Global'), else the first."""
+    runs = names_in_question(question)
+    return next((r for r in runs if len(r.split()) > 1 or "&" in r), runs[0] if runs else None)
 
 
 def the_subject(subject: str, company: str | None, question: str) -> str:
@@ -61,7 +68,12 @@ def the_subject(subject: str, company: str | None, question: str) -> str:
     generic = {g.lower() for g in lenses()["generic_subjects"]}
     q = question.lower()
     sentence = len(name.split()) >= 5 or "?" in name          # a whole question is not a name
-    unusable = not name or sentence or name.lower() in generic or not (_tokens(name, generic) & _tokens(q, set()))
+    acronym = name.lower() in {a.lower() for a in lenses().get("generic_acronyms", [])}
+    unusable = not name or sentence or acronym or name.lower() in generic or not (_tokens(name, generic) & _tokens(q, set()))
+    # the planner picked something the question mentions, but not the organisation the question names ('AI' for S&P Global)
+    found = named_in_question(question)
+    if not unusable and found and not company and _tokens(found, generic) and not (_tokens(found, generic) & _tokens(name, generic)):
+        unusable = True
     if unusable and (found := named_in_question(question)):
         return found
     return name

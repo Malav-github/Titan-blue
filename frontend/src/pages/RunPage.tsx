@@ -23,6 +23,7 @@ function ClaimCard({ claim, caution }: { claim: ReportClaim; caution?: boolean }
         {claim.corroboration && <Badge tone={claim.corroboration === 'sources disagree' ? 'bad' : claim.corroboration === 'single source, unconfirmed' ? 'warn' : 'ok'}>{claim.corroboration}</Badge>}
         <ExternalLink href={claim.source_url}>{claim.source_url}</ExternalLink>
       </p>
+      {(claim.copies ?? []).length > 0 && <p className="mt-1 text-xs text-muted">The same document is also on {(claim.copies ?? []).join(', ')}: counted as one source, not several.</p>}
       {timeChips(claim.times).length > 0 && (
         <p className="mt-2 flex flex-wrap gap-2">{timeChips(claim.times).map((c, i) => <Badge key={i} tone={c.tone}>{c.text}</Badge>)}</p>
       )}
@@ -99,6 +100,24 @@ function ReportView({ report }: { report: Report }) {
       ) : (
         report.outcome === 'premise_unverified' || report.outcome === 'not_found' ? null :
           <Card><p className="text-sm text-muted">No answer was written: nothing was established strongly enough.</p></Card>
+      )}
+      {report.list_question && (
+        <p className="text-sm text-muted">A list question: Titan collected every distinct event it could read ({report.events_found ?? 0} documents with established claims) for “{report.list_question}”. The list covers what was found, not everything that happened.</p>
+      )}
+      {(report.diagnosis ?? []).length > 0 && (
+        <details className="rounded-lg border border-line bg-surface p-3 text-sm">
+          <summary className="cursor-pointer font-medium">Why parts of this run failed ({(report.diagnosis ?? []).reduce((n, d) => n + d.count, 0)}), and what covers for it</summary>
+          <table className="mt-2 w-full text-left text-xs">
+            <thead><tr className="text-muted"><th className="pr-2">Kind</th><th className="pr-2">What happened</th><th className="pr-2">Times</th><th className="pr-2">What Titan does</th><th>Could be done next</th></tr></thead>
+            <tbody>{(report.diagnosis ?? []).map((d) => (
+              <tr key={d.id} className="align-top">
+                <td className="pr-2"><Badge tone={d.kind === 'llm' ? 'warn' : d.kind === 'design' ? 'neutral' : 'bad'}>{d.kind_label}</Badge></td>
+                <td className="pr-2">{d.label}{d.examples.length > 0 && <span className="block text-muted">e.g. {d.examples[0]}</span>}</td>
+                <td className="pr-2">{d.count}</td><td className="pr-2">{d.handled_by}</td><td>{d.workaround}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </details>
       )}
       <div>
         <h3 className="mb-2 font-semibold">Established ({report.established.length})</h3>

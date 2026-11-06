@@ -7,6 +7,7 @@ import httpx
 
 from config import BRAVE_API_KEY, SEARCH_TIMEOUT, SEARXNG_URL
 from tools.archive import USER_AGENT
+from tools.search import health
 
 # recency -> each provider's own parameter
 SEARXNG_RANGE = {"day": "day", "week": "week", "month": "month", "year": "year"}
@@ -44,12 +45,27 @@ def _timed(provider: str, fn) -> Report:
 
 
 def searxng(query: str, limit: int, recency: str | None = None) -> Report:
-    def run() -> Report:
+    """SearXNG without the engines that are resting (tools.search.health); started again once if it does not answer."""
+    notes: list[str] = []
+
+    def ask() -> httpx.Response:
         params = {"q": query, "format": "json", "pageno": 1}
         if recency in SEARXNG_RANGE:
             params["time_range"] = SEARXNG_RANGE[recency]
-        resp = httpx.get(f"{SEARXNG_URL}/search", params=params, timeout=SEARCH_TIMEOUT,
-                         headers={"User-Agent": USER_AGENT})
+        if engines := health.engines_to_use():
+            params["engines"] = ",".join(engines)
+            notes.append(f"resting: {', '.join(sorted(health.resting()))}")
+        return httpx.get(f"{SEARXNG_URL}/search", params=params, timeout=SEARCH_TIMEOUT, headers={"User-Agent": USER_AGENT})
+
+    def run() -> Report:
+        try:
+            resp = ask()
+        except httpx.ConnectError:
+            restarted = health.restart_searxng()
+            if not restarted:
+                raise
+            notes.append(restarted)
+            resp = ask()
         resp.raise_for_status()
         data = resp.json()
         hits = [
@@ -59,7 +75,9 @@ def searxng(query: str, limit: int, recency: str | None = None) -> Report:
             for r in data.get("results", []) if r.get("url")
         ][:limit]
         degraded = [f"{engine}: {reason}" for engine, reason in data.get("unresponsive_engines", [])]
-        return Report("searxng", ok=True, hits=hits, degraded=degraded)
+        for engine, reason in data.get("unresponsive_engines", []):
+            health.rest(engine, str(reason))
+        return Report("searxng", ok=True, hits=hits, degraded=degraded + notes)
 
     return _timed("searxng", run)
 

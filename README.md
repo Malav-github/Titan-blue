@@ -94,6 +94,28 @@ reading is the tier the report shows. `company_events.json` lists the kinds of c
 results, guidance ...) with their required parts, cues, a worked example (made-up companies only) and rules such as "completion is not
 before announcement"; it is not yet used in extraction (next step: offer the model only the few predicates that fit the question).
 
+## Skills that cover for the local model
+
+Some steps are done by code because a small model cannot do them reliably. Each run's report lists what failed and why
+(*Why parts of this run failed*: the local model's capability, a source, a search provider, Titan's own rules, or the question),
+with what Titan already does about it and what could be done next (`definitions/guidance/failure_causes.json`).
+
+- **EDGAR skill** (`definitions/skills/edgar.json`, `src/skills/edgar/`). A local model does not know CIKs: it invented 320196
+  for Apple (320193) and 0001564590 for S&P Global (64040), so every EDGAR call it planned was refused. Now code looks the CIK up
+  in the SEC's own `company_tickers.json` (archived and cited), reads the filing list, chooses filings by form and 8-K item for
+  the kind of question (deals: 1.01, 2.01; announcements: 7.01, 8.01; results: 2.02 and the 10-Q/10-K; leadership: 5.02), and
+  reads the documents, the 8-K's Exhibit 99 press release first (found by its exhibit type in the filing index, not its file
+  name). A model never plans an EDGAR call.
+- **List questions** (`definitions/guidance/enumeration.json`). "What did S&P Global announce in 2026?" asks for every event. A
+  small model plans it as one fact and stops at the first release; code now recognises the question, writes one checklist item
+  for every distinct event, searches the company's releases on wire services, raises the budgets, never stops early, checks two
+  claims per document, and writes a dated round-up, newest first.
+- **Planner guards**: a generic acronym ('AI') is never taken as the subject when the question names an organisation; guessed
+  figures are removed from queries; premises that name nothing specific are dropped before the premise check; an SEC registrant
+  the question names is treated as a company (so its official domain is found and its own pages are labelled primary).
+- **Copies are one source**: pages that share several long sentences word for word (a release on the newsroom and on PR
+  Newswire) count once for corroboration and are shown as copies.
+
 ## Evidence stores and archives
 
 Nothing Titan records is deleted. To start clean (after changing how sources are labelled, say), open **Stores and archives** in

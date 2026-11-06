@@ -20,6 +20,39 @@ def site(url: str) -> str:
     return ".".join(labels[-keep:])
 
 
+_SENTENCE = re.compile(r"(?<=[.!?])\s+")
+SHINGLE_CHARS = 60         # a sentence at least this long, word for word, is not shared by chance
+COPY_SHARED = 2            # sharing this many such sentences makes two pages copies of one document
+
+
+def fingerprint(text: str, head_chars: int = 6000) -> set[int]:
+    """Hashes of the long sentences near the top of a page. Two pages that share several are copies of one document (a
+    company release on its newsroom and on PR Newswire, or a story syndicated to Yahoo Finance)."""
+    body = re.sub(r"\s+", " ", (text or "")[:head_chars]).strip().lower()
+    return {hash(s) for s in _SENTENCE.split(body) if len(s) >= SHINGLE_CHARS}
+
+
+def copy_groups(prints: dict[str, set[int]]) -> dict[str, str]:
+    """Source id -> the id that stands for its group of copies (the first in the given order). A page shares a group with
+    any page it shares COPY_SHARED long sentences with, directly or through another copy."""
+    keys = list(prints)
+    parent = {k: k for k in keys}
+
+    def root(k):
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+
+    for i, a in enumerate(keys):
+        for b in keys[i + 1:]:
+            if len(prints[a] & prints[b]) >= COPY_SHARED:
+                ra, rb = root(a), root(b)
+                if ra != rb:
+                    parent[rb if keys.index(rb) > keys.index(ra) else ra] = ra if keys.index(rb) > keys.index(ra) else rb
+    return {k: root(k) for k in keys}
+
+
 def label(row: dict, sites_for_fact: set[str], disputed: bool) -> str:
     if disputed:
         return "sources disagree"

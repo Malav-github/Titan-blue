@@ -57,17 +57,31 @@ def test_a_connector_that_does_not_fit_the_question_is_hidden_and_costs_no_model
     from tests.test_runner_capability import activate, manifest
 
     asked = []
-    m = manifest().model_copy(update={"connector_id": "sec_edgar"})
+    m = manifest().model_copy(update={"connector_id": "openalex"})
     activate(env["registry"], m)
     runner = make_runner(env, ApiPlan=lambda p: asked.append(p) or ApiPlan(calls=[]))
     runner.search_fn = lambda query, max_results=8, **extra: env["world"].search(query, max_results)
     result = runner.start("Who founded Acme?", budgets={"max_iterations": 1})
     routed = next(e["payload"] for e in env["runs"].events(result["run_id"]) if e["type"] == "sources_routed")
-    assert routed["offered"] == [] and routed["hidden"][0]["id"] == "sec_edgar" and asked == []
+    assert routed["offered"] == [] and routed["hidden"][0]["id"] == "openalex" and asked == []
 
     asked.clear()
+    runner.start("Who wrote the paper 'Attention Is All You Need'?", budgets={"max_iterations": 1})
+    assert len(asked) == 1                                           # a question about a paper does reach the connector
+
+
+def test_edgar_is_never_planned_by_the_model(env):
+    """A model cannot know a CIK; EDGAR is read by the EDGAR skill (tests/test_edgar_skill.py), never by a model's plan."""
+    from runner import ApiPlan
+    from tests.test_runner import make_runner
+    from tests.test_runner_capability import activate, manifest
+
+    asked = []
+    activate(env["registry"], manifest().model_copy(update={"connector_id": "sec_edgar"}))
+    runner = make_runner(env, ApiPlan=lambda p: asked.append(p) or ApiPlan(calls=[]))
+    runner.search_fn = lambda query, max_results=8, **extra: env["world"].search(query, max_results)
     runner.start("What was Acme's revenue for fiscal 2024?", budgets={"max_iterations": 1})
-    assert len(asked) == 1                                           # a question about financials does reach the connector
+    assert asked == []
 
 
 from tests.test_runner import env  # noqa: E402,F401

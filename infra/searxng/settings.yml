@@ -1,4 +1,10 @@
 # Private SearXNG instance for Titan. Bound to localhost only; secret key comes from SEARXNG_SECRET.
+#
+# Titan calls the Brave Search API itself (0 failures in 219 calls, 1 to 6 Nov 2026), so SearXNG is a supplement for results
+# Brave does not have. Measured over 1,739 kept results: SearXNG alone found 28; its useful engines were Google CSE and
+# DuckDuckGo. Its "brave" engine scrapes Brave's website, only duplicates the API, and was rate-limited or timed out 136 times:
+# it is off. Bing and Mojeek are added as further independent indexes. Titan also rests an engine for a while after a CAPTCHA,
+# a rate limit or a timeout (src/tools/search/health.py), so a blocked engine is not hit again on every query.
 use_default_settings: true
 
 general:
@@ -14,3 +20,15 @@ search:
 server:
   limiter: false      # private instance, no public traffic to rate-limit
   image_proxy: false
+
+outgoing:
+  request_timeout: 4.0        # an engine slower than this is reported as a timeout instead of holding up the query
+  max_request_timeout: 8.0
+
+engines:
+  - name: brave
+    disabled: true
+  - name: bing
+    disabled: false
+  - name: mojeek
+    disabled: false
