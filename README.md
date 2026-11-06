@@ -85,6 +85,15 @@ official records, then scholarly bodies, then established news, then everything 
 to look first. If the question names a year that no result mentions while another year appears, code (not the model) offers
 "Did you mean 2026?" for you to accept or ignore. What the quick look shows is context, never evidence: no claim is taken from it.
 
+**Ontologies.** `definitions/ontology/` holds two files read by code, validated when loaded. `sources.json` describes every source by
+its issuer (whose document it is), document type (press release, earnings release, Form 10-K ...), venue (investor relations site,
+newsroom, EDGAR, wire service, publication) and publisher, and derives the tier from them: primary when it is the subject's own
+document, wherever it is hosted. Apple's earnings release on investor.apple.com and the same release filed on EDGAR as Exhibit 99.1
+share issuer and type and differ in venue. One description per source is used by every step, so the tier that decides when to stop
+reading is the tier the report shows. `company_events.json` lists the kinds of company event (acquisitions, divestitures, leadership,
+results, guidance ...) with their required parts, cues, a worked example (made-up companies only) and rules such as "completion is not
+before announcement"; it is not yet used in extraction (next step: offer the model only the few predicates that fit the question).
+
 ## Comparing local models
 
 ```powershell

@@ -1,12 +1,4 @@
 {
-  "about": "What kind of place a page is on, and so how its claims are labelled. PRIMARY is the company speaking for itself: its own website (investor relations, newsroom), its filings (on its site or on EDGAR) and its press releases (on its site or on a wire service that carries them). SECONDARY is anyone reporting on those: publications and databases that cite the filings and releases. A wire service or filing database is primary only when the page is the subject company's own document, so those hosts also need the company's name on the page; otherwise they are secondary. Reference works are for general-purpose knowledge only and are not used for a key development or news about a company.",
-  "classes": [
-    {"id": "company_site", "label": "Company website (investor relations, newsroom)", "tier": "primary", "hosts": [], "note": "the subject's own domain; found at run time"},
-    {"id": "filing", "label": "Official filing (EDGAR)", "tier": "primary", "needs_subject": true, "hosts": ["sec.gov"]},
-    {"id": "wire_release", "label": "Company press release (wire service)", "tier": "primary", "needs_subject": true, "hosts": ["prnewswire.com", "businesswire.com", "globenewswire.com", "accesswire.com", "newswire.ca", "einpresswire.com"]},
-    {"id": "major_publication", "label": "Major publication", "tier": "secondary", "hosts": ["wsj.com", "bloomberg.com", "reuters.com", "apnews.com", "ft.com", "nytimes.com", "washingtonpost.com", "cnbc.com", "economist.com", "barrons.com", "marketwatch.com", "bbc.com", "theguardian.com", "fortune.com", "axios.com", "politico.com"]},
-    {"id": "reference", "label": "Reference work (general knowledge only)", "tier": "secondary", "hosts": ["wikipedia.org", "wikidata.org", "britannica.com", "investopedia.com", "fandom.com"]},
-    {"id": "other", "label": "Other source", "tier": "secondary", "hosts": [], "note": "everything else: aggregators, blogs, analyst sites, social media"}
-  ],
+  "about": "Which questions are about a key development or news around a company. For those, reference works (Wikipedia and the like) are not used: they are for general-purpose knowledge only. What a source is (issuer, document type, venue, publisher) and so whether it is primary or secondary is in definitions/ontology/sources.json.",
   "development_cues": "latest|recent|news|announce\\w*|acqui\\w+|merger|merge[sd]?|divest\\w*|spin[- ]?off|layoffs?|restructur\\w*|strateg\\w+|launch\\w*|partnership|earnings|results|guidance|ceo|cfo|appoint\\w*|resign\\w*|lawsuit|settle\\w*|investment|funding|ipo|buyback|dividend|move|moves"
 }

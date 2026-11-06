@@ -90,3 +90,14 @@ def test_nothing_is_repaired_or_invented_when_dropping():
 def test_the_prompt_and_schema_are_unchanged_for_the_model():
     from runner import Extraction
     assert set(Extraction.model_json_schema()["properties"]) == {"claims"}       # no extra field is shown to the model
+
+
+def test_a_table_heavy_page_that_defeats_article_extraction_is_read_line_by_line():
+    """EDGAR exhibits (an earnings release filed with an 8-K) are tables; article extraction returns nothing for them."""
+    rows = "".join(f"<tr><td>Line item {i}</td><td>${i},000</td></tr>" for i in range(300))
+    html = ("<html><body><div style='display:none'><ix:header>0000320193 hidden XBRL data</ix:header></div>"
+            "<table><tr><td>Exhibit 99.1</td></tr><tr><td>Apple reports fourth quarter results</td></tr></table>"
+            f"<table>{rows}</table><script>var x = 1;</script></body></html>")
+    _, text = extract_text(html.encode(), "text/html", "utf-8", "https://www.sec.gov/Archives/edgar/data/320193/x/ex991.htm")
+    assert "Apple reports fourth quarter results" in text and "Line item 299" in text
+    assert "hidden XBRL" not in text and "var x" not in text

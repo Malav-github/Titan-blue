@@ -20,7 +20,7 @@ from skills.writing import build_facts, matrix, score
 from skills.writing.kinds import choose_form, written_as
 
 GOLDEN_PATH = PROJECT_ROOT / "evals" / "writing_golden.json"
-_ROW_KEYS = ("claim_id", "claim", "value", "quote", "times", "source_url", "source_date", "source_date_kind", "source_tier", "corroboration", "fact", "source_class", "source_label", "role")
+_ROW_KEYS = ("claim_id", "claim", "value", "quote", "times", "source_url", "source_date", "source_date_kind", "source_tier", "corroboration", "fact", "source_class", "source_label", "source", "role")
 
 
 def load(path=GOLDEN_PATH) -> dict:

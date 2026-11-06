@@ -41,6 +41,7 @@ class Fact:
     role: str = "answer"         # answer: states the needed fact | context: material context for the same event (terms, parties, reasons)
     source_class: str = ""       # company_site | filing | wire_release | major_publication | reference | other
     source_label: str = ""
+    publisher: str = ""          # who runs the venue: the company itself, the SEC, PR Newswire, Reuters ...
     periods: list[str] = field(default_factory=list)
 
     @property
@@ -144,6 +145,7 @@ def build_facts(rows: list[dict], role: str = "answer") -> list[Fact]:
                         corroboration=r.get("corroboration"), site=_site(r.get("source_url") or ""), fact=r.get("fact"),
                         role=r.get("role") or role, source_class=r.get("source_class") or source_class.classify(r.get("source_url") or "")["id"],
                         source_label=r.get("source_label") or source_class.classify(r.get("source_url") or "")["label"],
+                        publisher=(r.get("source") or {}).get("publisher") or source_class.classify(r.get("source_url") or "")["publisher"],
                         periods=[t["value"] for t in r.get("times") or [] if t.get("kind") == "period"]))
     return out
 

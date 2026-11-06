@@ -1,0 +1,953 @@
+{
+  "id": "company_events",
+  "version": "1.0",
+  "about": "The kinds of company event Titan records, each with the parts that make it complete, the date that matters, the words that point to it, one worked example and the rules code checks. Read by code: the full file validates claims and finds conflicts; a model is only ever shown the few predicates that fit the question (a definition and the example each), as a fixed list it must choose from. 'other.fact' catches a true claim that fits nothing, so nothing verifiable is lost. Field values in an example appear word for word in its quote. Examples use made-up companies (Northwind, Contoso, Litware, Tailspin, Acme, Fabrikam, Woodgrove) so they can never be mistaken for evidence about a real one.",
+  "field_types": {
+    "org": "an organisation's name as written",
+    "person": "a person's name as written",
+    "money": "an amount with its currency ('$2.1 billion')",
+    "number": "a count or figure",
+    "percent": "a percentage",
+    "date": "a date as written ('October 27, 2026')",
+    "period": "a reporting period as written ('fiscal 2026 fourth quarter')",
+    "role": "a job title ('chief executive officer')",
+    "text": "a short phrase from the quote"
+  },
+  "rule_kinds": {
+    "order": "this event's date is not before the date of `after` for the same event (matched on `key`)",
+    "one_holder": "at any date, one value of `field` per `key` (one CEO per company)",
+    "needs_period": "a figure is meaningless without the period it covers",
+    "needs_field": "the claim must give `field`"
+  },
+  "groups": [
+    {
+      "id": "transactions",
+      "label": "Acquisitions, mergers, divestitures and investments"
+    },
+    {
+      "id": "strategy",
+      "label": "Strategic reviews, restructuring, partnerships and products"
+    },
+    {
+      "id": "leadership",
+      "label": "Leadership and board"
+    },
+    {
+      "id": "financial",
+      "label": "Results, guidance and capital returns"
+    },
+    {
+      "id": "legal",
+      "label": "Legal and regulatory"
+    },
+    {
+      "id": "fallback",
+      "label": "Anything else"
+    }
+  ],
+  "predicates": [
+    {
+      "id": "acquisition.announced",
+      "group": "transactions",
+      "label": "Acquisition announced",
+      "event_kind": "announced",
+      "definition": "A company agreed or announced that it will acquire another company, business or asset.",
+      "fields": [
+        {
+          "name": "acquirer",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "target",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "price",
+          "type": "money",
+          "required": false
+        },
+        {
+          "name": "consideration",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "expected_close",
+          "type": "text",
+          "required": false
+        }
+      ],
+      "key": [
+        "acquirer",
+        "target"
+      ],
+      "cues": "\\b(?:to acquire|agreed to (?:buy|acquire|purchase)|definitive agreement|will acquire|acquisition of|to buy|takeover bid|tender offer)\\b",
+      "example": {
+        "quote": "Northwind Data announced it has entered into a definitive agreement to acquire Fabrikam Analytics for $1.2 billion in cash.",
+        "fields": {
+          "acquirer": "Northwind Data",
+          "target": "Fabrikam Analytics",
+          "price": "$1.2 billion",
+          "consideration": "in cash"
+        }
+      },
+      "rules": []
+    },
+    {
+      "id": "acquisition.completed",
+      "group": "transactions",
+      "label": "Acquisition completed",
+      "event_kind": "completed",
+      "definition": "An announced acquisition closed: the buyer now owns the target.",
+      "fields": [
+        {
+          "name": "acquirer",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "target",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "price",
+          "type": "money",
+          "required": false
+        }
+      ],
+      "key": [
+        "acquirer",
+        "target"
+      ],
+      "cues": "\\b(?:completed (?:the|its) acquisition|completes acquisition|closed (?:the|its) acquisition|completion of (?:the|its) acquisition|has acquired)\\b",
+      "example": {
+        "quote": "Northwind Data today announced that it has completed its acquisition of Fabrikam Analytics.",
+        "fields": {
+          "acquirer": "Northwind Data",
+          "target": "Fabrikam Analytics"
+        }
+      },
+      "rules": [
+        {
+          "kind": "order",
+          "after": "acquisition.announced",
+          "key": [
+            "acquirer",
+            "target"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "acquisition.terminated",
+      "group": "transactions",
+      "label": "Acquisition terminated",
+      "event_kind": "effective",
+      "definition": "An announced acquisition was called off, blocked or abandoned.",
+      "fields": [
+        {
+          "name": "acquirer",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "target",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "reason",
+          "type": "text",
+          "required": false
+        }
+      ],
+      "key": [
+        "acquirer",
+        "target"
+      ],
+      "cues": "\\b(?:terminat(?:ed|es|ion of) (?:the|its) (?:merger|acquisition|agreement)|abandon(?:ed|s) (?:the|its) (?:deal|bid)|walk(?:ed)? away from)\\b",
+      "example": {
+        "quote": "Contoso and Litware announced that they have mutually agreed to terminate their merger agreement.",
+        "fields": {
+          "acquirer": "Contoso",
+          "target": "Litware"
+        }
+      },
+      "rules": [
+        {
+          "kind": "order",
+          "after": "acquisition.announced",
+          "key": [
+            "acquirer",
+            "target"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "merger.announced",
+      "group": "transactions",
+      "label": "Merger announced",
+      "event_kind": "announced",
+      "definition": "Two companies agreed to combine as a merger of equals or an all-stock combination.",
+      "fields": [
+        {
+          "name": "party_a",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "party_b",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "combined_value",
+          "type": "money",
+          "required": false
+        },
+        {
+          "name": "combined_name",
+          "type": "org",
+          "required": false
+        }
+      ],
+      "key": [
+        "party_a",
+        "party_b"
+      ],
+      "cues": "\\b(?:merger of equals|agreed to merge|to merge with|all-stock (?:merger|combination)|business combination)\\b",
+      "example": {
+        "quote": "Contoso and Tailspin Systems announced they have agreed to merge in an all-stock transaction.",
+        "fields": {
+          "party_a": "Contoso",
+          "party_b": "Tailspin Systems"
+        }
+      },
+      "rules": []
+    },
+    {
+      "id": "divestiture.announced",
+      "group": "transactions",
+      "label": "Sale of a business announced",
+      "event_kind": "announced",
+      "definition": "A company agreed to sell a business, unit or asset to a buyer.",
+      "fields": [
+        {
+          "name": "seller",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "asset",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "buyer",
+          "type": "org",
+          "required": false
+        },
+        {
+          "name": "price",
+          "type": "money",
+          "required": false
+        }
+      ],
+      "key": [
+        "seller",
+        "asset"
+      ],
+      "cues": "\\b(?:agreed to sell|to sell (?:its|the)|sale of (?:its|the)|divest(?:iture|s|ed)?)\\b",
+      "example": {
+        "quote": "Northwind Data has agreed to sell its Engineering Tools business to Woodgrove Capital for $400 million.",
+        "fields": {
+          "seller": "Northwind Data",
+          "asset": "Engineering Tools business",
+          "buyer": "Woodgrove Capital",
+          "price": "$400 million"
+        }
+      },
+      "rules": []
+    },
+    {
+      "id": "divestiture.completed",
+      "group": "transactions",
+      "label": "Sale of a business completed",
+      "event_kind": "completed",
+      "definition": "An announced sale of a business closed.",
+      "fields": [
+        {
+          "name": "seller",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "asset",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "buyer",
+          "type": "org",
+          "required": false
+        }
+      ],
+      "key": [
+        "seller",
+        "asset"
+      ],
+      "cues": "\\b(?:completed the (?:sale|divestiture)|completes (?:sale|divestiture)|closed the sale)\\b",
+      "example": {
+        "quote": "Northwind Data completed the sale of its Engineering Tools business to Woodgrove Capital.",
+        "fields": {
+          "seller": "Northwind Data",
+          "asset": "Engineering Tools business",
+          "buyer": "Woodgrove Capital"
+        }
+      },
+      "rules": [
+        {
+          "kind": "order",
+          "after": "divestiture.announced",
+          "key": [
+            "seller",
+            "asset"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "spin_off.announced",
+      "group": "transactions",
+      "label": "Spin-off or separation announced",
+      "event_kind": "announced",
+      "definition": "A company plans to separate a business into a new, independent company.",
+      "fields": [
+        {
+          "name": "parent",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "business",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "expected_timing",
+          "type": "text",
+          "required": false
+        }
+      ],
+      "key": [
+        "parent",
+        "business"
+      ],
+      "cues": "\\b(?:spin[- ]?off|separat(?:e|ion of) (?:its|the)|tax-free distribution|standalone public company|independent publicly traded)\\b",
+      "example": {
+        "quote": "Contoso announced its intent to separate its Mobility division into a standalone public company.",
+        "fields": {
+          "parent": "Contoso",
+          "business": "Mobility division"
+        }
+      },
+      "rules": []
+    },
+    {
+      "id": "investment.made",
+      "group": "transactions",
+      "label": "Investment in another company",
+      "event_kind": "announced",
+      "definition": "A company took a minority stake in, or invested an amount in, another company.",
+      "fields": [
+        {
+          "name": "investor",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "investee",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "amount",
+          "type": "money",
+          "required": false
+        },
+        {
+          "name": "stake",
+          "type": "percent",
+          "required": false
+        }
+      ],
+      "key": [
+        "investor",
+        "investee"
+      ],
+      "cues": "\\b(?:invest(?:s|ed|ment) in|minority stake|strategic investment|took a stake|equity stake)\\b",
+      "example": {
+        "quote": "Contoso made a strategic investment of $250 million in Acme Robotics.",
+        "fields": {
+          "investor": "Contoso",
+          "investee": "Acme Robotics",
+          "amount": "$250 million"
+        }
+      },
+      "rules": []
+    },
+    {
+      "id": "funding_round.raised",
+      "group": "transactions",
+      "label": "Funding round raised",
+      "event_kind": "announced",
+      "definition": "A private company raised money from investors in a named round.",
+      "fields": [
+        {
+          "name": "company",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "amount",
+          "type": "money",
+          "required": true
+        },
+        {
+          "name": "round",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "lead_investor",
+          "type": "org",
+          "required": false
+        },
+        {
+          "name": "valuation",
+          "type": "money",
+          "required": false
+        }
+      ],
+      "key": [
+        "company",
+        "round"
+      ],
+      "cues": "\\b(?:raised|raises|closes?) (?:a )?\\$?[\\d.]+\\s?(?:million|billion|m|bn)?|\\bseries [a-h]\\b|\\bseed round\\b|\\bfunding round\\b",
+      "example": {
+        "quote": "Acme Robotics raised $40 million in a Series B round led by Woodgrove Capital.",
+        "fields": {
+          "company": "Acme Robotics",
+          "amount": "$40 million",
+          "round": "Series B",
+          "lead_investor": "Woodgrove Capital"
+        }
+      },
+      "rules": []
+    },
+    {
+      "id": "strategic_review.announced",
+      "group": "strategy",
+      "label": "Strategic review announced",
+      "event_kind": "announced",
+      "definition": "A company said it is reviewing strategic options, for itself or a business: a possible sale, separation or other change.",
+      "fields": [
+        {
+          "name": "company",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "scope",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "advisors",
+          "type": "org",
+          "required": false
+        }
+      ],
+      "key": [
+        "company",
+        "scope"
+      ],
+      "cues": "\\b(?:strategic (?:review|alternatives|options)|review of strategic|exploring (?:a sale|options|alternatives))\\b",
+      "example": {
+        "quote": "Litware announced a strategic review of its Hardware unit, including a possible sale.",
+        "fields": {
+          "company": "Litware",
+          "scope": "its Hardware unit"
+        }
+      },
+      "rules": []
+    },
+    {
+      "id": "restructuring.announced",
+      "group": "strategy",
+      "label": "Restructuring or layoffs announced",
+      "event_kind": "announced",
+      "definition": "A company announced job cuts, a reorganisation or a cost programme.",
+      "fields": [
+        {
+          "name": "company",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "jobs_cut",
+          "type": "number",
+          "required": false
+        },
+        {
+          "name": "share_of_staff",
+          "type": "percent",
+          "required": false
+        },
+        {
+          "name": "cost",
+          "type": "money",
+          "required": false
+        }
+      ],
+      "key": [
+        "company"
+      ],
+      "cues": "\\b(?:layoffs?|lay off|job cuts|cut (?:about |roughly )?[\\d,]+ jobs|reduc(?:e|tion in) (?:its )?(?:workforce|headcount)|restructuring)\\b",
+      "example": {
+        "quote": "Litware said it will reduce its workforce by about 12%, or roughly 300 employees.",
+        "fields": {
+          "company": "Litware",
+          "share_of_staff": "12%",
+          "jobs_cut": "300"
+        }
+      },
+      "rules": []
+    },
+    {
+      "id": "partnership.announced",
+      "group": "strategy",
+      "label": "Partnership announced",
+      "event_kind": "announced",
+      "definition": "Two or more organisations agreed to work together: an alliance, a joint venture or a commercial agreement.",
+      "fields": [
+        {
+          "name": "company",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "partner",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "scope",
+          "type": "text",
+          "required": false
+        }
+      ],
+      "key": [
+        "company",
+        "partner"
+      ],
+      "cues": "\\b(?:partnership|partners with|strategic alliance|joint venture|collaborat(?:e|ion) with|multi-year agreement)\\b",
+      "example": {
+        "quote": "Northwind Data and Tailspin Systems announced a multi-year partnership to supply data to AI agents.",
+        "fields": {
+          "company": "Northwind Data",
+          "partner": "Tailspin Systems",
+          "scope": "to supply data to AI agents"
+        }
+      },
+      "rules": []
+    },
+    {
+      "id": "product.launched",
+      "group": "strategy",
+      "label": "Product launched",
+      "event_kind": "announced",
+      "definition": "A company made a new product, service or feature available, or announced it.",
+      "fields": [
+        {
+          "name": "company",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "product",
+          "type": "text",
+          "required": true
+        }
+      ],
+      "key": [
+        "company",
+        "product"
+      ],
+      "cues": "\\b(?:launch(?:es|ed)?|unveil(?:s|ed)?|introduc(?:es|ed)|now available|general availability|rolls? out)\\b",
+      "example": {
+        "quote": "Litware launched Beacon, an AI-powered search tool, for business customers.",
+        "fields": {
+          "company": "Litware",
+          "product": "Beacon"
+        }
+      },
+      "rules": []
+    },
+    {
+      "id": "leadership.appointed",
+      "group": "leadership",
+      "label": "Executive or director appointed",
+      "event_kind": "effective",
+      "definition": "A person was named to a senior role or to the board. The effective date can differ from the announcement date.",
+      "fields": [
+        {
+          "name": "company",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "person",
+          "type": "person",
+          "required": true
+        },
+        {
+          "name": "role",
+          "type": "role",
+          "required": true
+        },
+        {
+          "name": "effective",
+          "type": "date",
+          "required": false
+        },
+        {
+          "name": "predecessor",
+          "type": "person",
+          "required": false
+        }
+      ],
+      "key": [
+        "company",
+        "role"
+      ],
+      "cues": "\\b(?:appoint(?:s|ed|ment)|names?d? .{0,40}(?:chief|ceo|cfo|president|chair)|elected to the board|will succeed|successor)\\b",
+      "example": {
+        "quote": "Contoso named Jordan Reyes as President and Chief Executive Officer, effective March 1, 2026.",
+        "fields": {
+          "company": "Contoso",
+          "person": "Jordan Reyes",
+          "role": "President and Chief Executive Officer",
+          "effective": "March 1, 2026"
+        }
+      },
+      "rules": [
+        {
+          "kind": "one_holder",
+          "field": "person",
+          "key": [
+            "company",
+            "role"
+          ]
+        },
+        {
+          "kind": "needs_field",
+          "field": "role"
+        }
+      ]
+    },
+    {
+      "id": "leadership.departed",
+      "group": "leadership",
+      "label": "Executive or director departed",
+      "event_kind": "effective",
+      "definition": "A person left, retired from or was removed from a senior role or the board.",
+      "fields": [
+        {
+          "name": "company",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "person",
+          "type": "person",
+          "required": true
+        },
+        {
+          "name": "role",
+          "type": "role",
+          "required": true
+        },
+        {
+          "name": "effective",
+          "type": "date",
+          "required": false
+        }
+      ],
+      "key": [
+        "company",
+        "role",
+        "person"
+      ],
+      "cues": "\\b(?:resign(?:s|ed|ation)|retir(?:e|es|ed|ement)|step(?:s|ped)? down|depart(?:s|ed|ure)|leave the company)\\b",
+      "example": {
+        "quote": "Sam Okafor will retire as Chief Executive Officer of Contoso, effective March 1, 2026.",
+        "fields": {
+          "company": "Contoso",
+          "person": "Sam Okafor",
+          "role": "Chief Executive Officer",
+          "effective": "March 1, 2026"
+        }
+      },
+      "rules": []
+    },
+    {
+      "id": "results.reported",
+      "group": "financial",
+      "label": "Financial result reported",
+      "event_kind": "period",
+      "definition": "A figure a company reported for a period: revenue, net sales, net income, EPS, margin, segment results.",
+      "fields": [
+        {
+          "name": "company",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "metric",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "value",
+          "type": "money",
+          "required": true
+        },
+        {
+          "name": "period",
+          "type": "period",
+          "required": true
+        },
+        {
+          "name": "change",
+          "type": "percent",
+          "required": false
+        }
+      ],
+      "key": [
+        "company",
+        "metric",
+        "period"
+      ],
+      "cues": "\\b(?:revenue|net sales|net income|earnings per share|EPS|operating (?:income|margin)|reported (?:results|revenue)|quarter(?:ly)? results|fiscal (?:year|quarter))\\b",
+      "example": {
+        "quote": "Tailspin Systems reported fourth quarter revenue of $2.4 billion, up 6 percent year over year.",
+        "fields": {
+          "company": "Tailspin Systems",
+          "metric": "revenue",
+          "value": "$2.4 billion",
+          "period": "fourth quarter",
+          "change": "6 percent"
+        }
+      },
+      "rules": [
+        {
+          "kind": "needs_period"
+        }
+      ]
+    },
+    {
+      "id": "guidance.issued",
+      "group": "financial",
+      "label": "Guidance issued or changed",
+      "event_kind": "announced",
+      "definition": "A company's own forecast for a future period, or a change to it.",
+      "fields": [
+        {
+          "name": "company",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "metric",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "range",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "period",
+          "type": "period",
+          "required": true
+        }
+      ],
+      "key": [
+        "company",
+        "metric",
+        "period"
+      ],
+      "cues": "\\b(?:guidance|outlook|expects? (?:revenue|earnings|EPS)|raised (?:its )?(?:forecast|guidance)|lowered (?:its )?(?:forecast|guidance)|reaffirm(?:s|ed))\\b",
+      "example": {
+        "quote": "Tailspin Systems raised its full-year 2026 adjusted EPS guidance to $4.10 to $4.25.",
+        "fields": {
+          "company": "Tailspin Systems",
+          "metric": "adjusted EPS",
+          "range": "$4.10 to $4.25",
+          "period": "full-year 2026"
+        }
+      },
+      "rules": [
+        {
+          "kind": "needs_period"
+        }
+      ]
+    },
+    {
+      "id": "capital_return.announced",
+      "group": "financial",
+      "label": "Dividend or buyback announced",
+      "event_kind": "announced",
+      "definition": "A dividend declared or changed, or a share repurchase authorised.",
+      "fields": [
+        {
+          "name": "company",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "kind",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "amount",
+          "type": "money",
+          "required": true
+        }
+      ],
+      "key": [
+        "company",
+        "kind"
+      ],
+      "cues": "\\b(?:dividend|share repurchase|buyback|repurchase program|accelerated share repurchase)\\b",
+      "example": {
+        "quote": "Tailspin Systems' board authorized an additional $5 billion for share repurchases.",
+        "fields": {
+          "company": "Tailspin Systems",
+          "kind": "share repurchases",
+          "amount": "$5 billion"
+        }
+      },
+      "rules": []
+    },
+    {
+      "id": "ipo.priced",
+      "group": "financial",
+      "label": "IPO or listing",
+      "event_kind": "effective",
+      "definition": "A company's shares were priced for an initial public offering or began trading on an exchange.",
+      "fields": [
+        {
+          "name": "company",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "price",
+          "type": "money",
+          "required": false
+        },
+        {
+          "name": "exchange",
+          "type": "text",
+          "required": false
+        },
+        {
+          "name": "raised",
+          "type": "money",
+          "required": false
+        }
+      ],
+      "key": [
+        "company"
+      ],
+      "cues": "\\b(?:initial public offering|IPO|priced (?:its|the) offering|began trading|direct listing)\\b",
+      "example": {
+        "quote": "Acme Robotics priced its initial public offering at $21 per share on the Nasdaq.",
+        "fields": {
+          "company": "Acme Robotics",
+          "price": "$21 per share",
+          "exchange": "Nasdaq"
+        }
+      },
+      "rules": []
+    },
+    {
+      "id": "legal.action",
+      "group": "legal",
+      "label": "Lawsuit, settlement or regulatory action",
+      "event_kind": "effective",
+      "definition": "A lawsuit filed or decided, a settlement, a fine, or a regulator's decision about the company.",
+      "fields": [
+        {
+          "name": "company",
+          "type": "org",
+          "required": true
+        },
+        {
+          "name": "counterparty",
+          "type": "org",
+          "required": false
+        },
+        {
+          "name": "action",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "amount",
+          "type": "money",
+          "required": false
+        }
+      ],
+      "key": [
+        "company",
+        "counterparty",
+        "action"
+      ],
+      "cues": "\\b(?:lawsuit|sued|settle(?:d|ment)|fine[ds]?|antitrust|regulator|consent decree|ruling|verdict|investigation)\\b",
+      "example": {
+        "quote": "The European Commission fined Litware 200 million euros over app store rules.",
+        "fields": {
+          "company": "Litware",
+          "counterparty": "The European Commission",
+          "action": "fined",
+          "amount": "200 million euros"
+        }
+      },
+      "rules": []
+    },
+    {
+      "id": "other.fact",
+      "group": "fallback",
+      "label": "Other fact",
+      "event_kind": "",
+      "definition": "A true, verifiable statement that fits none of the other kinds.",
+      "fields": [],
+      "key": [],
+      "cues": "",
+      "example": {
+        "quote": "Acme Robotics is headquartered in Austin.",
+        "fields": {}
+      },
+      "rules": []
+    }
+  ]
+}

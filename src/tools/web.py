@@ -1,6 +1,7 @@
 """Plain HTTP fetch with readable-text extraction. Fast; use for static pages and APIs."""
 
 import io
+import re
 from dataclasses import dataclass, field
 
 import httpx
@@ -83,11 +84,28 @@ def pdf_text(body: bytes) -> str:
         return ""
 
 
+FALLBACK_BELOW = 200      # article extraction found less than this ...
+FALLBACK_HTML = 5_000     # ... in a page at least this large: read the page's own text instead
+
+
+def plain_text(html: str) -> str:
+    """Every visible line of the page, in order, without scripts and styles. Used only when article extraction finds nothing."""
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "noscript", "template"]):
+        tag.decompose()
+    for tag in soup.find_all(style=re.compile(r"display:\s*none", re.I)):    # inline XBRL keeps its hidden data in such blocks
+        tag.decompose()
+    lines = (re.sub(r"[ \t\xa0]+", " ", line).strip() for line in soup.get_text("\n").splitlines())
+    return "\n".join(line for line in lines if line)
+
+
 def extract_text(body: bytes, content_type: str, encoding: str, url: str) -> tuple[str, str]:
     """(file suffix, readable text). The one extractor used for fetching AND for evidence ingestion."""
     if "html" in content_type:
         html = body.decode(encoding, errors="replace")
         text = trafilatura.extract(html, url=url, include_comments=False) or ""
+        if len(text.strip()) < FALLBACK_BELOW and len(html) > FALLBACK_HTML:
+            text = plain_text(html) or text      # table-heavy pages (EDGAR exhibits) defeat article extraction
         meta = meta_block(html)
         return ".html", f"{text}\n\n[Page metadata]\n{meta}" if meta else text
     if content_type == "application/pdf" or body[:5] == b"%PDF-":
@@ -100,7 +118,7 @@ def extract_text(body: bytes, content_type: str, encoding: str, url: str) -> tup
     return ".bin", ""
 
 
-EXTRACTOR = f"trafilatura {trafilatura.__version__} + meta-v1 + pypdf + json-render-v1"
+EXTRACTOR = f"trafilatura {trafilatura.__version__} + plain-fallback-v1 + meta-v1 + pypdf + json-render-v1"
 
 
 def fetch_url(url: str, max_chars: int = 12_000, timeout: float = 20.0) -> dict:

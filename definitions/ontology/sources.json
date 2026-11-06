@@ -1,0 +1,107 @@
+{
+  "id": "sources",
+  "version": "1.0",
+  "about": "What a source is, described by code (never by a model) from its URL and its text. A source has four facets. ISSUER: whose document it is, the organisation speaking (Apple Inc. for Apple's press release, wherever it is hosted; Reuters for a Reuters story). DOCUMENT TYPE: what it is (press release, earnings release, Form 8-K, news article ...). VENUE: where this copy is hosted (the company's investor-relations site, its newsroom, EDGAR, a wire service, a publication). PUBLISHER: who runs the venue (Apple Inc., the SEC, PR Newswire, Reuters). The same document can sit in several venues: an earnings release on investor.apple.com, on EDGAR as Exhibit 99.1 to a Form 8-K and on a wire service has one issuer and one type, and three venues. TIER follows from the facets: PRIMARY when the document is the issuer's own (an issuer document) and the issuer is the subject of the question; SECONDARY otherwise (a publication reporting on it, a database citing it, or the subject's name not found on the page). Facets are detected in the order given; the first match wins.",
+
+  "tier_rule": "primary if document_type.issuer_document and issuer is the subject (or no subject is known); otherwise secondary",
+
+  "venues": [
+    {"id": "investor_relations", "label": "investor relations site", "class": "company_site", "official": true,
+     "host_prefixes": ["investor", "investors", "ir"], "path": "/(?:investor|investors|investor-relations|ir)(?:/|$|\\.)",
+     "publisher": "issuer"},
+    {"id": "company_newsroom", "label": "newsroom", "class": "company_site", "official": true,
+     "host_prefixes": ["newsroom", "news", "press", "media"], "path": "/(?:newsroom|news|press|press-releases?|media|media-center|stories)(?:/|$)",
+     "publisher": "issuer"},
+    {"id": "company_site", "label": "company website", "class": "company_site", "official": true, "publisher": "issuer"},
+    {"id": "edgar", "label": "EDGAR", "class": "filing", "hosts": ["sec.gov"], "publisher": "U.S. Securities and Exchange Commission"},
+    {"id": "wire_service", "label": "wire service", "class": "wire_release",
+     "hosts": ["prnewswire.com", "businesswire.com", "globenewswire.com", "accesswire.com", "newswire.ca", "einpresswire.com", "newsfilecorp.com"],
+     "publishers": {"prnewswire.com": "PR Newswire", "businesswire.com": "Business Wire", "globenewswire.com": "GlobeNewswire",
+                    "accesswire.com": "ACCESSWIRE", "newswire.ca": "Cision Canada", "einpresswire.com": "EIN Presswire", "newsfilecorp.com": "Newsfile"}},
+    {"id": "major_publication", "label": "major publication", "class": "major_publication",
+     "hosts": ["wsj.com", "bloomberg.com", "reuters.com", "apnews.com", "ft.com", "nytimes.com", "washingtonpost.com", "cnbc.com", "economist.com",
+               "barrons.com", "marketwatch.com", "bbc.com", "bbc.co.uk", "theguardian.com", "fortune.com", "axios.com", "politico.com", "forbes.com"],
+     "publishers": {"wsj.com": "The Wall Street Journal", "bloomberg.com": "Bloomberg", "reuters.com": "Reuters", "apnews.com": "AP",
+                    "ft.com": "Financial Times", "nytimes.com": "The New York Times", "washingtonpost.com": "The Washington Post", "cnbc.com": "CNBC",
+                    "economist.com": "The Economist", "barrons.com": "Barron's", "marketwatch.com": "MarketWatch", "bbc.com": "BBC", "bbc.co.uk": "BBC",
+                    "theguardian.com": "The Guardian", "fortune.com": "Fortune", "axios.com": "Axios", "politico.com": "Politico", "forbes.com": "Forbes"}},
+    {"id": "reference_work", "label": "reference work", "class": "reference",
+     "hosts": ["wikipedia.org", "wikidata.org", "britannica.com", "investopedia.com", "fandom.com"],
+     "publishers": {"wikipedia.org": "Wikipedia", "wikidata.org": "Wikidata", "britannica.com": "Britannica", "investopedia.com": "Investopedia", "fandom.com": "Fandom"}},
+    {"id": "other", "label": "other site", "class": "other", "publisher": "site"}
+  ],
+
+  "classes": [
+    {"id": "company_site", "label": "Company website (investor relations, newsroom)"},
+    {"id": "filing", "label": "Official filing (EDGAR)"},
+    {"id": "wire_release", "label": "Company press release (wire service)"},
+    {"id": "major_publication", "label": "Major publication"},
+    {"id": "reference", "label": "Reference work (general knowledge only)"},
+    {"id": "other", "label": "Other source"}
+  ],
+
+  "document_types": [
+    {"id": "form_10k", "label": "Form 10-K annual report", "issuer_document": true, "venues": ["edgar", "investor_relations", "company_site"], "filing_type": "10-K",
+     "text": "\\bFORM\\s+10-K\\b", "url": "10-?k[^/]*\\.(?:htm|pdf)"},
+    {"id": "form_10q", "label": "Form 10-Q quarterly report", "issuer_document": true, "venues": ["edgar", "investor_relations", "company_site"], "filing_type": "10-Q",
+     "text": "\\bFORM\\s+10-Q\\b", "url": "10-?q[^/]*\\.(?:htm|pdf)"},
+    {"id": "earnings_release", "label": "Earnings release", "issuer_document": true,
+     "venues": ["edgar", "investor_relations", "company_newsroom", "company_site", "wire_service"], "filed_as": "Exhibit 99.1 to Form 8-K, Item 2.02",
+     "title": "\\b(?:reports?|announces?|posts?)\\b[^.\\n]{0,80}\\b(?:first|second|third|fourth|1st|2nd|3rd|4th|Q[1-4]|full[- ]year|fiscal(?: year)?|quarter(?:ly)?|annual|interim)\\b[^.\\n]{0,60}\\b(?:results|earnings)\\b|\\b(?:Q[1-4]|quarter(?:ly)?|full[- ]year|fiscal \\d{4})\\b[^.\\n]{0,40}\\b(?:financial )?results\\b",
+     "url": "(?:quarter|q[1-4])[^/]*results|results[^/]*(?:quarter|q[1-4])|earnings-release"},
+    {"id": "form_8k", "label": "Form 8-K current report", "issuer_document": true, "venues": ["edgar"], "filing_type": "8-K",
+     "text": "\\bFORM\\s+8-K\\b", "url": "8-?k[^/]*\\.htm"},
+    {"id": "proxy_statement", "label": "Proxy statement (DEF 14A)", "issuer_document": true, "venues": ["edgar", "investor_relations"], "filing_type": "DEF 14A",
+     "text": "\\bSCHEDULE\\s+14A\\b|\\bDEF\\s?14A\\b|\\bPROXY STATEMENT\\b", "url": "def14a|proxy"},
+    {"id": "registration_statement", "label": "Registration statement or prospectus (S-1, 424B)", "issuer_document": true, "venues": ["edgar"], "filing_type": "S-1",
+     "text": "\\bFORM\\s+S-1\\b|\\bFORM\\s+F-1\\b|\\bPROSPECTUS\\b", "url": "s-?1[^/]*\\.htm|424b"},
+    {"id": "foreign_issuer_report", "label": "Foreign issuer report (20-F, 40-F, 6-K)", "issuer_document": true, "venues": ["edgar"], "filing_type": "20-F",
+     "text": "\\bFORM\\s+(?:20-F|40-F|6-K)\\b", "url": "(?:20-?f|40-?f|6-?k)[^/]*\\.htm"},
+    {"id": "ownership_filing", "label": "Ownership filing (Form 4, 13D, 13G, 13F)", "issuer_document": false, "venues": ["edgar"], "filing_type": "Form 4",
+     "text": "\\bFORM\\s+4\\b|\\bSCHEDULE\\s+13[DG]\\b|\\bFORM\\s+13F\\b", "note": "filed by the insider or holder, not by the company"},
+    {"id": "sec_filing", "label": "SEC filing", "issuer_document": true, "venues": ["edgar"], "note": "a filing whose form was not recognised"},
+    {"id": "shareholder_letter", "label": "Shareholder letter", "issuer_document": true, "venues": ["investor_relations", "company_site", "edgar"],
+     "title": "\\bletter to (?:our )?(?:share|stock)holders\\b|\\bshareholder letter\\b", "url": "(?:shareholder|stockholder)-?letter"},
+    {"id": "investor_presentation", "label": "Investor presentation", "issuer_document": true, "venues": ["investor_relations", "company_site", "edgar"],
+     "title": "\\b(?:investor|earnings) presentation\\b|\\binvestor day\\b", "url": "presentation[^/]*\\.pdf|investor-day"},
+    {"id": "earnings_call_transcript", "label": "Earnings call transcript", "issuer_document": true, "venues": ["investor_relations", "company_site", "other"],
+     "title": "\\b(?:earnings call|conference call) transcript\\b", "url": "transcript"},
+    {"id": "press_release", "label": "Press release", "issuer_document": true, "venues": ["company_newsroom", "investor_relations", "company_site", "wire_service", "edgar"],
+     "title": "\\b(?:announces?|announced|completes?|completed|appoints?|names|launch(?:es)?|unveils?|introduces?|to acquire|agrees? to|enters? into|declares?)\\b",
+     "url": "press-release|news-release|/news/|/newsroom/|/press/|news-releases"},
+    {"id": "company_page", "label": "Company web page", "issuer_document": true, "venues": ["investor_relations", "company_newsroom", "company_site"],
+     "note": "any other page on the subject's own site (pricing, about, leadership)"},
+    {"id": "news_article", "label": "News article", "issuer_document": false, "venues": ["major_publication", "other"],
+     "note": "a publication's own reporting; it may quote a filing or release, which stays second-hand"},
+    {"id": "reference_entry", "label": "Reference entry", "issuer_document": false, "venues": ["reference_work"]},
+    {"id": "web_page", "label": "Web page", "issuer_document": false, "venues": ["other"], "note": "aggregators, blogs, analyst sites, social media"}
+  ],
+
+  "default_type": {"investor_relations": "company_page", "company_newsroom": "press_release", "company_site": "company_page", "edgar": "sec_filing",
+                   "wire_service": "press_release", "major_publication": "news_article", "reference_work": "reference_entry", "other": "web_page"},
+
+  "issuer": {
+    "about": "How the issuer of a document is read from it, in order. The company's own site: the subject. EDGAR: the registrant named on the cover ('Apple Inc. (Exact name of registrant as specified in its charter)'), or the filer CIK in the URL when the subject's CIK is known. Wire services: the release's own source line ('SOURCE Apple Inc.', 'Source: Apple Inc.'), else the subject when its name is in the release's first lines. Publications, reference works and other sites: the publisher itself.",
+    "registrant": "((?:[A-Z0-9&][\\w.,&'-]*\\s+){0,7}[A-Z0-9&][\\w.,&'-]*)\\s*\\(\\s*Exact name of (?:the )?[Rr]egistrant",
+    "wire_source": "(?:^|\\n|\\s)SOURCE[:\\s]+([A-Z0-9][^\\n]{1,80}?)\\s*(?:$|\\n|Related Links|\\(?http|\\s{2,})",
+    "edgar_cik": "/edgar/data/0*(\\d{1,10})/",
+    "edgar_cover": "SECURITIES AND EXCHANGE COMMISSION",
+    "edgar_cover_within": 60000,
+    "edgar_cover_note": "an inline-XBRL filing opens with its hidden data (over 13,000 characters for Apple's 10-K), so on EDGAR the cover is read from this heading on, not from the start",
+    "head_chars": 1500
+  },
+
+  "labels": {
+    "primary": "{type} by {issuer}, {where}",
+    "secondary_issuer_document": "{type} by {issuer}, {where} (issuer not the subject)",
+    "unconfirmed": "{type}, {where} (issuer not confirmed)",
+    "reported": "{type} by {publisher}",
+    "where": {"investor_relations": "on its investor relations site", "company_newsroom": "in its newsroom", "company_site": "on its website",
+              "edgar": "on EDGAR", "wire_service": "via {publisher}", "major_publication": "in {publisher}", "reference_work": "on {publisher}", "other": "on {publisher}"}
+  },
+
+  "copies": {
+    "about": "Copies of one document (the release on the newsroom, on EDGAR and on a wire service) share issuer, document type and date; they are one source for corroboration, not several. Detected by a later step (grouping by issuer, type, date and the opening words); listed here so the facet names stay the same.",
+    "same_document_keys": ["issuer", "document_type", "date", "lead"]
+  }
+}

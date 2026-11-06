@@ -309,6 +309,7 @@ class Runner:
                  render_fn=None, registry=None, call_api_fn=None, now_fn=None, scout: bool = True):
         self.now_fn = now_fn                  # replaceable clock (tests, replays); None means the real one
         self._noted: set = set()              # (run, step, task) whose model has been logged
+        self._profiles: dict = {}             # (source, subject names, domains) -> the source's description (source ontology)
         self.network_workers = 4              # searches and page downloads run side by side; models stay one at a time
         self.scout_enabled = scout            # a first quick search before planning (tests that count searches switch it off)
         self.store = store or EvidenceStore()
@@ -843,7 +844,7 @@ class Runner:
         if len(s["queries"]) > room:
             self.runs.emit(rid, "discover", "budget_reached", {"budget": "max_searches"})
         outcomes = self._side_by_side(lambda q: self.search_fn(q, max_results=8, **({"recency": recency} if recency else {})), todo)
-        names = [s.get("company"), s.get("entity_name"), planning.the_subject(s["subject"], s.get("company"), s["question"])]
+        names = self._names(s)
         development = source_class.is_development(s["question"], s.get("time_scope"))
         skipped: list[str] = []
         for query, result in zip(todo, outcomes):
@@ -853,7 +854,7 @@ class Runner:
             searches += 1
             for hit in result["results"]:
                 key = normalize_url(hit["url"])
-                cls = source_class.classify(hit["url"], [domain] if domain else [], text=f"{hit['title']} {hit['snippet']}", names=names)
+                cls = source_class.classify(hit["url"], [domain] if domain else [], text=hit["snippet"] or "", title=hit["title"] or "", names=names)
                 if not source_class.allowed(cls["id"], development):       # a reference work is not a source for a company's news
                     skipped.append(hit["url"])
                     continue
@@ -941,13 +942,38 @@ class Runner:
             self._record_hit_date(sha, cand.get("published"))
             facts = self._source_dates(sha)
             best = best_date(facts)
+            profile = self._profile(s, sha, title=cand.get("title") or "")
             self.runs.emit(rid, "fetch", "source_fetched", {
-                "url": url, "source_sha256": sha, "tier": cand["tier"], "readable_chars": len(text),
+                "url": url, "source_sha256": sha, "tier": profile["tier"], "readable_chars": len(text),
+                "source": {k: profile[k] for k in ("label", "issuer", "issuer_basis", "document_type", "venue", "publisher", "filed_as")},
                 "dates": [{"kind": f.kind, "value": f.value, "origin": f.origin} for f in facts][:8],
                 "best_date": best.value if best else None, "best_date_kind": best.kind if best else None})
         failed = len(s["selected"]) - len(new_sources)
         return {"new_sources": list(s.get("backlog") or []) + new_sources, "backlog": [], "fetches_used": fetches,
                 "fetched_keys": keys, "warnings": warnings, "fetch_failures": s["fetch_failures"] + failed}
+
+    @staticmethod
+    def _names(s: State) -> list[str]:
+        """The ways the subject is called, the one to print first."""
+        named = planning.the_subject(s["subject"], s.get("company"), s["question"]) if s.get("subject") else None
+        return [n for n in (s.get("company"), s.get("entity_name"), named) if n]
+
+    def _profile(self, s: State, sha: str, title: str = "") -> dict:
+        """What a fetched source is (issuer, document type, venue, publisher, tier, label), read by code from its URL and its
+        text. One description per source and subject, used by every step, so the tier that decides when to stop reading is the
+        tier the report shows."""
+        names, domains = tuple(self._names(s)), (s["domain"],) if s.get("domain") else ()
+        key = (sha, names, domains)
+        if key not in self._profiles:
+            src = self.store.get_source(sha)
+            text = Path(src["text_path"]).read_text(encoding="utf-8")
+            self._profiles[key] = source_class.classify(src["final_url"], list(domains), text=text, names=list(names), title=title)
+        return self._profiles[key]
+
+    def _tier(self, s: State, claim: dict) -> str:
+        if claim["source_tier"] != "secondary":     # on the company's confirmed domain, or a connector's or an upload's own tier
+            return claim["source_tier"]
+        return self._profile(s, claim["source_sha256"])["tier"]
 
     def _source_dates(self, sha: str) -> list[DateFact]:
         return [DateFact(d["kind"], d["value"], d["precision"], d["raw"], d["origin"], bool(d["relative"]))
@@ -1080,7 +1106,7 @@ class Runner:
                         self.runs.emit(rid, "extract", "claim_rejected", {
                             "claim": c.claim, "quote": c.quote, "reason": r["reason"],
                             "closest_passage": r.get("closest_passage"), "source_url": source["final_url"]})
-            if pos + 1 < len(todo) and self._backed(items, len(s["checklist"]), s.get("settle_sites", 2)):
+            if pos + 1 < len(todo) and self._backed(s, items, len(s["checklist"]), s.get("settle_sites", 2)):
                 backlog = todo[pos + 1:]               # every needed fact already has claims from enough sites: read the rest only if needed
                 self.runs.emit(rid, "extract", "extract_stopped", {
                     "read": pos + 1, "kept_for_later": len(backlog),
@@ -1089,14 +1115,14 @@ class Runner:
         return {"new_claim_ids": new_ids, "all_claim_ids": s["all_claim_ids"] + new_ids, "rejected": rejected,
                 "new_sources": [], "claim_items": items, "backlog": backlog}
 
-    def _backed(self, items: dict, facts: int, need_sites: int) -> bool:
+    def _backed(self, s: State, items: dict, facts: int, need_sites: int) -> bool:
         """Does every needed fact have recorded claims from at least `need_sites` independent sites (or one primary source)?"""
         sites: dict[int, set] = {}
         primary: set[int] = set()
         for cid, fact in items.items():
             claim = self.store.get_claim(int(cid))
             sites.setdefault(fact, set()).add(corroboration.site(self.store.get_source(claim["source_sha256"])["final_url"]))
-            if claim["source_tier"] == "primary":
+            if self._tier(s, claim) == "primary":
                 primary.add(fact)
         return all(i in primary or len(sites.get(i, ())) >= need_sites for i in range(facts))
 
@@ -1127,18 +1153,18 @@ class Runner:
     # in and out of the graphics card for every claim.
     CHECK_WAVE = 3
 
-    def _settled_facts(self, verdicts: dict, relevant: dict, items: dict, need_sites: int) -> set[int]:
+    def _settled_facts(self, s: State, verdicts: dict, relevant: dict, items: dict, need_sites: int) -> set[int]:
         sites: dict[int, set] = {}
         primary: set[int] = set()
         for c, v in verdicts.items():
             if v == "supported" and relevant.get(c) and c in items:
                 claim = self.store.get_claim(int(c))
                 sites.setdefault(items[c], set()).add(corroboration.site(self.store.get_source(claim["source_sha256"])["final_url"]))
-                if claim["source_tier"] == "primary":
+                if self._tier(s, claim) == "primary":
                     primary.add(items[c])
         return primary | {f for f, found in sites.items() if len(found) >= need_sites}
 
-    def _check_order(self, ids: list[int]) -> list[int]:
+    def _check_order(self, s: State, ids: list[int]) -> list[int]:
         """Primary-source claims first, then one claim per site before a second from the same site, so the first wave can settle."""
         seen: dict[str, int] = {}
         keyed = []
@@ -1146,16 +1172,16 @@ class Runner:
             claim = self.store.get_claim(cid)
             where = corroboration.site(self.store.get_source(claim["source_sha256"])["final_url"])
             seen[where] = seen.get(where, 0) + 1
-            keyed.append((claim["source_tier"] != "primary", seen[where], len(keyed), cid))
+            keyed.append((self._tier(s, claim) != "primary", seen[where], len(keyed), cid))
         return [cid for *_, cid in sorted(keyed)]
 
     def n_check(self, s: State) -> dict:
         rid = s["run_id"]
         verdicts, relevant, context = dict(s["verdicts"]), dict(s["relevant"]), dict(s.get("context") or {})
         need = s.get("settle_sites", 2)
-        pending = self._check_order(list(s["new_claim_ids"]))
+        pending = self._check_order(s, list(s["new_claim_ids"]))
         while pending:
-            settled = self._settled_facts(verdicts, relevant, s["claim_items"], need)
+            settled = self._settled_facts(s, verdicts, relevant, s["claim_items"], need)
             wave, rest = [], []
             for cid in pending:
                 fact = s["claim_items"].get(str(cid))
@@ -1271,7 +1297,6 @@ class Runner:
         rid = s["run_id"]
         rows = {"supported": [], "partially_supported": [], "not_supported": [], "unchecked": [], "off_topic": [], "context": [], "reference_only": []}
         development = source_class.is_development(s["question"], s.get("time_scope"))
-        names = [s.get("company"), s.get("entity_name"), planning.the_subject(s["subject"], s.get("company"), s["question"])]
         for cid in s["all_claim_ids"]:
             claim = self.store.get_claim(cid)
             source = self.store.get_source(claim["source_sha256"])
@@ -1284,10 +1309,10 @@ class Runner:
             checks = self.store.support_checks_for(cid)
             if checks:
                 row["why"] = checks[-1]["reasoning"]
-            cls = source_class.classify(source["final_url"], [s["domain"]] if s.get("domain") else [], text=f"{claim['claim_text']} {claim['quote']}", names=names)
+            cls = self._profile(s, claim["source_sha256"])
             row["source_class"], row["source_label"] = cls["id"], cls["label"]
-            if claim["source_tier"] in ("primary", "secondary"):
-                row["source_tier"] = cls["tier"]            # a filing or a company release on a wire is primary wherever it is hosted
+            row["source"] = {k: cls[k] for k in ("issuer", "issuer_basis", "document_type", "document_label", "venue", "venue_label", "publisher", "filed_as")}
+            row["source_tier"] = self._tier(s, claim)      # a filing or a company release on a wire is primary wherever it is hosted
             verdict = s["verdicts"].get(str(cid), "unchecked")
             if verdict == "supported" and not source_class.allowed(cls["id"], development):
                 verdict = "reference_only"  # a reference work is not a source for a company's news: kept on record, not used in the answer

@@ -341,8 +341,8 @@ def check_attributed(c: Ctx) -> dict:
         return _check("attributed", None, "no point rests on a secondary source")
     ok = 0
     for s, f in need:
-        name = f.site.split(".")[0] if f.site else ""
-        ok += bool(cues.search(CITE.sub("", s)) or (name and name.lower() in s.lower()))
+        names = [n.lower() for n in (f.publisher, f.site.split(".")[0] if f.site else "") if n]
+        ok += bool(cues.search(CITE.sub("", s)) or any(n in s.lower() for n in names))
     return _check("attributed", ok / len(need), "secondary points name their source" if ok == len(need)
                   else "a point from a secondary source does not say who reported it")
 

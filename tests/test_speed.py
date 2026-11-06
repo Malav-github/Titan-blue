@@ -91,7 +91,7 @@ def test_one_claim_per_site_is_checked_before_a_second_from_the_same_site(env):
     runner = runner_with_log(env, [])
     items = add_claims(env, ["https://a.example/1", "https://a.example/2", "https://b.example/1"])
     ids = sorted(int(c) for c in items)
-    order = runner._check_order(ids)
+    order = runner._check_order(state(items), ids)
     sites = [env["store"].get_source(env["store"].get_claim(c)["source_sha256"])["final_url"].split("/")[2] for c in order]
     assert sites[:2] == ["a.example", "b.example"]
 

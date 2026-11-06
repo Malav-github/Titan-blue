@@ -107,7 +107,7 @@ def test_the_prompt_carries_today_the_moments_and_the_undated_warning():
     p = writing.draft_prompt("S&P Global's latest strategic move.", FACTS, writing.form_by_id("news"), LATEST, TODAY, ["outcome"])
     assert "TODAY: 2026-11-06" in p and "MOMENT 1: 22 October 2026 to 27 October 2026" in p and "NO RELIABLE DATE" in p
     assert "did NOT happen together" in p and "LATEST" in p and "NOT ESTABLISHED" in p
-    assert "NO RELIABLE DATE" in p and "[claim:230]" in p and "Major publication" in p
+    assert "NO RELIABLE DATE" in p and "[claim:230]" in p and "News article by Reuters" in p
     assert "MUST end with the tag" in p and "never as 2026-10-27" in p and "Do not say one caused" in p
 
 
