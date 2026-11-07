@@ -173,3 +173,15 @@ def test_the_round_up_is_written_by_code_one_dated_cited_paragraph_per_event(env
     assert paras[1] == "On 14 September 2026, Acme agreed to acquire Fabrikam [claim:2]. The deal values Fabrikam at $1 billion in cash [claim:3]."
     assert paras[2] == "On 2 March 2026, Acme launched Beacon, an AI search tool [claim:1]."
     assert paras[3].startswith("Not established from what was read")
+
+
+@pytest.mark.parametrize("claim,remark", [
+    ("S&P Global's revenue for the third quarter of 2026 is not directly provided in the passage.", True),   # a live run's 'answer'
+    ("The figure is not stated.", True),
+    ("Revenue was $3,678 million in the third quarter of 2026.", False),
+    ("Terms of the deal were not disclosed.", False),
+    ("Acme said the deal was not disclosed to regulators.", False),
+])
+def test_a_remark_about_the_page_is_not_a_claim(claim, remark):
+    from runner import NON_FACT
+    assert bool(NON_FACT.search(claim)) is remark

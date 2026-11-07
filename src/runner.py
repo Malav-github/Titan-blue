@@ -169,7 +169,12 @@ class Relevance(BaseModel):
 
 
 NON_FACT = re.compile(r"^\s*(the\s+)?(passage|text|quote|excerpt|page|document|article|source)\b|^\s*quote\s*:|"
-                      r"\bdoes not (provide|mention|state|specify)\b", re.I)
+                      r"\bdoes not (provide|mention|state|specify)\b|"
+                      # 'revenue ... is not directly provided in the passage': a remark about the page, which a live run let through
+                      # the support and relevance checks and into the answer
+                      r"\b(?:is|are|was|were)\s+not\s+(?:directly\s+|explicitly\s+|clearly\s+)?(?:provided|stated|mentioned|specified|given)"
+                      r"\s*(?:[.!]?\s*$|(?:in|by) (?:the|this) (?:passage|text|excerpt|quote|source|document|page))|"
+                      r"\bin (?:the|this) (?:passage|text|excerpt|quote)\b", re.I)
 
 
 class Summary(BaseModel):
@@ -1300,8 +1305,8 @@ class Runner:
                             "claim": c.claim, "quote": c.quote, "reason": "not a statement of a fact",
                             "source_url": source["final_url"]})
                         continue
-                    if len(s["checklist"]) == 1 and c.needed_fact in (0, 2):
-                        c.needed_fact = 1          # one fact asked: a small model numbers it 0 or 2 at times; the relevance check still judges it
+                    if len(s["checklist"]) == 1:
+                        c.needed_fact = 1          # one fact asked: a small model numbers it wrongly at times; the relevance check still judges it
                     if not 1 <= c.needed_fact <= len(s["checklist"]):
                         self.runs.emit(rid, "extract", "claim_rejected", {
                             "claim": c.claim, "quote": c.quote, "reason": "does not address any needed fact",

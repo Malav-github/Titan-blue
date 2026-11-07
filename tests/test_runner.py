@@ -216,8 +216,9 @@ def test_top_chunks_prefers_relevant_text():
 def test_claims_that_address_no_needed_fact_are_dropped_and_cover_nothing(env):
     off_topic = Extraction(claims=[ExtractedClaim(predicate="x", value="$29", claim="The Starter plan costs $29.",
                                                   quote=GOOD_QUOTE, needed_fact=7)])
-    result = make_runner(env, Extraction=lambda p: off_topic).start("q", budgets={"max_iterations": 1})
-    assert env["store"].counts()["claims"] == 0 and result["report"]["gaps"] == ["Starter plan price"]
+    two = lambda p: Plan(subject="Acme", queries=["acme pricing"], checklist=["Starter plan price", "Team plan price"])  # noqa: E731
+    result = make_runner(env, Extraction=lambda p: off_topic, Plan=two).start("q", budgets={"max_iterations": 1})
+    assert env["store"].counts()["claims"] == 0 and result["report"]["gaps"] == ["Starter plan price", "Team plan price"]
     reasons = [e["payload"].get("reason") for e in env["runs"].events(result["run_id"]) if e["type"] == "claim_rejected"]
     assert "does not address any needed fact" in reasons
 
