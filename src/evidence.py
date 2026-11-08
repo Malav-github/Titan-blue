@@ -27,7 +27,7 @@ MIN_QUOTE_CHARS = 20
 HINT_CONTEXT = 60
 
 TABLES = ["sources", "fetches", "entities", "claims", "rejected_claims", "claim_events", "contradictions", "source_dates",
-          "support_checks", "claim_time"]
+          "support_checks", "claim_time", "statement_tables", "statement_values", "statement_checks"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -120,6 +120,50 @@ CREATE TABLE IF NOT EXISTS claim_time (     -- when a claim holds: its period, a
     detail TEXT NOT NULL DEFAULT '',       -- JSON: basis, span, fiscal_year, quarter, start, end, comparison, change
     created_at TEXT NOT NULL, created_by TEXT NOT NULL,
     UNIQUE (claim_id, kind, value, origin)
+);
+CREATE TABLE IF NOT EXISTS statement_tables (   -- a table read by code from an archived document (skills/statements)
+    table_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_sha256 TEXT NOT NULL REFERENCES sources(source_sha256),
+    locator TEXT NOT NULL,                 -- JSON: {"table": 8} in a page, {"page": 17, "table": 0} in a PDF
+    adapter TEXT NOT NULL,                 -- ixbrl | html | pdf
+    statement TEXT NOT NULL,               -- income | comprehensive_income | balance | cash_flow | equity | other
+    is_primary INTEGER NOT NULL,           -- titled as a statement (not a note or summary)
+    title TEXT NOT NULL, basis TEXT, standard TEXT,
+    scale TEXT,                            -- the factor as a decimal string, NULL when the document does not state it
+    scale_raw TEXT, currency TEXT,
+    columns TEXT NOT NULL,                 -- JSON: index, header, kind, start, end, months, label, origin, derived
+    notes TEXT NOT NULL,                   -- JSON: what code could not settle
+    caption TEXT NOT NULL,
+    extractor TEXT NOT NULL, created_at TEXT NOT NULL,
+    UNIQUE (source_sha256, locator, extractor)
+);
+CREATE TABLE IF NOT EXISTS statement_values (
+    value_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    table_id INTEGER NOT NULL REFERENCES statement_tables(table_id),
+    row_index INTEGER NOT NULL, col_index INTEGER NOT NULL,
+    label TEXT NOT NULL,                   -- as printed (or named by code, see label_note)
+    label_note TEXT NOT NULL DEFAULT '',
+    section TEXT NOT NULL DEFAULT '',
+    concept TEXT NOT NULL DEFAULT '',      -- ontology concept id, '' when not named
+    concept_origin TEXT NOT NULL DEFAULT '',   -- xbrl_tag | xbrl_tag+label | label
+    printed TEXT NOT NULL,                 -- the cell text
+    amount TEXT NOT NULL,                  -- the number as printed, signed, before scale
+    decimals INTEGER NOT NULL,
+    value TEXT,                            -- in units (scale applied); NULL when the scale is not known
+    unit TEXT NOT NULL,                    -- currency code, per_share, shares, ratio or ''
+    period_kind TEXT NOT NULL,             -- duration | instant | change | unknown
+    period_start TEXT, period_end TEXT, period_months INTEGER,
+    xbrl TEXT NOT NULL DEFAULT '',         -- JSON of the inline XBRL fact, '' if none
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS statement_values_concept ON statement_values (concept, period_end);
+CREATE TABLE IF NOT EXISTS statement_checks (
+    check_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    table_id INTEGER NOT NULL REFERENCES statement_tables(table_id),
+    rule TEXT NOT NULL, col_index INTEGER NOT NULL,
+    verdict TEXT NOT NULL CHECK (verdict IN ('pass', 'fail')),
+    expected TEXT NOT NULL, computed TEXT NOT NULL, detail TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 CREATE VIEW IF NOT EXISTS current_claims AS
     SELECT * FROM claims WHERE claim_id NOT IN (SELECT claim_id FROM claim_events);
@@ -480,6 +524,82 @@ class EvidenceStore:
             return [dict(r) for r in db.execute(
                 "SELECT CASE WHEN claim_a = ? THEN claim_b ELSE claim_a END AS other_claim, note FROM contradictions"
                 " WHERE claim_a = ? OR claim_b = ? ORDER BY contradiction_id", (claim_id, claim_id, claim_id))]
+
+    # -- financial statements (read by code: skills/statements) ---------------------------------------------------------
+
+    def record_statements(self, source_sha256: str, tables: list, extractor: str) -> list[int]:
+        """Store the tables code read from a source, with every value and check. A table already recorded for this source by
+        this extractor is not stored again (append-only: a better extractor adds rows, it never rewrites old ones).
+        Returns the table ids, old and new."""
+        ids = []
+        with closing(self._connect()) as db, db:
+            for t in tables:
+                locator = json.dumps(t.raw.locator, sort_keys=True)
+                old = db.execute("SELECT table_id FROM statement_tables WHERE source_sha256=? AND locator=? AND extractor=?",
+                                 (source_sha256, locator, extractor)).fetchone()
+                if old:
+                    ids.append(old[0])
+                    continue
+                cols = [{k: getattr(c, k) for k in ("index", "header", "kind", "start", "end", "months", "label", "origin", "derived")}
+                        for c in t.columns]
+                tid = db.execute(
+                    "INSERT INTO statement_tables (source_sha256, locator, adapter, statement, is_primary, title, basis, standard,"
+                    " scale, scale_raw, currency, columns, notes, caption, extractor, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (source_sha256, locator, t.raw.adapter, t.statement, int(t.primary), t.title, t.basis, t.standard,
+                     str(t.scale.factor) if t.scale and t.scale.factor is not None else None, t.scale.raw if t.scale else None,
+                     t.scale.currency if t.scale else None, json.dumps(cols), json.dumps(t.notes), t.raw.caption[-700:],
+                     extractor, utc_now())).lastrowid
+                rows = {r.index: r for r in t.rows}
+                colmap = {c.index: c for c in t.columns}
+                now = utc_now()
+                db.executemany(
+                    "INSERT INTO statement_values (table_id, row_index, col_index, label, label_note, section, concept, concept_origin,"
+                    " printed, amount, decimals, value, unit, period_kind, period_start, period_end, period_months, xbrl, created_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    [(tid, v.row, v.col, rows[v.row].label, rows[v.row].derived_label, rows[v.row].section, rows[v.row].concept,
+                      rows[v.row].concept_origin, v.amount.raw, str(v.amount.value), v.amount.decimals,
+                      format(v.full, "f") if v.full is not None else None, v.unit, colmap[v.col].kind, colmap[v.col].start,
+                      colmap[v.col].end, colmap[v.col].months, json.dumps(v.fact, sort_keys=True) if v.fact else "", now)
+                     for v in t.values])
+                db.executemany(
+                    "INSERT INTO statement_checks (table_id, rule, col_index, verdict, expected, computed, detail, created_at)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    [(tid, c.rule, c.column, c.verdict, c.expected, c.computed, json.dumps(c.detail), now) for c in t.checks])
+                ids.append(tid)
+        return ids
+
+    def statements_for(self, source_sha256: str, primary_only: bool = False) -> list[dict]:
+        """The tables read from one source, each with its values and checks."""
+        with closing(self._connect()) as db:
+            tables = [dict(r) for r in db.execute(
+                "SELECT * FROM statement_tables WHERE source_sha256=?" + (" AND is_primary=1" if primary_only else "") +
+                " ORDER BY table_id", (source_sha256,))]
+            for t in tables:
+                t["columns"], t["notes"], t["locator"] = json.loads(t["columns"]), json.loads(t["notes"]), json.loads(t["locator"])
+                t["values"] = [dict(r) for r in db.execute(
+                    "SELECT * FROM statement_values WHERE table_id=? ORDER BY row_index, col_index", (t["table_id"],))]
+                t["checks"] = [dict(r) for r in db.execute(
+                    "SELECT rule, col_index, verdict, expected, computed, detail FROM statement_checks WHERE table_id=? ORDER BY check_id",
+                    (t["table_id"],))]
+        return tables
+
+    def find_values(self, concept: str, period_end: str | None = None, source_sha256: str | None = None,
+                    primary_only: bool = True) -> list[dict]:
+        """Values of one line item across every document read: the index sentences and quotes are checked against."""
+        where, args = ["v.concept = ?"], [concept]
+        if period_end:
+            where.append("v.period_end LIKE ?")
+            args.append(period_end + "%")
+        if source_sha256:
+            where.append("t.source_sha256 = ?")
+            args.append(source_sha256)
+        if primary_only:
+            where.append("t.is_primary = 1")
+        with closing(self._connect()) as db:
+            return [dict(r) for r in db.execute(
+                "SELECT v.*, t.source_sha256, t.statement, t.basis, t.title, t.adapter, s.final_url AS source_url FROM statement_values v"
+                " JOIN statement_tables t USING (table_id) JOIN sources s ON s.source_sha256 = t.source_sha256"
+                f" WHERE {' AND '.join(where)} ORDER BY v.period_end DESC, v.value_id", args)]
 
     def counts(self) -> dict:
         with closing(self._connect()) as db:

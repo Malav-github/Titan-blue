@@ -115,6 +115,33 @@ with what Titan already does about it and what could be done next (`definitions/
   the question names is treated as a company (so its official domain is found and its own pages are labelled primary).
 - **Copies are one source**: pages that share several long sentences word for word (a release on the newsroom and on PR
   Newswire) count once for corroboration and are shown as copies.
+- **Financial statements** (`definitions/skills/statements.json`, `definitions/ontology/financial_statements.json`,
+  `src/skills/statements/`). A small model cannot read a wide table: given S&P Global's 10-Q it quoted the revenue row and
+  wrote "revenue is not provided in the passage". Code reads the tables instead, and no model touches a number:
+  - *Inline XBRL* (10-Q, 10-K, and any market that files in XBRL): each value's concept, period, unit, scale and sign are read
+    from its tag, exactly. The page decides the sign shown (capital expenditure is tagged +93 and printed "(93)"); the fact
+    keeps its own value. In a tagged table the tag says what a row is: "Cash provided by operating activities" under
+    discontinued operations is not the company's operating cash flow.
+  - *HTML tables* (8-K earnings releases): cells split around a number ("$" | "3,678" | ")") are joined, colspans are spread,
+    and "Three Months 2026" under a caption "Three and nine months ended September 30" is dated from the caption.
+  - *PDF reports* with a text layer (Indian results, Philippine 17-Q and 17-A): columns are found where numbers' right edges
+    line up, headers are placed over the columns they span, notes columns and wrapped labels are recognised, a statement that
+    runs onto the next page is joined, and an unlabelled total is named after its section only when code has checked that it
+    is the sum of the section's lines. Scanned PDFs give nothing (they need OCR, whose values are not trusted unreviewed).
+  - Numbers as markets print them: 12,34,567, 1.234.567,89, brackets and dashes, lakh and crore, Arabic-Indic digits; a
+    lone "1.234" is left unread unless the market's decimal mark settles it.
+  - Periods are read, never invented: "Sept'25" stays at month precision; "Q2 FY26" is dated only where the law fixes the
+    financial year (India: April to March, marked derived); "04/05/2026" is left unread.
+  - Every statement is checked by arithmetic (assets = liabilities + equity, subtotals, profit before tax - tax, the cash
+    roll-forward), with the ways companies differ written into the rules (discontinued operations, redeemable non-controlling
+    interests, the exchange-rate line inside or after the net change). A misread cell fails loudly; a rule that cannot run is
+    not reported as passed.
+  - Stored append-only in the evidence store (`statement_tables`, `statement_values`, `statement_checks`) with each value's
+    cell, period and source. `GET /api/evidence/sources/{sha}/statements` shows a document's statements;
+    `GET /api/evidence/statements?concept=revenue&period_end=2026-09-30` is the index across documents.
+  - Where documents come from: SEC EDGAR for the US; for India and the Philippines, the companies' own investor pages. The
+    exchange portals are not used: NSE's terms forbid automated collection, BSE's terms could not be read, and PSE EDGE allows
+    personal, non-commercial use only. Their filings (NSE's are inline XBRL) would need the exchanges' written permission.
 
 ## Evidence stores and archives
 

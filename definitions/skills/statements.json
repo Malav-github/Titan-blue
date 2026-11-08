@@ -1,0 +1,24 @@
+{
+  "name": "statements",
+  "version": 1,
+  "summary": "Financial statements read by code from inline XBRL filings, HTML earnings releases and PDF reports, with the period of every column, the line item of every row, the scale and currency, and arithmetic checks. Covers for the local model, which cannot read wide tables reliably. Definitions: definitions/ontology/financial_statements.json.",
+  "covers_for": "LLM capability: an 8B model paraphrases table rows ('revenue is not provided in the passage' beside its own quote of the figure) and cannot tie a number to its column's period. Here code reads the table and the model reads nothing.",
+  "settings": {
+    "max_pdf_pages": 400,
+    "max_other_tables": 40,
+    "other_tables_note": "tables that are not titled statements (notes, segment tables) are kept up to this many per document: useful for the index, not trusted as statements",
+    "market_by_host": {"sec.gov": "US", "in": "IN", "ph": "PH"},
+    "market_by_currency": {"USD": "US", "INR": "IN", "PHP": "PH"},
+    "read_when": "a document Titan fetched is an SEC filing or exhibit, a PDF, or a page whose text titles a financial statement",
+    "decimal_mark_by_market": {"US": ".", "IN": ".", "PH": "."},
+    "fiscal_year_end_by_market": {"IN": "03-31"},
+    "fiscal_year_note": "India: the Companies Act, 2013, section 2(41), fixes the financial year as ending on 31 March (exceptions need the Tribunal's approval), so 'Q2 FY26' is July to September 2025; dates worked out this way are marked derived. The US and the Philippines have no single financial year, so their fiscal periods are never dated from a label.",
+    "markets": {
+      "US": {"formats": ["ixbrl", "html"], "where": "SEC EDGAR 10-Q, 10-K and 8-K Exhibit 99"},
+      "IN": {"formats": ["pdf", "html"], "where": "the company's own investor pages (SEBI LODR Regulation 46 requires listed companies to post their results there)",
+             "not_used": "NSE and BSE portals: NSE's terms forbid automated collection; BSE's terms could not be read. Their XBRL filings would need written permission."},
+      "PH": {"formats": ["pdf"], "where": "the company's own investor pages (SEC Form 17-Q and 17-A)",
+             "not_used": "PSE EDGE: its disclaimer allows personal, non-commercial use only and forbids storing its contents in a retrieval system without PSE's written consent."}
+    }
+  }
+}

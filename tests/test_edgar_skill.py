@@ -146,6 +146,29 @@ def test_a_run_reads_the_companys_8k_press_release_from_edgar_with_no_model_choo
     assert rows[0]["source_label"].startswith("Press release by Acme, on EDGAR") and rows[0]["source_date"] == (date.today() - timedelta(days=5)).isoformat()
 
 
+def test_the_statements_in_a_filing_are_read_by_code_and_recorded_during_the_run(env):
+    from tests.test_statements import RELEASE
+    runner, sec, _ = edgar_runner(env)
+    plain = sec.fetch
+
+    def fetch(url, max_chars=2000):
+        if url.endswith("acme3q-release.htm"):                 # the press release carries its income statement
+            sec.world.fetched.append(url)
+            body = RELEASE.replace(b"</body>", f"<p>{PAGE_TEXT}</p></body>".encode())
+            sha, path = archive_bytes(body, ".html")
+            return {"url": url, "final_url": url, "status": 200, "content_type": "text/html", "encoding": "utf-8", "method": "http",
+                    "fetched_at": utc_now(), "sha256": sha, "archive_path": path, "text": "", "truncated": False}
+        return plain(url, max_chars)
+
+    runner.fetch_fn = fetch
+    result = runner.start("What did Acme announce recently?", budgets={"max_iterations": 1})
+    read = next(e["payload"] for e in env["runs"].events(result["run_id"]) if e["type"] == "statements_read")
+    [income] = read["statements"]
+    assert read["market"] == "US" and income["statement"] == "income" and income["checks_failed"] == 0 and income["checks_passed"] == 4
+    revenue = env["store"].find_values("revenue", "2026-09-30")
+    assert [(v["value"], v["period_months"]) for v in revenue] == [("1200000000", 3), ("3400000000", 9)]
+
+
 def test_a_company_that_is_not_an_sec_registrant_is_said_so_and_the_web_carries_on(env):
     from runner import Plan
     runner, sec, _ = edgar_runner(env, Plan=lambda p: Plan(subject="Zeta Labs", queries=["zeta pricing"], checklist=["Starter plan price"]))

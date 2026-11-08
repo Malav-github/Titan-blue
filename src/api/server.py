@@ -10,6 +10,7 @@ import json
 import os
 import re
 import secrets
+import sqlite3
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -408,6 +409,18 @@ def create_app(registry: Registry | None = None, token: str | None = None,
             raise HTTPException(404, "No such claim")
         return detail
 
+    @app.get("/api/evidence/sources/{source_sha256}/statements")
+    def evidence_statements(source_sha256: str, primary_only: bool = False):
+        """The financial statements code read from one archived document: every value with its period, and every check."""
+        if engine.store.get_source(source_sha256) is None:
+            raise HTTPException(404, "No such source")
+        return engine.store.statements_for(source_sha256, primary_only)
+
+    @app.get("/api/evidence/statements")
+    def evidence_statement_values(concept: str, period_end: str | None = None, limit: int = 200):
+        """One line item (revenue, total_assets, ...) across every document read: the index for checking figures."""
+        return engine.store.find_values(concept, period_end)[:min(max(limit, 1), 1000)]
+
     # -- evidence stores: archive the live one and start a new one; browse archived ones (read only) -------
 
     def outside_blockers() -> list[str]:
@@ -494,6 +507,14 @@ def create_app(registry: Registry | None = None, token: str | None = None,
         if detail is None:
             raise HTTPException(404, "No such claim in this archive")
         return detail
+
+    @app.get("/api/archives/{aid}/evidence/sources/{source_sha256}/statements")
+    def archive_statements(aid: str, source_sha256: str, primary_only: bool = False):
+        store = archived(aid).evidence
+        try:
+            return store.statements_for(source_sha256, primary_only)
+        except sqlite3.OperationalError:
+            return []                                  # archived before statements were recorded
 
     @app.post("/api/uploads", status_code=201)
     async def upload(request: Request, filename: str):

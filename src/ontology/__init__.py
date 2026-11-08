@@ -92,6 +92,58 @@ def company_events() -> dict:
     return d
 
 
+def label_key(text: str) -> str:
+    """A printed row label reduced for matching: lower case, no note numbers, markers or trailing colons. "Total current
+    assets:" , "TOTAL CURRENT ASSETS" and "(b) Total current assets" are one key."""
+    t = _norm(text).replace("’", "'").replace("&amp;", "&")
+    t = re.sub(r"^(?:\(?[a-z]\)|\(?[ivx]{1,4}\)|[ivx]{1,4}\.|\d{1,2}[.)]|[-–•])\s+", "", t)      # (a) i. 1. - markers
+    t = re.sub(r"\s*\(?\s*(?:refer )?notes? [\d.]+(?:\s*(?:,|&|and)\s*[\d.]+)*\s*\)?$", "", t)   # (Note 4), Note 4.1
+    return t.strip(" :;.")
+
+
+@lru_cache(maxsize=1)
+def financial_statements() -> dict:
+    d = _read("financial_statements.json")
+    statements = {s["id"] for s in d["statements"]}
+    for s in d["statements"]:
+        re.compile(s["title"], re.I)
+    for b in d["bases"] + d["standards"]:
+        re.compile(b["cues"], re.I)
+    re.compile(d["scales"]["whole_units"])
+    re.compile(d["periods"]["not_periods"], re.I)
+    ids, tags, labels = set(), {}, {}
+    for c in d["concepts"]:
+        where = f"financial_statements.json: concept {c['id']}"
+        if c["id"] in ids:
+            raise ValueError(f"{where} appears twice")
+        ids.add(c["id"])
+        if c["statement"] not in statements or c["kind"] not in d["kinds"]:
+            raise ValueError(f"{where}: unknown statement or kind")
+        for t in c["tags"]:
+            if t in tags:
+                raise ValueError(f"{where}: tag {t} is also given to {tags[t]}")
+            tags[t] = c["id"]
+        for label in c["labels"]:
+            key = (c["statement"], label_key(label))
+            if key in labels and labels[key] != c["id"]:
+                raise ValueError(f"{where}: label '{label}' is also a label of {labels[key]}")
+            labels[key] = c["id"]
+    for r in d["rules"]:
+        names = [r["total"], *(p.lstrip("-?") for parts in [r["parts"], *r.get("or", [])] for p in parts), *r.get("unless", [])]
+        if unknown := [n for n in names if n not in ids]:
+            raise ValueError(f"financial_statements.json: rule {r['id']} names unknown concepts {unknown}")
+    d["_patterns"] = {}
+    for cid, pattern in d.get("patterns", {}).items():
+        if cid == "note":
+            continue
+        if cid not in ids:
+            raise ValueError(f"financial_statements.json: pattern for unknown concept {cid}")
+        d["_patterns"][cid] = re.compile(pattern, re.I)
+    d["_by_tag"], d["_by_label"] = tags, labels
+    d["_concepts"] = {c["id"]: c for c in d["concepts"]}
+    return d
+
+
 def predicate(pid: str) -> dict:
     return next(p for p in company_events()["predicates"] if p["id"] == pid)
 

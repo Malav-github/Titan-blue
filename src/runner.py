@@ -27,7 +27,7 @@ import tracing
 from skills.temporal import clock as tclock, freshness, intent as tintent, setting as temporal_setting
 from skills.temporal.display import short_date
 from skills.temporal import periods as tperiods
-from skills import edgar, planning, writing
+from skills import edgar, planning, statements, writing
 from skills.planning import sense as common_sense
 from skills.temporal.extract import DateFact, best_date, parse_date
 import corroboration
@@ -1015,7 +1015,22 @@ class Runner:
         return {"new_sources": list(s.get("backlog") or []) + new_sources, "backlog": [], "fetches_used": fetches,
                 "fetched_keys": keys, "warnings": warnings, "fetch_failures": s["fetch_failures"] + failed}
 
+    def _read_statements(self, s: State, sha: str, url: str, text: str = "", market: str | None = None) -> None:
+        """Financial statements in a document are read by code (skills/statements), never by the model, and recorded with
+        every value, period and check. Only documents that are filings or that title a statement are read."""
+        if not (market == "US" or statements.titles_a_statement(text)):
+            return
+        try:
+            summary = statements.read_source(self.store, sha, url, market)
+        except Exception as exc:                       # a table the reader cannot handle must not stop the run
+            self.runs.emit(s["run_id"], "fetch", "statements_failed", {"url": url, "error": f"{type(exc).__name__}: {str(exc)[:200]}"})
+            return
+        if summary.get("ok") and summary["statements"]:
+            self.runs.emit(s["run_id"], "fetch", "statements_read", {"url": url, "source_sha256": sha, **{
+                k: summary[k] for k in ("tables", "statements", "market")}})
+
     def _fetched_event(self, s: State, url: str, sha: str, text: str, cand: dict) -> None:
+        self._read_statements(s, sha, url, text)
         self._record_hit_date(sha, cand.get("published"))
         facts = self._source_dates(sha)
         best = best_date(facts)
@@ -1258,6 +1273,7 @@ class Runner:
                     read.append(sha)
                     self.runs.emit(rid, "api_lookup", "edgar_document_read", {"url": url, "form": f["form"], "filed": f["filed"],
                                                                              "items": f["items"], "source_sha256": sha})
+                    self._read_statements(s, sha, url, market="US")
             return list(dict.fromkeys(read + history + [listing])), calls, cik
         except Exception as exc:
             self.runs.emit(rid, "api_lookup", "edgar_failed", {"error": f"{type(exc).__name__}: {str(exc)[:200]}"})
