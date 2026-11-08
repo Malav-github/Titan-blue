@@ -24,6 +24,7 @@ class Cell:
     text: str
     fact: dict | None = None        # an inline XBRL fact in the cell: name, context, unit, decimals, scale, sign, id, value, period, dims
     header: bool = False            # a <th>, or a cell the source marks as a heading
+    ocr: dict | None = None         # a scanned cell: both engines' readings and confidences, whether they agree, where on the page
 
 
 @dataclass
@@ -66,6 +67,10 @@ class Value:
     full: Decimal | None            # the amount in units (scale applied), None when the scale is not stated
     unit: str                       # a currency code, 'per_share', 'shares', 'ratio' or '' when unknown
     fact: dict | None = None
+    ocr: dict | None = None
+    verdict: str = ""               # verified | agreed | doubt | read  (set by grade() after the checks)
+    reasons: list = field(default_factory=list)      # why it is in doubt
+    notes: list = field(default_factory=list)        # what was noticed but settled (an engine misread, settled by a sum)
 
 
 @dataclass
@@ -95,7 +100,7 @@ class Table:
 _NOTE_HEADER = re.compile(r"^\s*notes?\s*$|^\s*note\s*(?:no\.?|ref\.?)\s*$", re.I)
 _DATE_WORDS = (r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|"
                r"Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)")
-_DATE_IN = re.compile(rf"{_DATE_WORDS}\.?\s+\d{{1,2}},?\s+\d{{4}}|\d{{1,2}}\s+{_DATE_WORDS}\.?,?\s+\d{{4}}|"
+_DATE_IN = re.compile(rf"{_DATE_WORDS}\.?\s+\d{{1,2}}(?:,\s*|\s+)\d{{4}}|\d{{1,2}}\s+{_DATE_WORDS}\.?,?\s+\d{{4}}|"
                       r"\b\d{1,2}[./-]\d{1,2}[./-]\d{4}\b|\b\d{4}-\d{2}-\d{2}\b", re.I)
 _MONTH_DAY = re.compile(rf"({_DATE_WORDS}\.?\s+\d{{1,2}})(?!\d),?(?!\s*\d{{4}})", re.I)
 _YEAR = re.compile(r"(?<![\d.,])(?:19|20)\d{2}(?![\d.,])")
@@ -326,11 +331,6 @@ def interpret(raw: RawTable, decimal_mark: str | None = None, fiscal_year_end: s
             col.label = col.label if col.label and col.label != col.header else _period_label(col)
         columns.append(col)
 
-    if statement_hint := _statement_of(" ".join(raw.caption.split()))[0]:
-        if next(s for s in onto["statements"] if s["id"] == statement_hint)["period"] == "instant":
-            for col in columns:
-                if col.kind == "duration" and col.end and col.origin != "xbrl":
-                    col.kind, col.start, col.months = "instant", None, None    # "Fiscal Year Ended Dec 31, 2024" over a balance sheet: at that date
     caption = " ".join(raw.caption.split())
     context = f"{caption} {' '.join(header_text(j) for j in value_cols)} " + " ".join(c.text for r in head_rows for c in r[:1])
     statement, title = _statement_of(caption) if caption else (None, "")
@@ -406,7 +406,17 @@ def interpret(raw: RawTable, decimal_mark: str | None = None, fiscal_year_end: s
             row.concept, row.concept_origin = cid, "label"
     _one_row_per_concept(rows)
 
+    if statement and next(s for s in onto["statements"] if s["id"] == statement)["period"] == "instant":
+        for col in columns:
+            if col.kind == "duration" and col.end and col.origin != "xbrl":
+                # "Fiscal Year Ended Dec 31, 2024" or "Six months ended Sep 30, 2025" over a balance sheet: at that date
+                col.kind, col.start, col.months = "instant", None, None
     table = Table(raw, statement or "other", title, basis, standard, scale, columns, rows, primary=primary)
+    if primary and statement != "equity":
+        unread = [c for c in columns if c.kind == "unknown" or (c.kind != "change" and not c.end)]
+        if unread:
+            table.notes.append(f"{len(unread)} column(s) without a readable period ({', '.join(repr(c.header[:40]) for c in unread)}): "
+                               "their figures are not usable until a person settles the period")
     if scale is None or scale.factor is None:
         table.notes.append("the table does not state its scale, so its values are kept as printed and not as amounts")
 
@@ -433,7 +443,7 @@ def interpret(raw: RawTable, decimal_mark: str | None = None, fiscal_year_end: s
             else:
                 full = a.value * scale.factor if scale and scale.factor is not None else None
                 unit = currency or ""
-            table.values.append(Value(row.index, col.index, a, full, unit, fact))
+            table.values.append(Value(row.index, col.index, a, full, unit, fact, cell.ocr))
     return table
 
 

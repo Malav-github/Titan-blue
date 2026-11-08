@@ -62,6 +62,108 @@ def run(table: Table) -> list[Check]:
     return out
 
 
+VERDICTS = {
+    "verified": "inside a sum that adds up" + "; for a scanned page, both OCR engines read it the same",
+    "agreed": "scanned page: both OCR engines read it the same, confidently, but no sum covers this line",
+    "read": "text layer or XBRL, not covered by any sum",
+    "doubt": "not to be used until a person has looked at it",
+}
+
+
+def grade(table: Table) -> None:
+    """Give every value a verdict, with reasons, after the checks have run:
+      verified  - inside a sum that adds up (and, if scanned, both OCR engines read it the same, confidently)
+      agreed    - scanned; both engines read it the same, confidently; no sum covers it
+      read      - text layer or XBRL; no sum covers it
+      doubt     - the engines disagree, only one read it, either was unsure, its grouping or decimals are wrong for its
+                  column, or it is in a sum that does not add up. Said loudly, never used silently."""
+    covered: dict[tuple[int, int], list[Check]] = {}
+    members: dict[int, list] = {}
+    for c in table.checks:
+        for name in [*c.detail["parts"], *_totals(c.rule)]:
+            for r in table.by_concept(name):
+                covered.setdefault((r.index, c.column), []).append(c)
+                if (v := table.value_at(r.index, c.column)) is not None:
+                    members.setdefault(id(c), []).append(v)
+    decimals = _column_decimals(table)
+    for v in table.values:
+        engines = _ocr_doubts(v.ocr) if v.ocr else []          # disagreement, one engine only, an unsure engine
+        reasons = []
+        if v.ocr:
+            if not valid_grouping(v.amount.raw):
+                reasons.append(f"digit grouping '{v.amount.raw}' is neither Western (1,234,567) nor Indian (12,34,567)")
+            if (d := decimals.get(v.col)) is not None and v.unit not in ("per_share", "ratio", "shares") and v.amount.decimals != d:
+                reasons.append(f"{v.amount.decimals} decimal places where the column prints {d}")
+        col = next((c for c in table.columns if c.index == v.col), None)
+        if table.primary and table.statement != "equity" and col and col.kind != "change" and not col.end:
+            reasons.append(f"its column's period could not be read ('{col.header[:40]}')")
+        checks_here = covered.get((v.row, v.col), [])
+        reasons += [f"in a sum that does not add up ({c.rule}: printed {c.expected}, parts give {c.computed})"
+                    for c in checks_here if c.verdict == "fail"]
+        # A sum that adds up settles one unconfirmed figure in it: with every other figure read the same by both engines,
+        # this one is the only unknown, and the arithmetic fixes it. Two unconfirmed figures could hide each other's error.
+        settled_by = next((c for c in checks_here if c.verdict == "pass"
+                           and all(o is v or not o.ocr or (o.ocr.get("agree") and not _ocr_doubts(o.ocr)) for o in members.get(id(c), []))), None)
+        v.notes = []
+        if engines and settled_by and not reasons:
+            v.notes = engines + [f"settled by arithmetic ({settled_by.rule} adds up, every other figure in it read the same by both engines)"]
+        elif engines:
+            reasons = engines + reasons
+        v.reasons = reasons
+        v.verdict = ("doubt" if reasons else "verified" if any(c.verdict == "pass" for c in checks_here)
+                     else "agreed" if v.ocr else "read")
+        if v.verdict == "doubt" and v.ocr and not v.ocr.get("agree"):
+            v.full = None          # two readings, or one, and nothing settles it: no amount until a person does
+
+
+def _totals(rule_id: str) -> list[str]:
+    from ontology import financial_statements
+    return [r["total"] for r in financial_statements()["rules"] if r["id"] == rule_id]
+
+
+def _ocr_doubts(o: dict) -> list[str]:
+    from .ocr import MIN_CONFIDENCE
+    out = []
+    if o.get("note"):
+        out.append(o["note"])
+    t, r = o.get("tesseract"), o.get("rapidocr")
+    if t is None or r is None:
+        out.append(f"read by one OCR engine only ({'tesseract' if t else 'rapidocr'}: '{t or r}')")
+    elif not o.get("agree"):
+        out.append(f"the OCR engines disagree (tesseract '{t}', rapidocr '{r}')")
+    for engine, floor in MIN_CONFIDENCE.items():
+        conf = (o.get("conf") or {}).get(engine)
+        if conf is not None and conf < floor:
+            out.append(f"{engine} unsure ({conf:.2f})")
+    return out
+
+
+def valid_grouping(text: str) -> bool:
+    """1,234,567 (Western) and 12,34,567 (Indian) are valid; 1,2345 or 12,345,67 are not (a lost or extra digit)."""
+    import re
+    t = re.sub(r"[()\s$₹₱%+\-−]|Rs\.?", "", text)
+    whole = re.split(r"\.(?=\d+$)", t)[0]
+    if "," not in whole:
+        return True
+    groups = whole.split(",")
+    western = 1 <= len(groups[0]) <= 3 and all(len(g) == 3 for g in groups[1:])
+    indian = len(groups[-1]) == 3 and 1 <= len(groups[0]) <= 2 and all(len(g) == 2 for g in groups[1:-1])
+    return western or indian
+
+
+def _column_decimals(table: Table) -> dict[int, int]:
+    """The decimal places a column prints for amounts, when at least three quarters of its amounts agree."""
+    out = {}
+    for col in table.columns:
+        ds = [v.amount.decimals for v in table.values if v.col == col.index and v.unit not in ("per_share", "ratio", "shares")
+              and v.amount.value != 0]
+        if len(ds) >= 4:
+            top = max(set(ds), key=ds.count)
+            if ds.count(top) >= 0.75 * len(ds):
+                out[col.index] = top
+    return out
+
+
 def _parts(table: Table, way: list[str], col: int) -> list | None:
     parts = []
     for p in way:

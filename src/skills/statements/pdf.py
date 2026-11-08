@@ -27,12 +27,20 @@ MAX_PAGES = 400
 
 
 def _lines(words: list[dict]) -> list[list[dict]]:
+    """Words grouped into printed lines. Two words are on one line when their heights overlap by half the smaller one, so a
+    slightly skewed scan ("March 31, 2025" printed 3 points lower than the dates beside it) still reads as one line."""
     lines: list[list[dict]] = []
+    spans: list[list[float]] = []
     for w in sorted(words, key=lambda w: (round(w["top"]), w["x0"])):
-        if lines and abs(lines[-1][0]["top"] - w["top"]) <= LINE_TOLERANCE:
-            lines[-1].append(w)
-        else:
-            lines.append([w])
+        bottom = w.get("bottom", w["top"] + 8)
+        if lines:
+            top, bot = spans[-1]
+            overlap = min(bot, bottom) - max(top, w["top"])
+            if overlap >= 0.5 * min(bot - top, bottom - w["top"]) or abs(top - w["top"]) <= LINE_TOLERANCE:
+                lines[-1].append(w)
+                continue
+        lines.append([w])
+        spans.append([w["top"], bottom])
     return [sorted(line, key=lambda w: w["x0"]) for line in lines]
 
 
@@ -48,7 +56,7 @@ def _is_value(p: dict, line_text: str) -> bool:
     if not p["num"]:
         return False
     t = p["text"].strip()
-    return not (re.fullmatch(r"(?:19|20)\d{2}|\d{1,2},?", t) and _DATE_LINE.search(line_text))
+    return not (re.fullmatch(r"(?:19|20)\d{2}|\d{1,2},?|\d{1,2}[.,]\s?(?:19|20)\d{2}", t) and _DATE_LINE.search(line_text))
 
 
 def _phrases(line: list[dict]) -> list[dict]:
@@ -64,8 +72,10 @@ def _phrases(line: list[dict]) -> list[dict]:
         elif out and num and out[-1]["num"] and w["x0"] - out[-1]["x1"] <= 1.0:
             out[-1]["text"] += w["text"]                  # "(15,237," "703)" split by the PDF: one number
             out[-1]["x1"] = w["x1"]
+            if out[-1].get("ocr") is not None or w.get("ocr") is not None:
+                out[-1]["ocr"] = _joined_reading(out[-1].get("ocr"), w.get("ocr"))
         else:
-            out.append({"text": w["text"], "x0": w["x0"], "x1": w["x1"], "top": w["top"], "num": num})
+            out.append({"text": w["text"], "x0": w["x0"], "x1": w["x1"], "top": w["top"], "num": num, "ocr": w.get("ocr")})
     for p in out:
         if not p["num"]:
             continue
@@ -74,6 +84,17 @@ def _phrases(line: list[dict]) -> list[dict]:
     for p in out:
         p["value"] = _is_value(p, text)
     return out
+
+
+def _joined_reading(a: dict | None, b: dict | None) -> dict | None:
+    """Two OCR'd pieces joined into one number ("(15,237," "703)"): it agrees only if both pieces did."""
+    if a is None and b is None:
+        return None
+    parts = [x for x in (a, b) if x]
+    return {"tesseract": "".join(x.get("tesseract") or "?" for x in parts), "rapidocr": "".join(x.get("rapidocr") or "?" for x in parts),
+            "conf": {k: min((x["conf"][k] for x in parts if x["conf"].get(k) is not None), default=None) for k in ("tesseract", "rapidocr")},
+            "agree": all(x.get("agree") for x in parts) and len(parts) == 2, "text": "".join(x["text"] for x in parts),
+            "page_box": parts[0].get("page_box")}
 
 
 def _columns(lines: list[list[dict]]) -> list[float]:
@@ -142,7 +163,13 @@ def _grid(lines: list[list[dict]]) -> tuple[list[list[Cell]], int] | None:
     # Column headers are the lines just above the first row of numbers; anything further up (a title, a callout graphic with
     # "Rs 442 crores  5.2% YoY") is caption, not a header
     head_from = first_data
-    while head_from > 0 and lines[head_from][0]["top"] - lines[head_from - 1][0]["top"] <= HEADER_BLOCK_GAP:
+    def over_columns(line):            # the words of a line printed above the columns (not in the label area)
+        return " ".join(w["text"] for w in line if w["x1"] >= extent[0][0] - COLUMN_TOLERANCE)
+
+    # "(In Rs crores)  Q2 FY26  Q2 FY25" is a header line with the scale in the label area; "(in INR Lakhs)" or "VTM Limited"
+    # printed over the columns is a caption line, and the header block starts below it
+    while (head_from > 0 and lines[head_from][0]["top"] - lines[head_from - 1][0]["top"] <= HEADER_BLOCK_GAP
+           and not _caption_like(over_columns(lines[head_from - 1]))):
         head_from -= 1
     rows: list[list[Cell]] = []
     left_edge = extent[0][0]
@@ -164,12 +191,13 @@ def _grid(lines: list[list[dict]]) -> tuple[list[list[Cell]], int] | None:
         if i < first_data:
             line = _header_phrases(lines[i])
             heads = [p for p in line if p["x1"] - p["x0"] <= TITLE_WIDTH and not find_scale(p["text"])
-                     and p["x1"] >= extent[0][0] - HEADER_REACH / 2]
+                     and p["x1"] >= extent[0][0] - HEADER_REACH / 2
+                     and (len(p["text"].strip(" .:-~")) >= 3 or any(c.isdigit() for c in p["text"]))]   # OCR specks ("a", "oa") are not headers
             over = _over(heads, extent)
             for k, p in over.items():
                 row[k + 1].text = (row[k + 1].text + " " + p["text"]).strip()
                 row[k + 1].header = True
-            used = {id(p) for p in over.values()}
+            used = {id(p) for p in over.values()} | {id(p) for p in heads if any(p["text"] in q["text"] for q in over.values())}
             row[0].text = " ".join(p["text"] for p in line if id(p) not in used)
             rows.append(row)
             continue
@@ -177,7 +205,13 @@ def _grid(lines: list[list[dict]]) -> tuple[list[list[Cell]], int] | None:
             if p["value"] and not header:
                 k = _nearest(p["x1"], cols, COLUMN_TOLERANCE * 1.5)
                 if k is not None and not _is_label_number(p, line):
-                    row[k + 1].text = (row[k + 1].text + " " + p["text"]).strip()
+                    cell = row[k + 1]
+                    if cell.text and (cell.ocr or p.get("ocr")):
+                        # two OCR'd numbers in one cell: never pick one
+                        cell.ocr = {**(p.get("ocr") or cell.ocr), "agree": False, "note": "two numbers read into one cell"}
+                    elif p.get("ocr"):
+                        cell.ocr = p["ocr"]
+                    cell.text = (cell.text + " " + p["text"]).strip()
                     continue
             row[0].text = (row[0].text + " " + p["text"]).strip()
         rows.append(row)
@@ -204,10 +238,27 @@ def _header_phrases(words: list[dict]) -> list[dict]:
     return out
 
 
+_COMPANY_LINE = re.compile(r"\b(?:limited|ltd\.?|corporation|incorporated|inc\.|plc|regd\.?|registered office|cin\s*:|website|"
+                           r"tel\.?|e-?mail)\b", re.I)
+
+
+def _caption_like(text: str) -> bool:
+    """A line above the table that is its title, company line or scale line, not a column header."""
+    return bool(_titled(text) or find_scale(text) or _COMPANY_LINE.search(text) or _CAPTION_LINE.match(text.strip()))
+
+
 def _over(heads: list[dict], extent: list[tuple[float, float]]) -> dict[int, dict]:
-    """Which header phrase of one line each column sits under: the nearest one, within reach. A phrase centred over two
-    columns ("Six-month periods ended June" over "2025  2024") is then the header of both; a year over one column, of that one."""
+    """Which header phrase of one line each column sits under. When the line has a header for every column ("Sep 30, 2025"
+    ... "March 31, 2025") each goes to its nearest column, one to one. When it has fewer ("Quarter ended  Six months ended
+    Year ended" over six columns), each column takes the nearest, so a header spans the columns grouped under it."""
     out = {}
+    if len(heads) >= len(extent):
+        centres = [(a + b) / 2 for a, b in extent]
+        for p in heads:
+            k = _nearest((p["x0"] + p["x1"]) / 2, centres, HEADER_REACH)
+            if k is not None:
+                out[k] = {**p, "text": f"{out[k]['text']} {p['text']}"} if k in out else p
+        return out
     for k, (a, b) in enumerate(extent):
         centre = (a + b) / 2
         best = min(heads, key=lambda p: abs((p["x0"] + p["x1"]) / 2 - centre), default=None)
@@ -217,9 +268,15 @@ def _over(heads: list[dict], extent: list[tuple[float, float]]) -> dict[int, dic
     return out
 
 
-def tables(body: bytes) -> list[RawTable]:
-    """Every statement-like table in a PDF's text layer, page by page, with pages that continue a statement joined to it."""
+def tables(body: bytes, report: dict | None = None, max_ocr_pages: int = 40) -> list[RawTable]:
+    """Every statement-like table in a PDF, page by page, with pages that continue a statement joined to it. A page with
+    no text layer is read by two OCR engines (ocr.py); `report` records which pages were OCR'd, and which could not be
+    read and why, so a scanned document is never silently empty."""
     import pdfplumber
+    from . import ocr
+    report = report if report is not None else {}
+    report.setdefault("ocr_pages", [])
+    report.setdefault("unread_pages", [])
     out: list[RawTable] = []
     try:
         pdf = pdfplumber.open(io.BytesIO(body))
@@ -227,9 +284,21 @@ def tables(body: bytes) -> list[RawTable]:
         return []
     with pdf:
         for page_no, page in enumerate(pdf.pages[:MAX_PAGES], start=1):
+            scanned = ocr.needs_ocr(page)
             try:
-                words = page.extract_words(x_tolerance=1.5, y_tolerance=2, keep_blank_chars=False)
-            except Exception:
+                if scanned:
+                    if len(report["ocr_pages"]) >= max_ocr_pages:
+                        report["unread_pages"].append({"page": page_no, "reason": f"over the {max_ocr_pages}-page OCR limit"})
+                        continue
+                    words = ocr.read_page(body, page_no - 1)
+                    report["ocr_pages"].append(page_no)
+                else:
+                    words = page.extract_words(x_tolerance=1.5, y_tolerance=2, keep_blank_chars=False)
+            except ocr.OcrUnavailable as exc:
+                report["unread_pages"].append({"page": page_no, "reason": f"scanned page, OCR unavailable: {exc}"})
+                continue
+            except Exception as exc:
+                report["unread_pages"].append({"page": page_no, "reason": f"{type(exc).__name__}: {str(exc)[:120]}"})
                 continue
             if not words:
                 continue
@@ -246,5 +315,5 @@ def tables(body: bytes) -> list[RawTable]:
                     prev.rows.extend(grid[first_data:])                    # the statement continues on this page
                     prev.locator["last_page"] = page_no
                     continue
-                out.append(RawTable(grid, cap or caption, {"page": page_no, "table": n, "last_page": page_no}, "pdf"))
+                out.append(RawTable(grid, cap or caption, {"page": page_no, "table": n, "last_page": page_no}, "pdf_ocr" if scanned else "pdf"))
     return out

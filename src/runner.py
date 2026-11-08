@@ -997,6 +997,8 @@ class Runner:
                     text = Path(self.store.get_source(sha)["text_path"]).read_text(encoding="utf-8")
                     self.runs.emit(rid, "fetch", "source_rendered", {"url": url, "readable_chars": len(text.strip())})
                 if len(text.strip()) < MIN_READABLE_CHARS:
+                    if self.store.get_source(sha)["content_type"] == "application/pdf":
+                        self._read_statements(s, sha, url, force=True)     # a scanned report: its tables can still be read by OCR
                     raise RuntimeError(f"only {len(text.strip())} readable characters (scanned PDF or empty page)")
             except Exception as exc:
                 warnings.append(f"could not use {url}: {exc}")
@@ -1015,19 +1017,25 @@ class Runner:
         return {"new_sources": list(s.get("backlog") or []) + new_sources, "backlog": [], "fetches_used": fetches,
                 "fetched_keys": keys, "warnings": warnings, "fetch_failures": s["fetch_failures"] + failed}
 
-    def _read_statements(self, s: State, sha: str, url: str, text: str = "", market: str | None = None) -> None:
+    def _read_statements(self, s: State, sha: str, url: str, text: str = "", market: str | None = None, force: bool = False) -> None:
         """Financial statements in a document are read by code (skills/statements), never by the model, and recorded with
-        every value, period and check. Only documents that are filings or that title a statement are read."""
-        if not (market == "US" or statements.titles_a_statement(text)):
+        every value, period, check and verdict. Only filings, scanned PDFs and documents that title a statement are read.
+        Figures in doubt, and scanned pages that could not be read, are reported as their own event, loudly."""
+        if not (force or market == "US" or statements.titles_a_statement(text)):
             return
         try:
             summary = statements.read_source(self.store, sha, url, market)
         except Exception as exc:                       # a table the reader cannot handle must not stop the run
             self.runs.emit(s["run_id"], "fetch", "statements_failed", {"url": url, "error": f"{type(exc).__name__}: {str(exc)[:200]}"})
             return
-        if summary.get("ok") and summary["statements"]:
+        if not summary.get("ok"):
+            return
+        if summary["statements"]:
             self.runs.emit(s["run_id"], "fetch", "statements_read", {"url": url, "source_sha256": sha, **{
-                k: summary[k] for k in ("tables", "statements", "market")}})
+                k: summary[k] for k in ("tables", "statements", "market", "ocr_pages")}})
+        if summary["doubts"] or summary["unread_pages"]:
+            self.runs.emit(s["run_id"], "fetch", "statements_doubt", {"url": url, "source_sha256": sha, **{
+                k: summary[k] for k in ("doubts", "doubt_count", "unread_pages")}})
 
     def _fetched_event(self, s: State, url: str, sha: str, text: str, cand: dict) -> None:
         self._read_statements(s, sha, url, text)

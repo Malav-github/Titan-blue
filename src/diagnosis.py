@@ -39,7 +39,8 @@ def diagnose(events: list[dict]) -> list[dict]:
             if e["type"] != c["event"]:
                 continue
             if c.get("field"):
-                items = [str(x) for x in e["payload"].get(c["field"]) or []]
+                items = [x.get("summary") or json.dumps(x, default=str) if isinstance(x, dict) else str(x)
+                         for x in e["payload"].get(c["field"]) or []]
                 if not items:
                     continue
                 examples, n = items, len(items)

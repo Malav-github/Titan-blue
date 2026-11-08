@@ -127,7 +127,21 @@ with what Titan already does about it and what could be done next (`definitions/
   - *PDF reports* with a text layer (Indian results, Philippine 17-Q and 17-A): columns are found where numbers' right edges
     line up, headers are placed over the columns they span, notes columns and wrapped labels are recognised, a statement that
     runs onto the next page is joined, and an unlabelled total is named after its section only when code has checked that it
-    is the sum of the section's lines. Scanned PDFs give nothing (they need OCR, whose values are not trusted unreviewed).
+    is the sum of the section's lines.
+  - *Scanned PDFs*: each page with no text layer is read by **two OCR engines in parallel**, Tesseract and RapidOCR
+    (PaddleOCR's models through ONNX; both Apache 2.0, both local). RapidOCR gives the layout (it reads shaded header bands
+    that defeat Tesseract); every number must be read the same by both, character for character. The words then go through
+    the same table reader and checks as any PDF. Tesseract is a Windows program: `winget install UB-Mannheim.TesseractOCR`
+    (or set `TITAN_TESSERACT`); without it scanned pages are listed as unread, never silently skipped.
+  - Every figure gets a verdict. **verified**: inside a sum that adds up and, if scanned, read the same by both engines;
+    **agreed**: scanned, read the same by both, confidently, but no sum covers it; **read**: text layer or XBRL, no sum
+    covers it; **doubt**: the engines disagree, only one read it, one was unsure, its grouping or decimals are wrong for its
+    column, it sits in a sum that does not add up, or its column's period could not be read. One unconfirmed figure in a sum
+    that adds up, with every other figure confirmed, is settled by the arithmetic (and says so); two are not. A doubtful
+    figure keeps both readings and its place on the page, is left out of the index, and is reported in the run
+    (`statements_doubt`, and in *Why parts of this run failed*). On a real scanned Indian results page (VTM Limited, Q2 FY26)
+    the pair caught Tesseract reading 1,071.38 as 4,071.38 and 152.84 as 162.84, and RapidOCR reading 7,316.94 as
+    "7.316.94", which also broke its sum.
   - Numbers as markets print them: 12,34,567, 1.234.567,89, brackets and dashes, lakh and crore, Arabic-Indic digits; a
     lone "1.234" is left unread unless the market's decimal mark settles it.
   - Periods are read, never invented: "Sept'25" stays at month precision; "Q2 FY26" is dated only where the law fixes the

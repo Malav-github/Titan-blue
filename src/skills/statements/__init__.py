@@ -30,15 +30,15 @@ def manifest() -> dict:
     return json.loads((PROJECT_ROOT / "definitions" / "skills" / "statements.json").read_text(encoding="utf-8"))
 
 
-def raw_tables(body: bytes, content_type: str = ""):
+def raw_tables(body: bytes, content_type: str = "", report: dict | None = None):
     if content_type == "application/pdf" or body[:5] == b"%PDF-":
-        return pdf.tables(body)
+        return pdf.tables(body, report, manifest()["settings"]["max_ocr_pages"])
     if "html" in content_type or "xml" in content_type or body.lstrip()[:1] == b"<":
         return html.tables(body)
     return []
 
 
-def extract(body: bytes, content_type: str = "", market: str | None = None) -> list[Table]:
+def extract(body: bytes, content_type: str = "", market: str | None = None, report: dict | None = None) -> list[Table]:
     """Every table with values, interpreted, with its checks in `table.checks`. A statement that does not state its scale
     takes the one the same document states on another statement printed under the same heading, said in its notes; it is
     never given one otherwise. `market` (US, IN, PH) brings the market's conventions: its decimal mark and, where the law
@@ -47,7 +47,7 @@ def extract(body: bytes, content_type: str = "", market: str | None = None) -> l
     decimal_mark = settings["decimal_mark_by_market"].get(market or "")
     fye = settings["fiscal_year_end_by_market"].get(market or "")
     out = []
-    for raw in raw_tables(body, content_type):
+    for raw in raw_tables(body, content_type, report):
         t = interpret(raw, decimal_mark, fye)
         if t is not None:
             out.append(t)
@@ -57,6 +57,7 @@ def extract(body: bytes, content_type: str = "", market: str | None = None) -> l
             date_fiscal_columns(t, fye, f"the document's currency ({found})")
     for t in out:
         t.checks = checks.run(t)
+        checks.grade(t)
     return out
 
 
@@ -106,16 +107,33 @@ def read_source(store, source_sha256: str, url: str = "", market: str | None = N
     if hashlib.sha256(body).hexdigest() != source_sha256:
         return {"ok": False, "reason": "archive file no longer matches its hash"}
     market = market or market_of_host(url or src["final_url"])
-    tables = [t for t in extract(body, src["content_type"] or "", market) if t.primary or t.values]
+    report: dict = {}
+    tables = [t for t in extract(body, src["content_type"] or "", market, report) if t.primary or t.values]
     keep = [t for t in tables if t.primary] + [t for t in tables if not t.primary][:manifest()["settings"]["max_other_tables"]]
     ids = store.record_statements(source_sha256, keep, VERSION)
     primary = [t for t in keep if t.primary]
+    doubts = [doubt_row(t, v) for t in primary for v in t.values if v.verdict == "doubt"]
     return {"ok": True, "tables": len(keep), "statements": [
         {"statement": t.statement, "title": t.title, "basis": t.basis, "currency": t.scale.currency if t.scale else None,
-         "scale": t.scale.raw if t.scale else None, "locator": t.raw.locator,
+         "scale": t.scale.raw if t.scale else None, "locator": t.raw.locator, "reading": t.raw.adapter,
          "periods": [c.label for c in t.columns if c.kind != "change"],
          "checks_passed": sum(c.verdict == "pass" for c in t.checks), "checks_failed": sum(c.verdict == "fail" for c in t.checks),
-         "notes": t.notes} for t in primary], "table_ids": ids, "market": market}
+         "verdicts": {k: sum(v.verdict == k for v in t.values) for k in ("verified", "agreed", "read", "doubt")},
+         "notes": t.notes} for t in primary], "table_ids": ids, "market": market,
+        "doubt_count": len(doubts), "doubts": doubts[:manifest()["settings"]["max_doubts_reported"]],
+        "ocr_pages": report.get("ocr_pages", []), "unread_pages": report.get("unread_pages", [])}
+
+
+def doubt_row(t: Table, v) -> dict:
+    """One figure in doubt, said so a person can check it: where it is, what each reader saw, and why it is doubted."""
+    row = next(r for r in t.rows if r.index == v.row)
+    col = next(c for c in t.columns if c.index == v.col)
+    where = f", page {t.raw.locator['page']}" if t.raw.locator.get("page") else ""
+    return {"summary": f"{row.label or '(unlabelled line)'}, {col.label or 'period unread'}{where}: printed '{v.amount.raw}'; "
+                       f"{'; '.join(v.reasons)}",
+            "statement": t.statement, "line": row.label, "period": col.label, "printed": v.amount.raw,
+            "readings": {k: v.ocr.get(k) for k in ("tesseract", "rapidocr")} if v.ocr else None,
+            "page": t.raw.locator.get("page"), "box": (v.ocr or {}).get("page_box"), "reasons": v.reasons}
 
 
 def _share_document_facts(tables: list[Table]) -> None:

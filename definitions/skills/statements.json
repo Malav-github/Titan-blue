@@ -6,6 +6,9 @@
   "settings": {
     "max_pdf_pages": 400,
     "max_other_tables": 40,
+    "max_ocr_pages": 40,
+    "max_doubts_reported": 40,
+    "ocr": "Scanned pages are read by Tesseract and RapidOCR in parallel (both Apache 2.0, both local). A figure is verified only when both engines read it the same, confidently, and it sits in a sum that adds up; agreed when both read it the same but no sum covers it; doubt otherwise, shown to the user with both readings and its place on the page.",
     "other_tables_note": "tables that are not titled statements (notes, segment tables) are kept up to this many per document: useful for the index, not trusted as statements",
     "market_by_host": {"sec.gov": "US", "in": "IN", "ph": "PH"},
     "market_by_currency": {"USD": "US", "INR": "IN", "PHP": "PH"},

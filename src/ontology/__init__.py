@@ -96,8 +96,12 @@ def label_key(text: str) -> str:
     """A printed row label reduced for matching: lower case, no note numbers, markers or trailing colons. "Total current
     assets:" , "TOTAL CURRENT ASSETS" and "(b) Total current assets" are one key."""
     t = _norm(text).replace("’", "'").replace("&amp;", "&")
-    t = re.sub(r"^(?:\(?[a-z]\)|\(?[ivx]{1,4}\)|[ivx]{1,4}\.|\d{1,2}[.)]|[-–•])\s+", "", t)      # (a) i. 1. - markers
+    for _ in range(3):                                                  # "1 (a) Net Sales": serial number, then item letter
+        t = re.sub(r"^(?:\(?[a-z]\)|\(?[ivx]{1,4}\)|[ivx]{1,4}\.|\d{1,2}[.)]|\d{1,2}(?=\s+[(a-z])|[-–•:])\s*", "", t)
+    t = t.strip(" :;.~=")
     t = re.sub(r"\s*\(?\s*(?:refer )?notes? [\d.]+(?:\s*(?:,|&|and)\s*[\d.]+)*\s*\)?$", "", t)   # (Note 4), Note 4.1
+    t = re.sub(r"\s*\(\s*\d+\s*(?:[+\-±]\s*\d+\s*)+\)\s*$", "", t)                           # (1+2), (7-8): how the line is worked out
+    t = re.sub(r"\s*/\s*", "/", t)                                                              # "Net Sales/ Income" = "Net Sales / Income"
     return t.strip(" :;.")
 
 

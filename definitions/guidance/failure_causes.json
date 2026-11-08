@@ -174,6 +174,24 @@
       "label": "The subject is not an SEC registrant under that name",
       "handled_by": "EDGAR is not read; the web carries on",
       "workaround": "give the ticker or the CIK in the question, or the SEC's registrant name (e.g. Alphabet for Google)"
+    },
+    {
+      "id": "statement_figure_in_doubt",
+      "kind": "source",
+      "event": "statements_doubt",
+      "field": "doubts",
+      "label": "Figures in a financial statement could not be confirmed (scanned page: the two OCR engines disagreed, only one read it, or one was unsure; or the figure is in a sum that does not add up, or its column's period could not be read)",
+      "handled_by": "the figure is kept with both readings and its place on the page, marked doubt, and left out of the figures answers are checked against",
+      "workaround": "a person checks the figure on the page; a cleaner copy of the document (the company's own PDF with a text layer, or its XBRL filing) replaces OCR entirely"
+    },
+    {
+      "id": "scanned_page_unread",
+      "kind": "source",
+      "event": "statements_doubt",
+      "field": "unread_pages",
+      "label": "Scanned pages that were not read",
+      "handled_by": "the pages are listed with the reason (OCR not installed, over the page limit, or unreadable)",
+      "workaround": "install Tesseract (winget install UB-Mannheim.TesseractOCR) or raise max_ocr_pages in definitions/skills/statements.json"
     }
   ]
 }
