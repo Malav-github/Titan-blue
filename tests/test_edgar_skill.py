@@ -169,6 +169,41 @@ def test_the_statements_in_a_filing_are_read_by_code_and_recorded_during_the_run
     assert [(v["value"], v["period_months"]) for v in revenue] == [("1200000000", 3), ("3400000000", 9)]
 
 
+def test_the_figures_claims_quote_are_checked_against_the_statements_and_labelled(env):
+    from runner import ExtractedClaim, Extraction
+    from tests.test_statements import RELEASE
+    right = "Acme reported revenue of $1.2 billion for the three months ended September 30, 2026."
+    wrong = "Acme said net income reached $900 million for the three months ended September 30, 2026."
+    runner, sec, _ = edgar_runner(env, Extraction=lambda p: Extraction(claims=[
+        ExtractedClaim(predicate="financials.revenue", value="$1.2 billion", claim="Acme's third-quarter revenue was $1.2 billion.",
+                       quote=right, needed_fact=1),
+        ExtractedClaim(predicate="financials.net_income", value="$900 million", claim="Acme's third-quarter net income was $900 million.",
+                       quote=wrong, needed_fact=1)]))
+    plain = sec.fetch
+
+    def fetch(url, max_chars=2000):
+        if url.endswith("acme3q-release.htm"):
+            sec.world.fetched.append(url)
+            body = RELEASE.replace(b"</body>", f"<p>{PAGE_TEXT} {right} {wrong}</p></body>".encode())
+            sha, path = archive_bytes(body, ".html")
+            return {"url": url, "final_url": url, "status": 200, "content_type": "text/html", "encoding": "utf-8", "method": "http",
+                    "fetched_at": utc_now(), "sha256": sha, "archive_path": path, "text": "", "truncated": False}
+        return plain(url, max_chars)
+
+    runner.fetch_fn = fetch
+    result = runner.start("What did Acme report for the third quarter?", budgets={"max_iterations": 1})
+    report = result["report"]
+    rows = {r["value"]: r for r in report["established"] if "sec.gov" in r["source_url"]}
+    assert rows["$1.2 billion"]["figures"][0]["verdict"] == "matches"
+    assert rows["$1.2 billion"]["figures_label"] == "matches the company's statements"
+    assert rows["$900 million"]["figures"][0]["verdict"] == "differs"
+    assert rows["$900 million"]["figures_label"].startswith("differs from the company's statements")
+    assert any("differ" in w and "financial statements" in w for w in report["warnings"])
+    assert any(d["id"] == "claim_figure_differs" for d in report["diagnosis"])
+    stored = env["store"].claim_figures_for(rows["$900 million"]["claim_id"])
+    assert stored[0]["verdict"] == "differs" and stored[0]["compared_with"]
+
+
 def test_a_company_that_is_not_an_sec_registrant_is_said_so_and_the_web_carries_on(env):
     from runner import Plan
     runner, sec, _ = edgar_runner(env, Plan=lambda p: Plan(subject="Zeta Labs", queries=["zeta pricing"], checklist=["Starter plan price"]))

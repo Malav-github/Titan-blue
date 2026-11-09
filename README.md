@@ -157,6 +157,19 @@ with what Titan already does about it and what could be done next (`definitions/
   - Stored append-only in the evidence store (`statement_tables`, `statement_values`, `statement_checks`) with each value's
     cell, period and source. `GET /api/evidence/sources/{sha}/statements` shows a document's statements;
     `GET /api/evidence/statements?concept=revenue&period_end=2026-09-30` is the index across documents.
+  - **Figures in sentences checked against the statements** (`skills/statements/figures.py`, code only). The statements
+    read for a run's subject index what the company reported; every figure a claim's quote states ("revenue rose 5.2% to
+    ₹4,767 crore in Q2 FY26") is read for its line item, period, scale, currency and written precision, and compared:
+    **matches** (equal at the precision written: $3.68 billion = 3,678 million), **differs** (same line item and period,
+    another figure, shown beside it), **matches a figure in doubt** (a scanned figure: double-check), **not covered**,
+    **found** (no period written: the statement figures it equals), or **not compared** (adjusted, segment, EBITDA, a
+    forecast, another currency). A percentage change is compared with the change the printed figures give, allowing for
+    their rounding. A fiscal quarter is placed only from the company's own financial year as its statements show it, and
+    how is said; "a year earlier" and "against ₹368 crore in Q2 FY25" give a figure its own period. Each claim in the report
+    carries its figure checks and a label; a figure that differs puts a warning in the report and a cause in *Why parts of
+    this run failed*. Recorded append-only (`claim_figures`; sources are linked to their company in `source_entities`).
+    `POST /api/evidence/figures/check` checks any text against a company's statements. The prose words are in the
+    ontology's `mentions`.
   - Where documents come from: SEC EDGAR for the US; for India and the Philippines, the companies' own investor pages. The
     exchange portals are not used: NSE's terms forbid automated collection, BSE's terms could not be read, and PSE EDGE allows
     personal, non-commercial use only. Their filings (NSE's are inline XBRL) would need the exchanges' written permission.

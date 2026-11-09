@@ -421,6 +421,35 @@ def create_app(registry: Registry | None = None, token: str | None = None,
         """One line item (revenue, total_assets, ...) across every document read: the index for checking figures."""
         return engine.store.find_values(concept, period_end)[:min(max(limit, 1), 1000)]
 
+    @app.get("/api/evidence/claims/{claim_id}/figures")
+    def evidence_claim_figures(claim_id: int):
+        """The figures in a claim's quote, as last checked against the company's statements."""
+        if engine.store.get_claim(claim_id) is None:
+            raise HTTPException(404, "No such claim")
+        return engine.store.claim_figures_for(claim_id)
+
+    class FigureCheck(BaseModel):
+        text: str
+        entity: str | None = None                  # the company whose statements are the index
+        source_sha256: list[str] = []              # or the documents whose statements are
+        context: str = ""
+
+    @app.post("/api/evidence/figures/check")
+    def evidence_figures_check(req: FigureCheck):
+        """Check the figures in any text against a company's financial statements (code; nothing is recorded)."""
+        from skills.statements import figures
+        entity_id = None
+        if req.entity:
+            found = engine.store.find_entity(req.entity)
+            if found is None:
+                raise HTTPException(404, "No such entity")
+            entity_id = found["entity_id"]
+        if entity_id is None and not req.source_sha256:
+            raise HTTPException(400, "Give an entity or source_sha256")
+        index = engine.store.statement_figures(entity_id=entity_id, source_sha256s=req.source_sha256)
+        return {"figures_indexed": len(index), "fiscal_year_end_month": figures.fiscal_year_end(index),
+                "results": figures.check(req.text[:20000], index, req.context[:4000])}
+
     # -- evidence stores: archive the live one and start a new one; browse archived ones (read only) -------
 
     def outside_blockers() -> list[str]:

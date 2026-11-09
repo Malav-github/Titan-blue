@@ -39,6 +39,9 @@ const DESCRIBE: Record<string, [string, Fmt]> = {
   api_skipped: ['Skipped a connector call', (p) => `${p.connector}.${p.endpoint}: ${short(p.reason, 120)}`],
   api_failed: ['A connector call failed', (p) => `${p.connector}.${p.endpoint}: ${short(p.error, 80)}`],
   capability_needed: ['Needs a data source', (p) => short(p.need, 120)],
+  statements_read: ['Read financial statements', (p) => `${short(p.url, 60)} · ${(p.statements ?? []).map((t: { statement: string }) => t.statement).join(', ')}`],
+  statements_doubt: ['Statement figures to double-check', (p) => `${p.doubt_count} figure${p.doubt_count === 1 ? '' : 's'} in doubt${(p.unread_pages ?? []).length ? ` · ${p.unread_pages.length} page(s) unread` : ''}`],
+  figures_checked: ['Checked figures against the statements', (p) => `claim #${p.claim_id}: ${p.label || Object.entries(p.counts ?? {}).map(([k, v]) => `${v} ${String(k).replace('_', ' ')}`).join(', ')}`],
   report_ready: ['Report written', () => ''],
   run_finished: ['Finished', () => ''],
   run_stopped: ['Stopped', (p) => short(p.reason, 100)],
@@ -53,7 +56,8 @@ export function describeEvent(e: RunEvent): { label: string; detail: string; ton
   const [label, fmt] = DESCRIBE[e.type] ?? [e.type.replace(/_/g, ' '), (p: RunEvent['payload']) => short(JSON.stringify(p), 120)]
   const tone = ['run_finished', 'approved', 'claim_recorded'].includes(e.type) ? 'ok'
     : ['run_failed', 'node_failed', 'source_failed', 'claim_rejected', 'llm_failed', 'api_failed'].includes(e.type) ? 'bad'
-    : ['awaiting_approval', 'capability_needed', 'domain_unconfirmed', 'api_skipped', 'claims_malformed'].includes(e.type) ? 'warn'
+    : e.type === 'figures_checked' ? ((e.payload.differs ?? []).length ? 'bad' : (e.payload.to_double_check ?? []).length ? 'warn' : 'ok')
+    : ['awaiting_approval', 'capability_needed', 'domain_unconfirmed', 'api_skipped', 'claims_malformed', 'statements_doubt'].includes(e.type) ? 'warn'
     : ['run_started', 'resumed'].includes(e.type) ? 'info' : 'neutral'
   return { label, detail: fmt(e.payload), tone }
 }

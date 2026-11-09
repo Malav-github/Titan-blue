@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { api, type Approval, type Report, type ReportClaim, type RunDetail, type RunEvent } from '../api'
+import { api, type Approval, type FigureCheck, type Report, type ReportClaim, type RunDetail, type RunEvent } from '../api'
 import { ACTIVE, describeEvent, lines, time } from '../format'
 import { Flow } from '../Flow'
 import { useRunEvents } from '../useRunEvents'
@@ -24,12 +24,45 @@ function ClaimCard({ claim, caution }: { claim: ReportClaim; caution?: boolean }
         <ExternalLink href={claim.source_url}>{claim.source_url}</ExternalLink>
       </p>
       {(claim.copies ?? []).length > 0 && <p className="mt-1 text-xs text-muted">The same document is also on {(claim.copies ?? []).join(', ')}: counted as one source, not several.</p>}
+      {(claim.figures ?? []).length > 0 && <Figures checks={claim.figures ?? []} label={claim.figures_label} />}
       {timeChips(claim.times).length > 0 && (
         <p className="mt-2 flex flex-wrap gap-2">{timeChips(claim.times).map((c, i) => <Badge key={i} tone={c.tone}>{c.text}</Badge>)}</p>
       )}
       {claim.why && <p className="mt-2 text-sm text-muted">Why: {claim.why}</p>}
       <p className="mt-2 text-sm"><Link className="text-accent underline" to={links.claim(claim.claim_id)}>Open claim #{claim.claim_id} with the quote in context</Link></p>
     </li>
+  )
+}
+
+const FIGURE_WORDS: Record<FigureCheck['verdict'], [string, 'ok' | 'bad' | 'warn' | 'neutral']> = {
+  matches: ['matches the statements', 'ok'],
+  found: ['equals a statement figure', 'ok'],
+  matches_doubtful: ['matches a figure in doubt: double-check', 'warn'],
+  differs: ['differs from the statements', 'bad'],
+  not_covered: ['not in the statements read', 'neutral'],
+  not_found: ['no statement figure equals it', 'neutral'],
+  not_compared: ['not compared', 'neutral'],
+}
+
+/** Each figure the quote states, checked by code against the company's own financial statements. */
+function Figures({ checks, label }: { checks: FigureCheck[]; label?: string }) {
+  return (
+    <div className="mt-2 text-sm">
+      <p className="font-medium">Figures against the company's statements{label ? `: ${label}` : ''}</p>
+      <ul className="mt-1 flex flex-col gap-1">
+        {checks.map((f, i) => {
+          const [words, tone] = FIGURE_WORDS[f.verdict]
+          return (
+            <li key={i} className="flex flex-wrap items-baseline gap-2">
+              <Mono>{f.mention.raw}</Mono>
+              <span className="text-muted">{f.mention.phrase}{f.mention.periods.length ? `, ${f.mention.periods.join(', ')}` : f.mention.as_of ? `, at ${f.mention.as_of}` : ''}</span>
+              <Badge tone={tone}>{words}</Badge>
+              <span className="text-muted">{f.why}</span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
   )
 }
 

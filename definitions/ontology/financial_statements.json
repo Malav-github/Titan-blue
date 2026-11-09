@@ -228,5 +228,37 @@
     {"id": "cash_roll_forward", "statement": "cash_flow", "total": "cash_end", "parts": ["cash_beginning", "net_change_cash"],
      "or": [["cash_beginning", "net_change_cash", "fx_effect_cash"]]}
   ],
-  "rule_notes": "'or' lists other ways a company may present the same total (the exchange-rate effect inside the net change, as US filers print it, or after it, as many IFRS filers do); the rule passes when one of them adds up, and the check records which. A part written '-x' is subtracted; companies print an expense either as a positive number to subtract or already in brackets, so both readings are tried and the one used is recorded. A part written '?x' is included when the table has it. 'unless' skips the rule when the table has those concepts. A rule runs only when the table has every required concept for the same column; otherwise it is not checked, never passed."
+  "rule_notes": "'or' lists other ways a company may present the same total (the exchange-rate effect inside the net change, as US filers print it, or after it, as many IFRS filers do); the rule passes when one of them adds up, and the check records which. A part written '-x' is subtracted; companies print an expense either as a positive number to subtract or already in brackets, so both readings are tried and the one used is recorded. A part written '?x' is included when the table has it. 'unless' skips the rule when the table has those concepts. A rule runs only when the table has every required concept for the same column; otherwise it is not checked, never passed.",
+
+  "mentions": {
+    "note": "How prose (a release, an article, a claim) names a line item, for checking a figure in a sentence against the statements (skills/statements/figures.py). A phrase may name more than one concept: 'net income' in a US release usually means the parent's share (NetIncomeLoss) but may mean the total; a figure that equals either is said to match, and which one is recorded. Longer phrases win over shorter ones inside them.",
+    "items": [
+      {"phrases": ["revenue", "revenues", "total revenue", "total revenues", "net revenue", "net revenues", "net sales", "sales", "turnover", "revenue from operations", "top line", "topline", "income from operations (net)"], "concepts": ["revenue"]},
+      {"phrases": ["total income"], "concepts": ["total_income"]},
+      {"phrases": ["other income"], "concepts": ["other_income"]},
+      {"phrases": ["gross profit"], "concepts": ["gross_profit"]},
+      {"phrases": ["total expenses", "total costs and expenses", "total operating expenses"], "concepts": ["total_expenses"]},
+      {"phrases": ["finance costs", "finance cost", "interest expense"], "concepts": ["finance_costs"]},
+      {"phrases": ["operating income", "operating profit", "income from operations", "profit from operations"], "concepts": ["operating_income"]},
+      {"phrases": ["profit before tax", "pre-tax profit", "pretax profit", "pre-tax income", "pretax income", "income before taxes", "income before income taxes", "earnings before income taxes", "pbt"], "concepts": ["profit_before_tax"]},
+      {"phrases": ["tax expense", "income tax expense", "provision for income taxes"], "concepts": ["income_tax"]},
+      {"phrases": ["net income", "net profit", "net earnings", "profit after tax", "pat", "net profit after tax", "profit for the period", "profit for the year", "profit for the quarter", "bottom line"], "concepts": ["net_income_parent", "net_income"]},
+      {"phrases": ["net income attributable to", "profit attributable to owners", "profit attributable to equity holders", "net income attributable to shareholders"], "concepts": ["net_income_parent"]},
+      {"phrases": ["total comprehensive income"], "concepts": ["total_comprehensive_income"]},
+      {"phrases": ["diluted earnings per share", "diluted eps", "earnings per diluted share", "diluted earnings per common share"], "concepts": ["eps_diluted"]},
+      {"phrases": ["basic earnings per share", "basic eps"], "concepts": ["eps_basic"]},
+      {"phrases": ["earnings per share", "eps"], "concepts": ["eps_diluted", "eps_basic"]},
+      {"phrases": ["cash and cash equivalents", "cash and equivalents"], "concepts": ["cash", "cash_end"]},
+      {"phrases": ["total assets"], "concepts": ["total_assets"]},
+      {"phrases": ["total liabilities"], "concepts": ["total_liabilities"]},
+      {"phrases": ["total equity", "shareholders' equity", "stockholders' equity", "net worth"], "concepts": ["total_equity", "equity_parent"]},
+      {"phrases": ["inventories", "inventory"], "concepts": ["inventories"]},
+      {"phrases": ["goodwill"], "concepts": ["goodwill"]},
+      {"phrases": ["operating cash flow", "cash from operations", "cash flow from operations", "cash flow from operating activities", "cash provided by operating activities", "cash generated from operations", "net cash from operating activities"], "concepts": ["cfo"]}
+    ],
+    "qualifiers": "\\b(?:adjusted|non-gaap|non-ifrs|organic(?:ally)?|underlying|pro forma|pro-forma|constant currency|like-for-like|segment|excluding|ex-|core|normali[sz]ed|recurring|run-rate|annuali[sz]ed|ebitda|ebit|margin)\\b",
+    "qualifiers_note": "A figure qualified so is a different measure from the statement line item; it is listed as not compared, never matched or contradicted.",
+    "forward": "\\b(?:guidance|outlook|expects?|expected|forecast|projects?|projected|targets?|aims? to|anticipates?|will be|estimated?|plans? to)\\b",
+    "forward_note": "A figure about the future is not a reported figure and is not compared."
+  }
 }

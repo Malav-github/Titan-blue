@@ -100,6 +100,15 @@ export interface ReportClaim {
   copies?: string[]
   as_of?: string | null
   why?: string
+  figures?: FigureCheck[]
+  figures_label?: string
+}
+/** A figure in a claim's quote checked against the company's own financial statements (code, no model). */
+export interface FigureCheck {
+  verdict: 'matches' | 'matches_doubtful' | 'differs' | 'not_covered' | 'found' | 'not_found' | 'not_compared'
+  why: string
+  mention: { raw: string; phrase: string; periods: string[]; as_of: string | null }
+  compared_with: { value_id: number; printed: string; verdict: string; period_end: string; period_months: number | null; source_url: string }[]
 }
 export interface ClaimTime {
   kind: string

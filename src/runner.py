@@ -27,6 +27,7 @@ import tracing
 from skills.temporal import clock as tclock, freshness, intent as tintent, setting as temporal_setting
 from skills.temporal.display import short_date
 from skills.temporal import periods as tperiods
+from skills.statements import figures
 from skills import edgar, planning, statements, writing
 from skills.planning import sense as common_sense
 from skills.temporal.extract import DateFact, best_date, parse_date
@@ -1030,6 +1031,8 @@ class Runner:
             return
         if not summary.get("ok"):
             return
+        if summary["statements"] and s.get("entity_id"):
+            self.store.link_source_entity(sha, s["entity_id"], created_by=f"runner:{s['run_id'][:8]}")   # its figures index the subject's claims
         if summary["statements"]:
             self.runs.emit(s["run_id"], "fetch", "statements_read", {"url": url, "source_sha256": sha, **{
                 k: summary[k] for k in ("tables", "statements", "market", "ocr_pages")}})
@@ -1669,6 +1672,44 @@ class Runner:
             parts.append("Not established from what was read: " + "; ".join(gaps) + ".")
         return "\n\n".join(parts)
 
+    FIGURES_CONTEXT = 250       # characters either side of a quote searched for its period when the quote names none
+
+    def _check_figures(self, s: State, rows: list[dict]) -> str | None:
+        """Every figure a claim's quote states, checked by code against the financial statements read for the subject
+        (skills/statements/figures.py): the statements serve as an index of what the company reported. Each row gets
+        `figures` and a `figures_label`; results are recorded with the claim. Returns a warning when a figure differs."""
+        if not s.get("entity_id"):
+            return None
+        index = self.store.statement_figures(entity_id=s["entity_id"])
+        if not index:
+            return None
+        rid, differs = s["run_id"], []
+        for r in rows:
+            try:
+                claim = self.store.get_claim(r["claim_id"])
+                text = normalize(Path(self.store.get_source(claim["source_sha256"])["text_path"]).read_text(encoding="utf-8"))
+                lo, hi = claim["quote_start"], claim["quote_end"]
+                context = f"{text[max(0, lo - self.FIGURES_CONTEXT):lo]} {text[hi:hi + self.FIGURES_CONTEXT]}"
+                results = figures.check(claim["quote"], index, context)
+            except Exception as exc:              # a check is an addition: a failure here must not lose the report
+                self.runs.emit(rid, "report", "figures_failed", {"claim_id": r["claim_id"], "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
+                continue
+            if not results:
+                continue
+            self.store.record_claim_figures(r["claim_id"], results, figures.VERSION, created_by=f"runner:{rid[:8]}")
+            info = figures.summary(results)
+            r["figures"], r["figures_label"] = results, info["label"]
+            said = lambda x: f"claim {r['claim_id']}: {x['mention']['raw']} ({x['mention']['phrase']}): {x['why']}"   # noqa: E731
+            wrong = [{"summary": said(x), "claim_id": r["claim_id"]} for x in results if x["verdict"] == "differs"]
+            check = [{"summary": said(x), "claim_id": r["claim_id"]} for x in results if x["verdict"] == "matches_doubtful"]
+            differs += wrong
+            self.runs.emit(rid, "report", "figures_checked", {"claim_id": r["claim_id"], "counts": info["counts"],
+                                                              "label": info["label"], "differs": wrong, "to_double_check": check})
+        if differs:
+            return (f"{len(differs)} figure{'s' if len(differs) != 1 else ''} in the claims differ{'s' if len(differs) == 1 else ''} "
+                    f"from the company's own financial statements; see each claim's figure check")
+        return None
+
     def n_report(self, s: State) -> dict:
         rid = s["run_id"]
         rows = {"supported": [], "partially_supported": [], "not_supported": [], "unchecked": [], "off_topic": [], "context": [], "reference_only": []}
@@ -1722,6 +1763,9 @@ class Runner:
             r["corroboration"] = corroboration.label(r, {corroboration.site(r["source_url"])}, False)
             r["as_of"] = next((t["value"] for t in r["times"] if t["kind"] == "as_of"), None)
 
+        # do the figures the claims quote agree with the company's own statements? (code; labels only, nothing is hidden)
+        figure_warning = self._check_figures(s, shown + rows["context"])
+
         # how old is what the answer rests on? (established claims first; partial ones only if nothing is established)
         basis = rows["supported"] or rows["partially_supported"]
         timing = freshness.assess({r["source_sha256"]: self._source_dates(r["source_sha256"]) for r in basis},
@@ -1747,7 +1791,7 @@ class Runner:
             "established": rows["supported"], "partial": rows["partially_supported"],
             "not_supported": len(rows["not_supported"]), "unchecked": len(rows["unchecked"]),
             "off_topic": len(rows["off_topic"]), "context": rows["context"], "reference_only": rows["reference_only"], "conflicts": conflicts,
-            "gaps": gaps, "rejected_quotes": s["rejected"], "warnings": s.get("warnings", []) + ([time_warning] if time_warning else []),
+            "gaps": gaps, "rejected_quotes": s["rejected"], "warnings": s.get("warnings", []) + ([time_warning] if time_warning else []) + ([figure_warning] if figure_warning else []),
             "time": timing, "quality": quality,
             "budget_used": {"searches": s["searches_used"], "fetches": s["fetches_used"], "iterations": s["iteration"]},
             "domain": s.get("domain"),

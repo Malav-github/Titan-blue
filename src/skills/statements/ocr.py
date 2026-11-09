@@ -86,7 +86,7 @@ def _rapid(png: str) -> list[dict]:
     res = _rapid_engine()(png)
     out = []
     for box, text, score in zip(res.boxes if res.boxes is not None else [], res.txts or [], res.scores or []):
-        xs, ys = [p[0] for p in box], [p[1] for p in box]
+        xs, ys = [float(p[0]) for p in box], [float(p[1]) for p in box]       # numpy floats are not JSON: stored with each figure
         x0, x1, top, bottom = min(xs), max(xs), min(ys), max(ys)
         tokens = text.split()
         if not tokens:

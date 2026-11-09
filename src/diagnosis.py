@@ -55,6 +55,7 @@ def diagnose(events: list[dict]) -> list[dict]:
             for x in examples:
                 if x not in entry["examples"] and len(entry["examples"]) < 3:
                     entry["examples"].append(x)
-            break
+            if not c.get("field"):
+                break                  # one event, one cause; an event's fields may each name their own
     order = list(d["kinds"])
     return sorted(found.values(), key=lambda x: (order.index(x["kind"]), -x["count"]))

@@ -27,7 +27,8 @@ MIN_QUOTE_CHARS = 20
 HINT_CONTEXT = 60
 
 TABLES = ["sources", "fetches", "entities", "claims", "rejected_claims", "claim_events", "contradictions", "source_dates",
-          "support_checks", "claim_time", "statement_tables", "statement_values", "statement_checks"]
+          "support_checks", "claim_time", "statement_tables", "statement_values", "statement_checks", "source_entities",
+          "claim_figures"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -170,6 +171,23 @@ CREATE TABLE IF NOT EXISTS statement_checks (
     verdict TEXT NOT NULL CHECK (verdict IN ('pass', 'fail')),
     expected TEXT NOT NULL, computed TEXT NOT NULL, detail TEXT NOT NULL,
     created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS source_entities (   -- the company a run read a source's statements for
+    source_sha256 TEXT NOT NULL REFERENCES sources(source_sha256),
+    entity_id INTEGER NOT NULL REFERENCES entities(entity_id),
+    created_at TEXT NOT NULL, created_by TEXT NOT NULL,
+    UNIQUE (source_sha256, entity_id)
+);
+CREATE TABLE IF NOT EXISTS claim_figures (   -- a figure in a claim's quote checked against the company's statements (a verdict)
+    figure_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    claim_id INTEGER NOT NULL REFERENCES claims(claim_id),
+    written TEXT NOT NULL,                 -- the figure as the quote writes it
+    phrase TEXT NOT NULL,                  -- the words naming the line item
+    verdict TEXT NOT NULL,                 -- matches | matches_doubtful | differs | not_covered | found | not_found | not_compared
+    why TEXT NOT NULL,
+    mention TEXT NOT NULL,                 -- JSON: what was read from the sentence (amount, period, currency)
+    compared_with TEXT NOT NULL,           -- JSON: the statement values it was compared with (value_id, printed, period)
+    checker TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL
 );
 CREATE VIEW IF NOT EXISTS current_claims AS
     SELECT * FROM claims WHERE claim_id NOT IN (SELECT claim_id FROM claim_events);
@@ -488,6 +506,53 @@ class EvidenceStore:
                     (claim_id, r["kind"], r["value"], r["precision"], r["raw"], r["origin"], int(r.get("derived", 0)),
                      r.get("detail", ""), utc_now(), created_by)).rowcount
         return added
+
+    def link_source_entity(self, source_sha256: str, entity_id: int, created_by: str = "agent") -> None:
+        """Record that a source's statements were read for this company, so its figures index the company's claims."""
+        with closing(self._connect()) as db, db:
+            db.execute("INSERT OR IGNORE INTO source_entities (source_sha256, entity_id, created_at, created_by) VALUES (?,?,?,?)",
+                       (source_sha256, entity_id, utc_now(), created_by))
+
+    def statement_figures(self, entity_id: int | None = None, source_sha256s: list[str] | None = None) -> list[dict]:
+        """The primary-statement values of one company (every source its statements were read from) or of given sources:
+        the index a claim's figures are checked against. Values in doubt are included, marked so."""
+        shas = set(source_sha256s or [])
+        with closing(self._connect()) as db:
+            if entity_id is not None:
+                shas |= {r[0] for r in db.execute("SELECT source_sha256 FROM source_entities WHERE entity_id=?", (entity_id,))}
+            if not shas:
+                return []
+            marks = ",".join("?" * len(shas))
+            rows = [dict(r) for r in db.execute(
+                "SELECT v.value_id, v.concept, v.printed, v.amount, v.decimals, v.value, v.unit, v.period_kind, v.period_start,"
+                " v.period_end, v.period_months, v.verdict, v.proposed, t.statement, t.basis, t.title, t.source_sha256,"
+                " s.final_url AS source_url FROM statement_values v JOIN statement_tables t USING (table_id)"
+                f" JOIN sources s ON s.source_sha256 = t.source_sha256 WHERE t.is_primary = 1 AND v.concept != '' AND t.source_sha256 IN ({marks})"
+                " ORDER BY v.value_id", list(shas))]
+        for r in rows:
+            r["proposed"] = json.loads(r["proposed"]) if r.get("proposed") else None
+        return rows
+
+    def record_claim_figures(self, claim_id: int, results: list[dict], checker: str, created_by: str = "agent") -> int:
+        now = utc_now()
+        with closing(self._connect()) as db, db:
+            db.executemany(
+                "INSERT INTO claim_figures (claim_id, written, phrase, verdict, why, mention, compared_with, checker, created_at, created_by)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                [(claim_id, r["mention"]["raw"], r["mention"]["phrase"], r["verdict"], r["why"], json.dumps(r["mention"], sort_keys=True),
+                  json.dumps(r["compared_with"], sort_keys=True, default=str), checker, now, created_by) for r in results])
+        return len(results)
+
+    def claim_figures_for(self, claim_id: int) -> list[dict]:
+        """The latest figure check of a claim (rows of the newest check run)."""
+        with closing(self._connect()) as db:
+            rows = [dict(r) for r in db.execute("SELECT * FROM claim_figures WHERE claim_id=? ORDER BY figure_id", (claim_id,))]
+        if rows:
+            last = rows[-1]["created_at"]
+            rows = [r for r in rows if r["created_at"] == last]
+        for r in rows:
+            r["mention"], r["compared_with"] = json.loads(r["mention"]), json.loads(r["compared_with"])
+        return rows
 
     def claim_times(self, claim_id: int) -> list[dict]:
         with closing(self._connect()) as db:

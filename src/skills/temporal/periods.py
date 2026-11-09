@@ -111,6 +111,12 @@ def _months_ended(m):
     return Period(span=_SPAN_FOR_MONTHS[n], months=n, end=_day(m["d"]), raw=m[0])
 
 
+@_pat(rf"\b(?P<w>quarter|half[- ]year)\s+(?:ended|ending)\s+(?P<d>{DATE})")
+def _quarter_ended(m):
+    n = 3 if m["w"].lower() == "quarter" else 6
+    return Period(span=_SPAN_FOR_MONTHS[n], months=n, end=_day(m["d"]), raw=m[0])
+
+
 @_pat(rf"\b(?P<b>fiscal\s+)?years?\s+ended\s+(?P<d>{DATE})")
 def _year_ended(m):
     return Period(basis="fiscal" if m["b"] else None, span="full_year", months=12, end=_day(m["d"]), raw=m[0])

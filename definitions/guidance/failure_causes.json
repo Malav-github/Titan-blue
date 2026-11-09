@@ -181,8 +181,26 @@
       "event": "statements_doubt",
       "field": "doubts",
       "label": "Figures in a financial statement could not be confirmed (scanned page: the two OCR engines disagreed, only one read it, or one was unsure; or the figure is in a sum that does not add up, or its column's period could not be read)",
-      "handled_by": "the figure is kept, never dropped: taken as its likeliest reading (one with which its sums add up, else one that fits its column, e.g. '7.316.94' in a two-decimal column as 7,316.94), with what was printed, both readings, its place on the page and why; marked doubt with 'please double-check', and left out of the figures answers are checked against unless asked for",
+      "handled_by": "the figure is kept, never dropped: taken as its likeliest reading (one with which its sums add up, else one that fits its column, e.g. '7.316.94' in a two-decimal column as 7,316.94), with what was printed, both readings, its place on the page and why; marked doubt with 'please double-check'; a claim whose figure equals it is labelled 'matches only a statement figure in doubt'",
       "workaround": "a person checks the figure on the page; a cleaner copy of the document (the company's own PDF with a text layer, or its XBRL filing) replaces OCR entirely"
+    },
+    {
+      "id": "claim_figure_differs",
+      "kind": "source",
+      "event": "figures_checked",
+      "field": "differs",
+      "label": "A figure in a claim's quote differs from the company's own financial statements for the same line item and period",
+      "handled_by": "the claim stays, labelled 'differs from the company's statements' with the statement figure beside it; the report warns; nothing is corrected or hidden",
+      "workaround": "read the claim's source: an article may round, convert currency, or report a different measure the check did not recognise (adjusted, segment); if it is a plain error, prefer the company's filing or release"
+    },
+    {
+      "id": "claim_figure_to_double_check",
+      "kind": "source",
+      "event": "figures_checked",
+      "field": "to_double_check",
+      "label": "A figure in a claim's quote equals only a statement figure that is in doubt (a scanned figure)",
+      "handled_by": "the claim is labelled 'matches only a statement figure in doubt; please double-check'; the agreement supports the reading the scanned figure was taken as, but a person confirms it",
+      "workaround": "check the scanned figure on its page (the statements view gives the page and box); a text-layer copy of the document settles it"
     },
     {
       "id": "scanned_page_unread",

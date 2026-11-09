@@ -143,6 +143,16 @@ def financial_statements() -> dict:
         if cid not in ids:
             raise ValueError(f"financial_statements.json: pattern for unknown concept {cid}")
         d["_patterns"][cid] = re.compile(pattern, re.I)
+    m = d.get("mentions") or {"items": [], "qualifiers": r"(?!)", "forward": r"(?!)"}
+    phrases: dict[str, list[str]] = {}
+    for item in m["items"]:
+        if unknown := [c for c in item["concepts"] if c not in ids]:
+            raise ValueError(f"financial_statements.json: mention {item['phrases'][0]!r} names unknown concepts {unknown}")
+        for p in item["phrases"]:
+            if p.lower() in phrases:
+                raise ValueError(f"financial_statements.json: mention phrase {p!r} appears twice")
+            phrases[p.lower()] = item["concepts"]
+    d["_mentions"] = {"phrases": phrases, "qualifiers": re.compile(m["qualifiers"], re.I), "forward": re.compile(m["forward"], re.I)}
     d["_by_tag"], d["_by_label"] = tags, labels
     d["_concepts"] = {c["id"]: c for c in d["concepts"]}
     return d
