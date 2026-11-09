@@ -167,3 +167,36 @@ def test_statement_sources_index_a_company_and_figure_checks_are_recorded(tmp_pa
     store.record_claim_figures(claim["claim_id"], r, figures.VERSION)
     [stored] = store.claim_figures_for(claim["claim_id"])
     assert stored["verdict"] == r[0]["verdict"] and stored["written"] == "$1.0 billion"
+
+
+# --- a quote that is a statement row ------------------------------------------------------------------------------------
+
+def R(concept, label, printed, end, months, row=3, table=1):
+    return {**F(concept, printed, printed.replace(",", "") + "000000", end, months), "table_id": table, "row_index": row, "label": label}
+
+
+ROWS = [R("revenue", "Revenue", "3,678", "2026-09-30", 3), R("revenue", "Revenue", "3,443", "2025-09-30", 3),
+        R("revenue", "Revenue", "11,074", "2026-09-30", 9, ), R("net_income_parent", "Net income", "1,240", "2026-09-30", 3, row=9),
+        R("revenue", "Revenue", "11,020", "2026-09-30", 9, row=3)]
+
+
+def test_a_table_row_quote_is_read_as_the_statement_row_it_is():
+    row = figures.row_of("| Revenue | $ | 3,678 | | | $ | 3,443 | | | 7% | | $ | 11,074 | | | $ | 10,117 | | | 9% |", ROWS)
+    assert row["concept"] == "revenue" and row["label"] == "Revenue"
+    assert [(v["printed"], v["period_end"], v["period_months"]) for v in row["values"]][:2] == [("11,074", "2026-09-30", 9), ("3,678", "2026-09-30", 3)]
+    assert figures.row_of("Revenue was strong in the quarter.", ROWS) is None              # no figure: not a row
+    assert figures.row_of("| Other | 3,678 |", ROWS) is None                                # one figure and not its label
+
+
+def test_the_needed_fact_names_its_line_item_and_period():
+    concepts, periods = figures.fact_target("S&P Global's revenue for Q3 2026", "What was revenue?", US)
+    assert "revenue" in concepts and periods == [("2026-09", 3)]
+
+
+def test_a_bare_change_is_compared_only_when_it_is_the_companys():
+    r = figures.check("Revenue increased 2%, with an unfavorable impact from foreign exchange in the third quarter of 2026.", US)
+    assert r[0]["verdict"] == "not_compared" and "segment" in r[0]["why"]
+    r = figures.check("Total revenue increased 7% in the third quarter of 2026.", US)
+    assert r[0]["verdict"] == "matches"
+    r = figures.check("Acme's revenue increased 7% in the third quarter of 2026.", US, names=("Acme",))
+    assert r[0]["verdict"] == "matches"

@@ -127,6 +127,21 @@ with what Titan already does about it and what could be done next (`definitions/
   - *The exact address.* Every claim gives the address of the report itself. A site's homepage (`/`, `/en-us/`,
     `index.html`) is never fetched from search results and never quoted; an address that redirected to the homepage (a
     moved or paywalled report) is reported as not reaching the report (`source_not_citable`).
+- **Pause, resume, stop** (run page buttons; `POST /api/runs/{id}/pause`, `/resume`, `/stop`). A pause takes effect at the
+  next safe point: between steps, or while reading pages and checking claims, between one model call and the next (on a
+  real S&P Global run it paused 13.8 s after the press, after the call in progress). Everything done is checkpointed; Resume
+  carries on from the page and chunk it reached, even after a restart. Stop skips what is left and writes the report from
+  what was gathered, marked as stopped early; it also ends a run that is paused or waiting for you.
+- **Speed.** On this machine's 8 GB GPU Ollama serves one call at a time (three calls at once took 29.7 s, one by one 29.0 s),
+  so model calls stay in order and the time is saved elsewhere: statements (tables, OCR) are read on the processor in the
+  background while the model works; a chunk sharing no word with the question is not sent to the model; a verbatim claim's
+  support check is code, not a model call (and the second model is no longer swapped in); models stay loaded 30 minutes
+  (`OLLAMA_KEEP_ALIVE`; a reload costs about 21 s). Searches and page downloads already ran side by side.
+- **A table row is read by its statement.** A claim that is a row of a statement read from the same document ("| Revenue |
+  $ | 3,678 | | | $ | 3,443 | ...") is identified by code as that row, with each column's period; when it is the line item
+  and period the fact asks for, code settles relevance (qwen3:8b cannot see a row's column headings and rejected the 10-Q's
+  revenue row), and the answer says "read from the income statement: 'Revenue' for the 3 months ended 2026-09-30 is 3,678".
+  Statements are linked to the subject only when the document is its own (an SEC filing by its CIK, otherwise naming it).
 - **Planner guards**: a generic acronym ('AI') is never taken as the subject when the question names an organisation; guessed
   figures are removed from queries; premises that name nothing specific are dropped before the premise check; an SEC registrant
   the question names is treated as a company (so its official domain is found and its own pages are labelled primary).

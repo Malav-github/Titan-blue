@@ -211,3 +211,38 @@ def test_a_company_that_is_not_an_sec_registrant_is_said_so_and_the_web_carries_
     result = runner.start("What does Zeta Labs charge?", budgets={"max_iterations": 1})
     no = next(e["payload"] for e in env["runs"].events(result["run_id"]) if e["type"] == "edgar_no_cik")
     assert "Zeta Labs" in no["reason"] and sec.calls == [] and result["status"] == "finished"
+
+
+def test_a_statement_row_claim_is_established_by_code_when_the_model_cannot_read_the_row(env):
+    from runner import Relevance
+    from tests.scripted import ExtractedClaim, Extraction
+    from tests.test_statements import RELEASE
+    asked = []
+    runner, sec, _ = edgar_runner(env, Extraction=lambda p: Extraction(claims=[
+        ExtractedClaim(predicate="financials.revenue", quote="| Revenue |  |  | $ | 1,200 |  | $ | 1,000 |", value="1,200")]),
+        Relevance=lambda p: asked.append(p) or Relevance(addresses=False, reason="the values are not labelled with a period"),
+        Plan=lambda p: __import__("runner").Plan(subject="Acme", queries=["acme results"], checklist=["Acme's revenue for the third quarter of 2026"]))
+    plain = sec.fetch
+
+    def fetch(url, max_chars=2000):
+        if url.endswith("acme3q-release.htm"):
+            sec.world.fetched.append(url)
+            sha, path = archive_bytes(RELEASE.replace(b"</body>", f"<p>{PAGE_TEXT}</p></body>".encode()), ".html")
+            return {"url": url, "final_url": url, "status": 200, "content_type": "text/html", "encoding": "utf-8", "method": "http",
+                    "fetched_at": utc_now(), "sha256": sha, "archive_path": path, "text": "", "truncated": False}
+        return plain(url, max_chars)
+
+    runner.fetch_fn = fetch
+    report = runner.start("What did Acme announce recently about its third-quarter 2026 revenue?", budgets={"max_iterations": 1})["report"]
+    rows = [r for r in report["established"] if "Revenue" in r["quote"]]
+    assert rows and rows[0]["statement_row"]["figure"]["printed"] == "1,200"
+    assert "'Revenue' for the 3 months ended 2026-09-30 is 1,200" in report["summary"]
+    checked = [e["payload"] for e in env["runs"].events(report.get("run_id") or env["runs"].runs(1)[0]["run_id"]) if e["type"] == "relevance_checked"]
+    assert any(c.get("checker") == "code:statement_row" for c in checked)
+
+
+def test_another_companys_filing_does_not_index_the_subjects_figures(env):
+    runner, _, _ = edgar_runner(env)
+    s = {"run_id": "r", "cik": "0000001234", "subject": "Acme", "entity_name": "Acme", "company": "Acme"}
+    assert "not the subject's CIK" in runner._not_the_subjects(s, "x", "https://www.sec.gov/Archives/edgar/data/1065280/000106528026000290/ex991_q326.htm")
+    assert runner._not_the_subjects(s, "x", "https://www.sec.gov/Archives/edgar/data/1234/000000123426000009/acme3q-release.htm") is None

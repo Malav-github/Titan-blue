@@ -566,7 +566,8 @@ class EvidenceStore:
             marks = ",".join("?" * len(shas))
             rows = [dict(r) for r in db.execute(
                 "SELECT v.value_id, v.concept, v.printed, v.amount, v.decimals, v.value, v.unit, v.period_kind, v.period_start,"
-                " v.period_end, v.period_months, v.verdict, v.proposed, t.statement, t.basis, t.title, t.source_sha256,"
+                " v.period_end, v.period_months, v.verdict, v.proposed, v.table_id, v.row_index, v.label, t.locator,"
+                " t.statement, t.basis, t.title, t.source_sha256,"
                 " s.final_url AS source_url FROM statement_values v JOIN statement_tables t USING (table_id)"
                 f" JOIN sources s ON s.source_sha256 = t.source_sha256 WHERE t.is_primary = 1 AND v.concept != '' AND t.source_sha256 IN ({marks})"
                 " ORDER BY v.value_id", list(shas))]

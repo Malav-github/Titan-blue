@@ -341,3 +341,11 @@ def test_the_most_authoritative_origin_wins_over_an_earlier_but_weaker_date():
     assert best_date(facts).value == "2026-05-26"                                    # not simply the earliest
     arxiv = collect_dates(ARXIV, None, "", retrieved_at=ANCHOR)
     assert best_date(arxiv).origin == "meta:citation_date" and best_date(arxiv).value == "2017-06-12"
+
+
+def test_a_filings_regulator_date_outranks_dates_read_from_its_text():
+    from skills.temporal.extract import DateFact, best_date
+    facts = [DateFact("published", "2020-05-18", "day", "May 18, 2020", "text:byline"),
+             DateFact("published", "2023-10-02", "day", "October 2, 2023", "text:byline"),
+             DateFact("published", "2026-10-28", "day", "filed 2026-10-28", "edgar:filingDate")]
+    assert best_date(facts).value == "2026-10-28"                 # a real 10-Q was shown as dated 2020-05-18

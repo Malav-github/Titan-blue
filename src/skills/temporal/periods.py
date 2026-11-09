@@ -136,12 +136,12 @@ def _year_then_q(m):
     return Period(basis=_basis(m["b"]), span="quarter", quarter=int(m["q"]), fiscal_year=_year(m["y"]), raw=m[0])
 
 
-@_pat(rf"\b(?P<o>first|second|third|fourth)\s+quarter(?:\s+of)?\s+(?:(?P<b>fiscal|calendar)\s+)?(?:year\s+)?(?P<y>\d{{4}})\b")
+@_pat(rf"\b(?P<o>first|second|third|fourth)[\s-]+quarter(?:\s+of)?\s+(?:(?P<b>fiscal|calendar)\s+)?(?:year\s+)?(?P<y>\d{{4}})\b")
 def _quarter_of_year(m):
     return Period(basis=_basis(m["b"]), span="quarter", quarter=_ORD[m["o"].lower()], fiscal_year=int(m["y"]), raw=m[0])
 
 
-@_pat(rf"\b(?:(?P<b>fiscal|calendar)\s+)?(?P<y>\d{{4}})\s+(?P<o>first|second|third|fourth)\s+quarter\b")
+@_pat(rf"\b(?:(?P<b>fiscal|calendar)\s+)?(?P<y>\d{{4}})\s+(?P<o>first|second|third|fourth)[\s-]+quarter\b")
 def _year_quarter_words(m):
     return Period(basis=_basis(m["b"]), span="quarter", quarter=_ORD[m["o"].lower()], fiscal_year=int(m["y"]), raw=m[0])
 
@@ -153,7 +153,7 @@ def _h_year(m):
     return Period(basis=_basis(m["b"]), span="half", half=int(m["h"]), months=6, fiscal_year=_year(m["y"]), raw=m[0])
 
 
-@_pat(rf"\b(?P<o>first|second)\s+half(?:\s+of)?\s+(?:(?P<b>fiscal|calendar)\s+)?(?:year\s+)?(?P<y>\d{{4}})\b")
+@_pat(rf"\b(?P<o>first|second)[\s-]+half(?:\s+of)?\s+(?:(?P<b>fiscal|calendar)\s+)?(?:year\s+)?(?P<y>\d{{4}})\b")
 def _half_of_year(m):
     return Period(basis=_basis(m["b"]), span="half", half=_ORD[m["o"].lower()], months=6, fiscal_year=int(m["y"]), raw=m[0])
 

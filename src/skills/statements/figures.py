@@ -275,16 +275,25 @@ def _period_text(f: dict) -> str:
     return f"the {f['period_months']} months ended {f['period_end']}" if f.get("period_months") else f"the balance date {f['period_end']}"
 
 
-def check(text: str, figures: list[dict], context: str = "") -> list[dict]:
+def check(text: str, figures: list[dict], context: str = "", names: tuple = ()) -> list[dict]:
     """Every figure in `text` against `figures` (statement values of the same company, from EvidenceStore.statement_figures).
-    One result per figure, in the order written."""
+    `names` are the company's names: a change said of the company itself is compared. One result per figure, in order."""
     fye = fiscal_year_end(figures)
     by_concept: dict[str, list[dict]] = {}
     for f in figures:
         if f.get("value") is not None and f.get("period_end"):
             by_concept.setdefault(f["concept"], []).append(f)
     out = []
-    for m in mentions(text, context):
+    found = mentions(text, context)
+    whole = re.compile(r"\b(?:total|consolidated|overall|company[- ]wide|group)\b" + "".join(
+        f"|{re.escape(n)}" for n in names if len(n) > 2), re.I)
+    for m in found:
+        if m.change and not m.not_compared and not whole.search(m.sentence) and not any(
+                o is not m and o.sentence == m.sentence and not o.change and o.phrase == m.phrase for o in found):
+            # "Revenue increased 2%" in a segment's section is the segment's, not the company's: a change is compared only
+            # when the sentence gives the amount too, or says it is the company's total
+            m.not_compared = ("a change with no amount and nothing saying it is the company's total "
+                              "(it may be a segment's or a region's)")
         out.append({"mention": m.as_dict(), **_judge(m, by_concept, fye)})
     return out
 
@@ -389,6 +398,55 @@ def _judge_change(m: Mention, pool: list[dict], targets: list, hows: list) -> di
                     f"{prev[0]['printed']}), not {m.value:+}%", "compared_with": refs, "placed_by": hows}
     return {"verdict": "not_covered", "why": "the statements read do not give both periods of the change", "compared_with": [],
             "placed_by": hows}
+
+
+_CELL_NUMBER = re.compile(r"\(?\d[\d,]*(?:\.\d+)?\)?")
+
+
+def row_of(quote: str, figures: list[dict]) -> dict | None:
+    """The statement row a quote is, when the quote is a table row the statements were read from ("| Revenue | $ | 3,678 |
+    | | $ | 3,443 | ..."): matched by the figures it prints, in order, against the rows of the same document. A model cannot
+    tell which period each number is for (the column headings are elsewhere); the statements say. Needs two of the row's
+    figures, or one and the row's label, in the quote. Returns {concept, label, statement, title, values: [{printed, value,
+    period_end, period_months, verdict}]} or None."""
+    printed = _CELL_NUMBER.findall(quote)
+    if not printed:
+        return None
+    rows: dict[tuple, list[dict]] = {}
+    for f in figures:
+        if f.get("table_id") is not None:
+            rows.setdefault((f["table_id"], f["row_index"]), []).append(f)
+    best, score = None, 0
+    low = quote.lower()
+    for key, vals in rows.items():
+        hits = [v for v in vals if v["printed"] in printed]
+        labelled = bool(vals[0].get("label")) and vals[0]["label"].lower() in low
+        n = len(hits) + (1 if labelled else 0)
+        if hits and n >= 2 and n > score:
+            best, score = vals, n
+    if best is None:
+        return None
+    first = best[0]
+    return {"concept": first["concept"], "label": first.get("label") or first["concept"], "statement": first["statement"],
+            "title": first.get("title") or "", "basis": first.get("basis"),
+            "values": [{k: v.get(k) for k in ("printed", "value", "period_end", "period_months", "verdict", "value_id")}
+                       for v in sorted(best, key=lambda v: (v["period_end"] or "", v.get("period_months") or 0), reverse=True)
+                       if v["printed"] in printed]}
+
+
+def fact_target(fact: str, question: str, figures: list[dict]) -> tuple[list[str], list[tuple[str, int | None]]]:
+    """The line items a needed fact names ('revenue') and the periods it asks for, placed by the company's own year:
+    (concepts, [(end month, months)]). Empty lists when the fact names none."""
+    named = _named(fact) or _named(question)
+    concepts = [c for _, _, _, cs in named for c in cs]
+    fye = fiscal_year_end(figures)
+    out = []
+    for p in find_periods(fact) or find_periods(question):
+        if placed := place(p, fye):
+            out.append(placed[:2])
+        elif months := p.months or {"quarter": 3, "half": 6, "full_year": 12}.get(p.span or ""):
+            out.append((None, months))         # the year cannot be placed, but a quarter is still three months
+    return concepts, out
 
 
 def summary(results: list[dict]) -> dict:

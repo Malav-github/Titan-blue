@@ -210,8 +210,10 @@ def collect_dates(html: str | None = None, headers: dict | None = None, url: str
 CONTENT_KINDS = ("published", "created", "modified", "event_start", "event_end", "time_element", "url_date", "search_result")
 _DISPLAY_ORDER = ("published", "created", "search_result", "url_date", "time_element", "modified")
 _PRECISION_RANK = {"datetime": 3, "day": 2, "month": 1, "year": 0}
-# Most authoritative first. A page's own structured "published" statement outranks a byline, which outranks weaker signals.
-_ORIGIN_ORDER = ("jsonld:datePublished", "meta:article:published_time", "meta:og:article:published_time", "meta:datepublished",
+# Most authoritative first. The regulator's record of when a filing was filed outranks anything read from its text (a 10-Q
+# quotes the dates of old debt notes near its top, and those read as bylines). A page's own structured "published" statement
+# outranks a byline, which outranks weaker signals.
+_ORIGIN_ORDER = ("edgar:filingDate", "jsonld:datePublished", "meta:article:published_time", "meta:og:article:published_time", "meta:datepublished",
                  "meta:publishdate", "meta:publish_date", "meta:pubdate", "meta:publication_date", "meta:citation_publication_date",
                  "meta:citation_date", "meta:dc.date.issued", "meta:dcterms.issued", "meta:dc.date", "meta:date", "text:byline",
                  "meta:citation_online_date")

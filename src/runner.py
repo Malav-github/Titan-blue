@@ -1111,6 +1111,42 @@ class Runner:
         job = self._statements_pool.submit(self._read_statements_now, s, sha, url, market)
         self._statements_jobs.setdefault(s["run_id"], []).append(job)
 
+    _SEC_CIK = re.compile(r"sec\.gov/Archives/edgar/data/0*(\d+)/", re.I)
+
+    def _not_the_subjects(self, s: State, sha: str, url: str) -> str | None:
+        """Why a document's statements are not the subject's own, or None. An SEC document belongs to the filer its address
+        names (it must be the subject's CIK, once known); any other document must name the subject."""
+        if m := self._SEC_CIK.search(url or ""):
+            if s.get("cik") and int(m[1]) != int(s["cik"]):
+                return f"filed by CIK {int(m[1])}, not the subject's CIK {int(s['cik'])}"
+            if s.get("cik"):
+                return None
+        text = Path(self.store.get_source(sha)["text_path"]).read_text(encoding="utf-8")[:60_000].lower()
+        names = [n.lower() for n in self._names(s) if len(n) > 2]
+        if names and not any(n in text for n in names):
+            return f"the document does not name {self._names(s)[0]}"
+        return None
+
+    def _statement_row(self, s: State, claim, fact: str) -> dict | None:
+        """When a claim's quote is a row of a statement read from the same document, and that row is the line item the
+        needed fact names, for the period it asks (or it asks none): the row, its figure for that period, and why."""
+        self._statements_done(s["run_id"])
+        index = self.store.statement_figures(source_sha256s=[claim["source_sha256"]])
+        if not index or not (row := figures.row_of(claim["quote"], index)):
+            return None
+        concepts, periods = figures.fact_target(fact, s["question"], index)
+        if not concepts or row["concept"] not in concepts:
+            return None
+        hits = [v for v in row["values"] if not periods or any(
+            v["period_end"] and (end is None or v["period_end"][:7] == end) and (months is None or v["period_months"] == months)
+            for end, months in periods)]
+        if not hits:
+            return None
+        v = hits[0]
+        span = f"the {v['period_months']} months ended {v['period_end']}" if v["period_months"] else v["period_end"]
+        return {**row, "figure": v, "why": f"the quote is the '{row['label']}' row of the {row['statement']} statement read from this "
+                                          f"document ({row['title']}); for {span} it gives {v['printed']}"}
+
     def _statements_done(self, run_id: str) -> None:
         """Wait for this run's statement reading still under way (it runs beside the model)."""
         for job in (self.__dict__.get("_statements_jobs") or {}).pop(run_id, []):
@@ -1128,7 +1164,11 @@ class Runner:
         if not summary.get("ok"):
             return
         if summary["statements"] and s.get("entity_id"):
-            self.store.link_source_entity(sha, s["entity_id"], created_by=f"runner:{s['run_id'][:8]}")   # its figures index the subject's claims
+            if why := self._not_the_subjects(s, sha, url):
+                # another company's statements must never index this company's claims
+                self.runs.emit(s["run_id"], "fetch", "statements_not_linked", {"url": url, "reason": why})
+            else:
+                self.store.link_source_entity(sha, s["entity_id"], created_by=f"runner:{s['run_id'][:8]}")   # its figures index the subject's claims
         if summary["statements"]:
             self.runs.emit(s["run_id"], "fetch", "statements_read", {"url": url, "source_sha256": sha, **{
                 k: summary[k] for k in ("tables", "statements", "market", "ocr_pages")}})
@@ -1675,6 +1715,14 @@ class Runner:
                 # judged here and logged with the run, not stored on the claim.
                 fact = s["checklist"][s["claim_items"][str(cid)]]
                 claim = self.store.get_claim(cid)
+                if row := self._statement_row(s, claim, fact):
+                    # the quote is a row of a statement read by code: which line item and period each figure is for is
+                    # known, so code decides (a small model cannot see a table row's column headings and said no)
+                    relevant[str(cid)], context[str(cid)] = True, False
+                    self.runs.emit(rid, "check", "relevance_checked", {
+                        "claim_id": cid, "needed_fact": fact, "addresses": True, "context": False, "checker": "code:statement_row",
+                        "reason": row["why"]})
+                    continue
                 verdict = self._ask("relevance", Relevance, relevance_prompt(s["question"], fact, claim["claim_text"]),
                                     rid, "check")
                 relevant[str(cid)] = bool(verdict and verdict.addresses)
@@ -1761,6 +1809,10 @@ class Runner:
 
     def _cite(self, r: dict) -> str:
         label = f" [figures: {r['figures_label']}]" if r.get("figures_label") else ""
+        if st := r.get("statement_row"):            # a table row: say which line item and period its figure is, from the statement
+            f = st["figure"]
+            span = f"the {f['period_months']} months ended {f['period_end']}" if f.get("period_months") else f"at {f['period_end']}"
+            label = f" [read from the {st['statement']} statement: '{st['label']}' for {span} is {f['printed']}]" + label
         return f"“{r.get('quote') or r['claim']}” ({self._where(r)}) [claim:{r['claim_id']}]{label}"
 
     def _quoted_answer(self, s: State, rows: list[dict], context_rows: list[dict], gaps: list[str]) -> str:
@@ -1835,7 +1887,7 @@ class Runner:
                 text = normalize(Path(self.store.get_source(claim["source_sha256"])["text_path"]).read_text(encoding="utf-8"))
                 lo, hi = claim["quote_start"], claim["quote_end"]
                 context = f"{text[max(0, lo - self.FIGURES_CONTEXT):lo]} {text[hi:hi + self.FIGURES_CONTEXT]}"
-                results = figures.check(claim["quote"], index, context)
+                results = figures.check(claim["quote"], index, context, names=tuple(self._names(s)))
             except Exception as exc:              # a check is an addition: a failure here must not lose the report
                 self.runs.emit(rid, "report", "figures_failed", {"claim_id": r["claim_id"], "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
                 continue
@@ -1869,6 +1921,9 @@ class Runner:
                    "times": self.store.claim_times(cid), "premise": cid in set(s.get("premise_claim_ids") or []),
                    "source_date": best.value if best else None, "source_date_kind": best.kind if best else None,
                    "page": self.store.page_of(claim["source_sha256"], claim["quote_start"], claim["quote_end"])}
+            fact_i = s["claim_items"].get(str(cid))
+            if fact_i is not None and "|" in claim["quote"] and (st_row := self._statement_row(s, claim, s["checklist"][fact_i])):
+                row["statement_row"] = {k: st_row[k] for k in ("label", "statement", "title", "figure", "why")}
             checks = self.store.support_checks_for(cid)
             if checks:
                 row["why"] = checks[-1]["reasoning"]
