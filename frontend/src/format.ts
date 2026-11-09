@@ -42,6 +42,12 @@ const DESCRIBE: Record<string, [string, Fmt]> = {
   statements_read: ['Read financial statements', (p) => `${short(p.url, 60)} · ${(p.statements ?? []).map((t: { statement: string }) => t.statement).join(', ')}`],
   statements_doubt: ['Statement figures to double-check', (p) => `${p.doubt_count} figure${p.doubt_count === 1 ? '' : 's'} in doubt${(p.unread_pages ?? []).length ? ` · ${p.unread_pages.length} page(s) unread` : ''}`],
   figures_checked: ['Checked figures against the statements', (p) => `claim #${p.claim_id}: ${p.label || Object.entries(p.counts ?? {}).map(([k, v]) => `${v} ${String(k).replace('_', ' ')}`).join(', ')}`],
+  pause_requested: ['You asked to pause', () => 'the run pauses at the next safe point (after the model call in progress)'],
+  stop_requested: ['You asked to stop', () => 'what is left is skipped; the report is written from what was gathered'],
+  paused: ['Paused', (p) => (p.by === 'you' ? 'everything done so far is saved; Resume carries on from here' : `before: ${(p.next ?? []).join(', ')}`)],
+  extract_paused: ['Paused while reading', (p) => `${p.sources_left} page(s) left to read; ${p.claims_so_far} claim(s) so far`],
+  extract_resumed: ['Carried on reading', (p) => `${p.sources_left} page(s) left`],
+  check_paused: ['Paused while checking', (p) => `${p.claims_left} claim(s) left to check`],
   report_ready: ['Report written', () => ''],
   run_finished: ['Finished', () => ''],
   run_stopped: ['Stopped', (p) => short(p.reason, 100)],
@@ -62,7 +68,7 @@ export function describeEvent(e: RunEvent): { label: string; detail: string; ton
   return { label, detail: fmt(e.payload), tone }
 }
 
-export const ACTIVE = new Set(['queued', 'running'])
+export const ACTIVE = new Set(['queued', 'running', 'pausing', 'stopping'])
 
 export function lines(text: string): string[] {
   return text.split('\n').map((l) => l.trim()).filter(Boolean)

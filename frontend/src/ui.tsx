@@ -36,7 +36,7 @@ export function timeChips(times: { kind: string; value: string; derived: number;
 const STATUS: Record<string, [Tone, string]> = {
   queued: ['neutral', 'Queued'], running: ['info', 'Running'], awaiting_approval: ['warn', 'Needs your approval'],
   needs_capability: ['warn', 'Needs a data source'], needs_source: ['warn', 'Needs a source from you'], finished: ['ok', 'Finished'], stopped: ['neutral', 'Stopped'],
-  failed: ['bad', 'Failed'], paused: ['neutral', 'Paused'], requested: ['neutral', 'Requested'],
+  failed: ['bad', 'Failed'], paused: ['warn', 'Paused'], pausing: ['info', 'Pausing…'], stopping: ['info', 'Stopping…'], requested: ['neutral', 'Requested'],
   researching: ['info', 'Researching'], awaiting_user: ['warn', 'Needs your decision'], integrating: ['info', 'Integrating'],
   tests_failed: ['bad', 'Tests failed'], ready: ['ok', 'Ready'], done: ['ok', 'Done'], cancelled: ['neutral', 'Cancelled'],
 }

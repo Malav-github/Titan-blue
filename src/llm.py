@@ -37,4 +37,5 @@ def get_chat_model(
         num_ctx=config.OLLAMA_NUM_CTX,
         num_predict=config.OLLAMA_NUM_PREDICT,
         reasoning=config.OLLAMA_THINK,
+        keep_alive=config.OLLAMA_KEEP_ALIVE,      # loading the model costs ~20 s: keep it loaded across pauses and approvals
     )

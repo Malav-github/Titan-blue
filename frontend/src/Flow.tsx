@@ -68,7 +68,8 @@ export function Flow({ events, status }: { events?: RunEvent[]; status?: string 
   const [picked, setPicked] = useState<string | null>(null)
   if (harness.isLoading) return <Loading what="Loading the flowchart" />
   if (!harness.data) return null
-  const { nodes, edges } = harness.data
+  const { nodes } = harness.data
+  const edges = harness.data.edges.filter((e) => !e.control)      // pause and stop links are said in words, not drawn
   const byId = Object.fromEntries(nodes.map((n) => [n.id, n]))
   const live = events !== undefined
   const view = flowView(nodes.map((n) => n.id), events ?? [], status)
@@ -136,6 +137,7 @@ export function Flow({ events, status }: { events?: RunEvent[]; status?: string 
         <p className="flex flex-wrap gap-2 text-xs text-muted" aria-hidden="true">
           <Badge tone="ok">done</Badge><Badge tone="info">working now</Badge><Badge tone="warn">waiting for you</Badge><Badge tone="bad">failed</Badge>
           <span>Dashed lines are decisions. Click a step to see what it does{live ? ' and what it has done in this run' : ''}.</span>
+          {harness.data.control_note && <span>{harness.data.control_note}</span>}
         </p>
       )}
       {selected ? (

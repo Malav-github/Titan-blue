@@ -29,4 +29,5 @@ def research() -> dict:
     if problems:
         raise ValueError("definitions/harness/research.json does not match the research graph: " + "; ".join(problems))
     return {"id": spec["id"], "title": spec["title"],
-            "nodes": [{"id": k, **v} for k, v in spec["nodes"].items()], "edges": spec["edges"]}
+            "nodes": [{"id": k, **v} for k, v in spec["nodes"].items()], "edges": spec["edges"],
+            "control_note": spec.get("control_note", "")}

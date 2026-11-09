@@ -86,6 +86,16 @@ class Jobs:
         except Exception as exc:
             self.runs.emit(run_id, "api", "run_failed", {"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
 
+    def stop_research(self, run_id: str) -> None:
+        """A run that is not working right now (paused, or waiting for you): end it and write its report from what it has."""
+        self._submit(self._stop_research, run_id)
+
+    def _stop_research(self, run_id: str) -> None:
+        try:
+            self.runner.stop(run_id)
+        except Exception as exc:
+            self.runs.emit(run_id, "api", "run_failed", {"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
+
     def report(self, run_id: str) -> dict | None:
         try:
             return self.runner.snapshot(run_id)["values"].get("report")

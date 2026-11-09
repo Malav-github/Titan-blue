@@ -427,6 +427,30 @@ function Timeline({ events, working }: { events: RunEvent[]; working: boolean })
   )
 }
 
+const STOPPABLE = new Set(['queued', 'running', 'pausing', 'paused', 'awaiting_approval', 'needs_capability', 'needs_source'])
+
+/** Pause, resume and stop. A pause takes effect at the next safe point; a stop keeps what was gathered and writes the report. */
+function RunControls({ runId, status }: { runId: string; status: string }) {
+  const qc = useQueryClient()
+  const act = useMutation({
+    mutationFn: (what: 'pause' | 'resume' | 'stop') =>
+      what === 'pause' ? api.pauseRun(runId) : what === 'resume' ? api.resumeRun(runId) : api.stopRun(runId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['run', runId] }),
+  })
+  if (!STOPPABLE.has(status)) return null
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      {['queued', 'running'].includes(status) && <Button variant="secondary" disabled={act.isPending} onClick={() => act.mutate('pause')}>Pause</Button>}
+      {['paused', 'pausing'].includes(status) && <Button disabled={act.isPending} onClick={() => act.mutate('resume')}>Resume</Button>}
+      <Button variant="danger" disabled={act.isPending}
+        onClick={() => { if (window.confirm('Stop this run? What it has gathered is kept and the report is written from it; the rest is skipped.')) act.mutate('stop') }}>
+        Stop
+      </Button>
+      {act.error && <ErrorNote error={act.error} />}
+    </span>
+  )
+}
+
 export function RunPage() {
   const { id = '' } = useParams()
   const archive = useArchive()
@@ -448,7 +472,9 @@ export function RunPage() {
       <PageHeader
         title={data.title ?? 'Run'}
         subtitle={<>{data.subject ? <>About <strong>{data.subject}</strong> · </> : null}started {events[0] ? time(events[0].ts) : '…'} · run <Mono>{id.slice(0, 8)}</Mono></>}
-        actions={<span aria-live="polite"><StatusBadge status={data.status} /></span>}
+        actions={<span className="flex flex-wrap items-center gap-3">
+          {!archive && data.kind === 'research' && <RunControls runId={id} status={data.status ?? ''} />}
+          <span aria-live="polite"><StatusBadge status={data.status} /></span></span>}
       />
       <div className="flex flex-col gap-6">
         {archive && (
@@ -465,7 +491,10 @@ export function RunPage() {
             The run failed: {String(failure?.payload.error ?? 'unknown error')}
           </div>
         )}
-        {data.status === 'stopped' && <Card><p className="text-sm">This run was stopped before doing any research.</p></Card>}
+        {data.status === 'stopped' && <Card><p className="text-sm">{data.report?.stopped_early
+          ? 'You stopped this run. The result below covers only what was gathered before the stop.'
+          : 'This run was stopped before doing any research.'}</p></Card>}
+        {data.status === 'paused' && !archive && <Card><p className="text-sm">Paused. Everything done so far is saved; Resume carries on from here, even after a restart.</p></Card>}
         <Flow events={events} status={data.status} />
         {data.report && <ReportView report={data.report} />}
         <Timeline events={events} working={working} />

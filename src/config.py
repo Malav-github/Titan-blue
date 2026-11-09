@@ -63,6 +63,8 @@ OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
 OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "2048"))
 # Qwen3 "thinking" mode: better reasoning, slower
 OLLAMA_THINK = os.getenv("OLLAMA_THINK", "False").lower() == "true"
+# How long Ollama keeps a model in memory after a call (Ollama's default is 5 minutes; a reload costs ~20 s on 8 GB)
+OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "30m")
 
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 POWER_MODE_TASKS = {

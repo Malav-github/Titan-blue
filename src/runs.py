@@ -32,7 +32,9 @@ BEGIN SELECT RAISE(ABORT, 'run_events is append-only'); END;
 STATUS_BY_EVENT = {
     "queued": "queued", "run_started": "running", "resumed": "running", "awaiting_approval": "awaiting_approval",
     "paused": "paused", "capability_needed": "needs_capability", "source_needed": "needs_source", "run_finished": "finished", "run_stopped": "stopped", "run_failed": "failed",
+    "pause_requested": "pausing", "stop_requested": "stopping",
 }
+CONTROL_EVENTS = ("pause_requested", "stop_requested", "resumed")
 
 
 class RunStore:
@@ -73,6 +75,14 @@ class RunStore:
             rows = db.execute("SELECT * FROM run_events WHERE run_id = ? AND event_id > ? ORDER BY event_id",
                               (run_id, after_id)).fetchall()
         return [{**dict(r), "payload": json.loads(r["payload"])} for r in rows]
+
+    def requested(self, run_id: str) -> str | None:
+        """'pause' or 'stop' when the person asked for it and the run has not been resumed since; else None. Read by the
+        runner between steps and between model calls, so a run pauses or stops at the next safe point."""
+        with closing(self._connect()) as db:
+            row = db.execute("SELECT type FROM run_events WHERE run_id = ? AND type IN (?,?,?) ORDER BY event_id DESC LIMIT 1",
+                             (run_id, *CONTROL_EVENTS)).fetchone()
+        return {"pause_requested": "pause", "stop_requested": "stop"}.get(row["type"]) if row else None
 
     def status(self, run_id: str) -> str | None:
         with closing(self._connect()) as db:

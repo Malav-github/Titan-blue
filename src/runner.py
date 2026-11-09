@@ -235,6 +235,9 @@ class State(TypedDict, total=False):
     fetched_keys: list[str]
     backlog: list[str]         # sources fetched but not read yet because the needed facts were already backed
     settle_sites: int          # independent sites that settle a fact (2 for research, 1 when only checking a premise)
+    stopping: bool             # the person stopped the run: skip what is left and write the report from what was gathered
+    extract_left: dict | None  # extraction paused part-way: {"sources": [...], "sha": ..., "chunk": n} to carry on from
+    check_left: bool           # checking paused part-way: the claims not checked yet are still in new_claim_ids
     iteration: int
     searches_used: int
     fetches_used: int
@@ -351,7 +354,15 @@ def sentence_chunks(raw_text: str, terms: set[str], k: int) -> list[str]:
     units = sentences.split(raw_text)
     chunks = ["\n".join(w) for w in sentences.windows(units, CHUNK_CHARS)]
     scored = sorted(enumerate(chunks), key=lambda ic: (-len(terms & _terms(ic[1])), ic[0]))
-    return [c for _, c in sorted(scored[:k])]
+    # a chunk that shares no word with the question or the facts needed is not worth a model call (~10 s); the page's
+    # first chunk is always read (its title and lead say what the page is about)
+    keep = [(i, c) for i, c in scored[:k] if i == 0 or not terms or terms & _terms(c)]
+    return [c for _, c in sorted(keep)]
+
+
+def _or_report(route):
+    """A routing rule that sends a stopped run to its report."""
+    return lambda s: "report" if s.get("stopping") else route(s)
 
 
 class Runner:
@@ -427,21 +438,46 @@ class Runner:
             "metadata": {"langfuse_session_id": run_id, "langfuse_tags": ["titan"]},
         }
 
-    def _drive(self, run_id: str, input_, pause_after) -> dict:
+    def stop(self, run_id: str) -> dict:
+        """End a run the person stopped: every step left is skipped and the report is written from what was gathered. Works on
+        a run that is paused, waiting for approval or a source, or between steps."""
+        config = self._config(run_id)
+        snap = self.graph.get_state(config)
+        if not snap.next:
+            return {"run_id": run_id, "status": self.runs.status(run_id), "report": snap.values.get("report")}
+        self.graph.update_state(config, {"stopping": True})
+        waiting = any(t.interrupts for t in snap.tasks)
+        self.runs.emit(run_id, "runner", "stopping", {"next": list(snap.next)})
+        return self._drive(run_id, Command(resume={"stopped": True}) if waiting else None, None, stopping=True)
+
+    def _drive(self, run_id: str, input_, pause_after, stopping: bool = False) -> dict:
         config = self._config(run_id)
         kwargs = {"interrupt_after": pause_after} if pause_after else {}
+        wanted = None
         try:
             for _ in self.graph.stream(input_, config, stream_mode="updates", **kwargs):
-                pass
+                # the person asked to pause or stop: the step that just ended is saved; nothing more runs now
+                if not stopping and (wanted := self._wanted(run_id)):
+                    break
         except Exception as exc:  # the checkpoint survives: resume() retries from the failed step
             self.runs.emit(run_id, "runner", "run_failed", {"error": f"{type(exc).__name__}: {exc}"})
             tracing.flush()
             return {"run_id": run_id, "status": "failed", "error": str(exc)}
 
+        if wanted == "stop":
+            return self.stop(run_id)
         snap = self.graph.get_state(config)
         asks = [i.value for t in snap.tasks for i in t.interrupts]
         capability = None
-        if asks and asks[0].get("type") == "capability_needed":
+        if wanted == "pause" and snap.next:
+            self.runs.emit(run_id, "runner", "paused", {"next": list(snap.next), "by": "you",
+                                                        "note": "everything done so far is saved; resume carries on from here"})
+        elif stopping and not snap.next:
+            report = snap.values.get("report", {})
+            self.runs.emit(run_id, "runner", "run_stopped", {
+                "reason": "stopped by you; the report covers what was gathered before the stop",
+                "established": len(report.get("established", [])), "gaps": len(report.get("gaps", []))})
+        elif asks and asks[0].get("type") == "capability_needed":
             request_id = self.registry.create_request(run_id, asks[0]["need"], asks[0]["reason"])
             capability = {"request_id": request_id, "need": asks[0]["need"], "reason": asks[0]["reason"]}
             self.runs.emit(run_id, "runner", "capability_needed", capability)
@@ -512,21 +548,43 @@ class Runner:
         g = StateGraph(State)
         for name in ("scout", "plan", "approve", "premise", "gate", "discover", "select", "fetch", "api_lookup", "extract", "check", "assess",
                      "capability", "report"):
-            g.add_node(name, getattr(self, f"n_{name}"))
+            g.add_node(name, self._guarded(name, getattr(self, f"n_{name}")))
         g.add_edge(START, "scout")
         g.add_edge("scout", "plan")
         g.add_edge("plan", "approve")
         g.add_edge("premise", "approve")
-        g.add_conditional_edges("approve", lambda s: s.get("route", "discover"), {
+        g.add_conditional_edges("approve", _or_report(lambda s: s.get("route", "discover")), {
             "discover": "discover", "plan": "plan", "premise": "premise", "report": "report", "end": END})
-        for a, b in (("discover", "select"), ("select", "fetch"), ("fetch", "api_lookup"), ("api_lookup", "extract"),
-                     ("extract", "check"), ("check", "assess")):
+        for a, b in (("discover", "select"), ("select", "fetch"), ("fetch", "api_lookup"), ("api_lookup", "extract")):
             g.add_edge(a, b)
-        g.add_conditional_edges("assess", self._more_or_report, {"capability": "capability", "discover": "discover", "gate": "gate", "report": "report"})
-        g.add_conditional_edges("gate", lambda s: s.get("gate", "stop"), {"read": "fetch", "stop": "report"})
-        g.add_conditional_edges("capability", lambda s: "discover" if s.get("capability_id") else "report", {"discover": "discover", "report": "report"})
+        # a step paused part-way (between model calls) runs again on resume and carries on where it stopped
+        g.add_conditional_edges("extract", _or_report(lambda s: "extract" if s.get("extract_left") else "check"),
+                                {"extract": "extract", "check": "check", "report": "report"})
+        g.add_conditional_edges("check", _or_report(lambda s: "check" if s.get("check_left") else "assess"),
+                                {"check": "check", "assess": "assess", "report": "report"})
+        g.add_conditional_edges("assess", _or_report(self._more_or_report), {"capability": "capability", "discover": "discover", "gate": "gate", "report": "report"})
+        g.add_conditional_edges("gate", _or_report(lambda s: "fetch" if s.get("gate") == "read" else "report"), {"fetch": "fetch", "report": "report"})
+        g.add_conditional_edges("capability", _or_report(lambda s: "discover" if s.get("capability_id") else "report"), {"discover": "discover", "report": "report"})
         g.add_edge("report", END)
         return g.compile(checkpointer=checkpointer)
+
+    @staticmethod
+    def _guarded(name: str, fn):
+        """A step that does nothing once the person has stopped the run (`stopping`), so the run goes straight to its
+        report, written from what was gathered. The report itself always runs."""
+        def step(s: State) -> dict:
+            if s.get("stopping") and name != "report":
+                return {}
+            return fn(s)
+        step.__name__ = f"n_{name}"
+        return step
+
+    def _wanted(self, run_id: str) -> str | None:
+        """'pause' or 'stop' when the person asked for it (RunStore.requested): checked between steps and model calls."""
+        try:
+            return self.runs.requested(run_id)
+        except Exception:
+            return None
 
     @staticmethod
     def _more_or_report(s: State) -> str:
@@ -1040,9 +1098,28 @@ class Runner:
     def _read_statements(self, s: State, sha: str, url: str, text: str = "", market: str | None = None, force: bool = False) -> None:
         """Financial statements in a document are read by code (skills/statements), never by the model, and recorded with
         every value, period, check and verdict. Only filings, scanned PDFs and documents that title a statement are read.
-        Figures in doubt, and scanned pages that could not be read, are reported as their own event, loudly."""
+        Figures in doubt, and scanned pages that could not be read, are reported as their own event, loudly.
+
+        The reading (tables, and OCR of scanned pages: tens of seconds) runs in the background on the processor while the
+        model works on the graphics card; the report waits for it (`_statements_done`) before it checks figures."""
         if not (force or market == "US" or statements.titles_a_statement(text)):
             return
+        if self.__dict__.get("_statements_pool") is None:
+            from concurrent.futures import ThreadPoolExecutor
+            self._statements_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="titan-statements")
+            self._statements_jobs: dict[str, list] = {}
+        job = self._statements_pool.submit(self._read_statements_now, s, sha, url, market)
+        self._statements_jobs.setdefault(s["run_id"], []).append(job)
+
+    def _statements_done(self, run_id: str) -> None:
+        """Wait for this run's statement reading still under way (it runs beside the model)."""
+        for job in (self.__dict__.get("_statements_jobs") or {}).pop(run_id, []):
+            try:
+                job.result()
+            except Exception:
+                pass                                   # a failure is already in the run log (statements_failed)
+
+    def _read_statements_now(self, s: State, sha: str, url: str, market: str | None) -> None:
         try:
             summary = statements.read_source(self.store, sha, url, market)
         except Exception as exc:                       # a table the reader cannot handle must not stop the run
@@ -1327,10 +1404,24 @@ class Runner:
     def n_extract(self, s: State) -> dict:
         rid, b = s["run_id"], s["budgets"]
         terms = _terms(s["question"], " ".join(s["checklist"]))
-        new_ids, rejected, seen = [], s["rejected"], set()
+        left = s.get("extract_left") or {}
+        prior = list(s["new_claim_ids"]) if left else []           # claims from the part read before a pause
+        new_ids, rejected = [], s["rejected"]
+        seen = {(self.store.get_claim(c)["source_sha256"], self.store.get_claim(c)["quote"]) for c in prior}
         items = dict(s["claim_items"])
         needed = "\n".join(f"{i}. {t}" for i, t in enumerate(s["checklist"], 1))
-        todo, backlog = list(s["new_sources"]), []
+        todo, backlog = list(left.get("sources") or s["new_sources"]), []
+        if left:
+            self.runs.emit(rid, "extract", "extract_resumed", {"sources_left": len(todo), "from_chunk": left.get("chunk", 0)})
+
+        def paused_at(pos: int, chunk: int) -> dict:
+            """Stop reading here, at a safe point between model calls: what is left is read when the run is resumed."""
+            self.runs.emit(rid, "extract", "extract_paused", {"sources_left": len(todo) - pos, "at_chunk": chunk,
+                                                             "claims_so_far": len(prior) + len(new_ids)})
+            return {"new_claim_ids": prior + new_ids, "all_claim_ids": s["all_claim_ids"] + new_ids, "rejected": rejected,
+                    "new_sources": [], "claim_items": items, "backlog": s.get("backlog", []),
+                    "extract_left": {"sources": todo[pos:], "chunk": chunk}}
+
         for pos, sha in enumerate(todo):
             source = self.store.get_source(sha)
             if why := sources.not_citable(source["url"], source["final_url"]):
@@ -1339,7 +1430,12 @@ class Runner:
                 continue
             raw = Path(source["text_path"]).read_text(encoding="utf-8")
             text = normalize(raw)
-            for chunk in sentence_chunks(raw, terms, b["max_chunks_per_source"]):
+            first = left.get("chunk", 0) if pos == 0 else 0
+            for k, chunk in enumerate(sentence_chunks(raw, terms, b["max_chunks_per_source"])):
+                if k < first:
+                    continue                       # read before the pause
+                if (pos or k > first) and self._wanted(rid):
+                    return paused_at(pos, k)
                 units = sentences.split(chunk)
                 prompt = extraction_prompt(s["question"], needed, source["final_url"], chunk)
                 Extraction.take_dropped(), Extraction.take_dropped_examples()
@@ -1397,8 +1493,8 @@ class Runner:
                     "read": pos + 1, "kept_for_later": len(backlog),
                     "reason": "every needed fact already has claims from enough independent sites"})
                 break
-        return {"new_claim_ids": new_ids, "all_claim_ids": s["all_claim_ids"] + new_ids, "rejected": rejected,
-                "new_sources": [], "claim_items": items, "backlog": backlog}
+        return {"new_claim_ids": prior + new_ids, "all_claim_ids": s["all_claim_ids"] + new_ids, "rejected": rejected,
+                "new_sources": [], "claim_items": items, "backlog": backlog, "extract_left": None}
 
     def _documents(self, shas: list[str]) -> dict[str, str]:
         """Source -> the first source holding the same document (itself if it has no copy among `shas`)."""
@@ -1536,7 +1632,13 @@ class Runner:
                 done[key] = done.get(key, 0) + 1
                 keep.append(cid)
             pending = keep
+        waves = 0
         while pending:
+            if waves and self._wanted(rid):
+                # a safe point between model calls: the claims not checked yet are checked when the run is resumed
+                self.runs.emit(rid, "check", "check_paused", {"claims_left": len(pending)})
+                return {"verdicts": verdicts, "relevant": relevant, "context": context, "new_claim_ids": pending, "check_left": True}
+            waves += 1
             settled = self._settled_facts(s, verdicts, relevant, s["claim_items"], need)
             wave, rest = [], []
             for cid in pending:
@@ -1580,7 +1682,7 @@ class Runner:
                 self.runs.emit(rid, "check", "relevance_checked", {
                     "claim_id": cid, "needed_fact": fact, "addresses": relevant[str(cid)], "context": context[str(cid)],
                     "reason": verdict.reason if verdict else "relevance check failed; treated as not relevant"})
-        return {"verdicts": verdicts, "relevant": relevant, "context": context, "new_claim_ids": []}
+        return {"verdicts": verdicts, "relevant": relevant, "context": context, "new_claim_ids": [], "check_left": False}
 
     def n_assess(self, s: State) -> dict:
         """Coverage is computed by code: a needed fact is covered once a supported claim is filed under it.
@@ -1720,6 +1822,7 @@ class Runner:
         """Every figure a claim's quote states, checked by code against the financial statements read for the subject
         (skills/statements/figures.py): the statements serve as an index of what the company reported. Each row gets
         `figures` and a `figures_label`; results are recorded with the claim. Returns a warning when a figure differs."""
+        self._statements_done(s["run_id"])            # statements read in the background are in the index first
         if not s.get("entity_id"):
             return None
         index = self.store.statement_figures(entity_id=s["entity_id"])
@@ -1834,7 +1937,10 @@ class Runner:
             "established": rows["supported"], "partial": rows["partially_supported"],
             "not_supported": len(rows["not_supported"]), "unchecked": len(rows["unchecked"]),
             "off_topic": len(rows["off_topic"]), "context": rows["context"], "reference_only": rows["reference_only"], "conflicts": conflicts,
-            "gaps": gaps, "rejected_quotes": s["rejected"], "warnings": s.get("warnings", []) + ([time_warning] if time_warning else []) + ([figure_warning] if figure_warning else []),
+            "gaps": gaps, "rejected_quotes": s["rejected"], "warnings": s.get("warnings", []) + ([time_warning] if time_warning else []) + ([figure_warning] if figure_warning else [])
+                        + (["Stopped by you before the run finished: this report covers only what was gathered up to the stop."]
+                           if s.get("stopping") else []),
+            "stopped_early": bool(s.get("stopping")),
             "time": timing, "quality": quality,
             "budget_used": {"searches": s["searches_used"], "fetches": s["fetches_used"], "iterations": s["iteration"]},
             "domain": s.get("domain"),

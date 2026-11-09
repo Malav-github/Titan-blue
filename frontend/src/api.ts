@@ -135,6 +135,7 @@ export interface ClaimTime {
   detail: { label?: string; basis?: string; span?: string; fiscal_year?: number; quarter?: number; half?: number; start?: string; end?: string; comparison?: string; change?: string; form?: string }
 }
 export interface Report {
+  stopped_early?: boolean
   question: string
   subject: string
   summary: string
@@ -313,8 +314,8 @@ export interface Models {
 }
 
 export interface HarnessNode { id: string; label: string; col: number; row: number; does: string }
-export interface HarnessEdge { from: string; to: string; label?: string; bend?: number; via?: [number, number][] }
-export interface Harness { id: string; title: string; nodes: HarnessNode[]; edges: HarnessEdge[] }
+export interface HarnessEdge { from: string; to: string; label?: string; bend?: number; via?: [number, number][]; control?: boolean }
+export interface Harness { id: string; title: string; nodes: HarnessNode[]; edges: HarnessEdge[]; control_note?: string }
 
 // ---- calls -------------------------------------------------------------------------------------
 
@@ -330,6 +331,9 @@ export const api = {
   decide: (id: string, body: { approved: boolean; queries?: string[]; checklist?: string[]; comment?: string; url?: string; override?: boolean }) => post(`/api/runs/${id}/decision`, body),
   giveSource: (id: string, url: string | null) => post(`/api/runs/${id}/source`, { url }),
   continueRun: (id: string, capability: string | null) => post(`/api/runs/${id}/continue`, { capability }),
+  pauseRun: (id: string) => post(`/api/runs/${id}/pause`, {}),
+  resumeRun: (id: string) => post(`/api/runs/${id}/resume`, {}),
+  stopRun: (id: string) => post(`/api/runs/${id}/stop`, {}),
   connectors: () => request<ConnectorSummary[]>('/api/connectors'),
   requests: () => request<Omit<CapabilityRequest, 'events' | 'gate'>[]>('/api/capability/requests'),
   request: (id: string) => request<CapabilityRequest>(`/api/capability/requests/${id}`),

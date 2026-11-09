@@ -230,6 +230,31 @@
       "from": "approve",
       "to": "report",
       "label": "accepted: stop"
+    },
+    {
+      "from": "extract",
+      "to": "extract",
+      "label": "paused part-way: carries on from the page it reached",
+      "control": true
+    },
+    {
+      "from": "check",
+      "to": "check",
+      "label": "paused part-way: checks the claims left",
+      "control": true
+    },
+    {
+      "from": "extract",
+      "to": "report",
+      "label": "stopped by you",
+      "control": true
+    },
+    {
+      "from": "check",
+      "to": "report",
+      "label": "stopped by you",
+      "control": true
     }
-  ]
+  ],
+  "control_note": "Pause, Resume and Stop work at any step: a pause takes effect at the next safe point (between steps, or between model calls while reading pages and checking claims); Stop skips what is left and writes the report from what was gathered."
 }

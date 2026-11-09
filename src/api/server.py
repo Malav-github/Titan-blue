@@ -248,7 +248,7 @@ def create_app(registry: Registry | None = None, token: str | None = None,
                 "approval": last("awaiting_approval") if status == "awaiting_approval" else None,
                 "capability": last("capability_needed") if status == "needs_capability" else None,
                 "source_request": last("source_needed") if status == "needs_source" else None,
-                "report": jobs.report(run_id) if status == "finished" else None, "event_count": len(events)}
+                "report": jobs.report(run_id) if status in ("finished", "stopped") else None, "event_count": len(events)}
 
     @app.get("/api/runs/{run_id}")
     def run(run_id: str):
@@ -317,6 +317,46 @@ def create_app(registry: Registry | None = None, token: str | None = None,
             raise HTTPException(422, {"problems": ["give a web address that starts with http:// or https://"]})
         jobs.resume_research(run_id, {"url": url} if url else {"decline": True})
         return {"ok": True}
+
+    ACTIVE = {"queued", "running", "pausing"}
+    WAITING = {"paused", "awaiting_approval", "needs_capability", "needs_source"}
+
+    def research_status(run_id: str) -> str:
+        if run_kind(engine.runs.events(run_id)) != "research":
+            raise HTTPException(404, "No such research run")
+        return engine.runs.status(run_id)
+
+    @app.post("/api/runs/{run_id}/pause", status_code=202)
+    def pause_run(run_id: str):
+        """Pause at the next safe point (between steps, or between model calls inside a long step). Nothing done is lost."""
+        status = research_status(run_id)
+        if status not in ACTIVE:
+            raise HTTPException(409, {"problems": [f"this run is {status}, not running"]})
+        engine.runs.emit(run_id, "api", "pause_requested", {})
+        return {"ok": True, "status": "pausing"}
+
+    @app.post("/api/runs/{run_id}/resume", status_code=202)
+    def resume_run(run_id: str):
+        """Carry on a paused run from where it stopped."""
+        status = research_status(run_id)
+        if status == "pausing":
+            engine.runs.emit(run_id, "api", "resumed", {"before_pause": True})      # changed your mind before it paused
+            return {"ok": True, "status": "running"}
+        if status != "paused":
+            raise HTTPException(409, {"problems": [f"this run is {status}, not paused"]})
+        jobs.resume_research(run_id, None)
+        return {"ok": True, "status": "queued"}
+
+    @app.post("/api/runs/{run_id}/stop", status_code=202)
+    def stop_run(run_id: str):
+        """End the run: what is left is skipped and the report is written from what was gathered so far."""
+        status = research_status(run_id)
+        if status in TERMINAL or status == "stopping":
+            raise HTTPException(409, {"problems": [f"this run is already {status}"]})
+        engine.runs.emit(run_id, "api", "stop_requested", {})
+        if status in WAITING:
+            jobs.stop_research(run_id)                 # not working now: end it straight away
+        return {"ok": True, "status": "stopping"}
 
     @app.post("/api/runs/{run_id}/continue", status_code=202)
     def continue_run(run_id: str, body: Continue):
