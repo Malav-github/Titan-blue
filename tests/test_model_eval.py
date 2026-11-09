@@ -6,7 +6,8 @@ import re
 from capability import DraftEndpoint, DraftManifest, DraftParam
 from evidence import verify_quote
 from model_eval import ranking, resolve_quote
-from runner import ExtractedClaim, Extraction, Relevance
+from runner import Relevance
+from tests.scripted import ExtractedClaim, Extraction, resolved
 from support import SupportVerdict
 
 CASES = model_eval.load_cases()
@@ -24,7 +25,7 @@ class Scripted:
                 out = handler(prompt)
                 if isinstance(out, Exception):
                     raise out
-                return out
+                return resolved(out, prompt)
         return Call()
 
 
@@ -37,8 +38,7 @@ def perfect():
     def extraction(prompt):
         case = next(c for c in CASES["extraction"] if c["url"] in prompt)
         return Extraction(claims=[
-            ExtractedClaim(predicate="p", value=e, claim=f"Record states that {e} applies here.", needed_fact=1,
-                           quote=sentence_around(case["text"], e)) for e in case["expected"]])
+            ExtractedClaim(predicate="p", needed_fact=1, quote=e) for e in case["expected"]])      # the sentence that holds it
 
     def support(prompt):
         case = next(c for c in CASES["support"] if f"CLAIM: {c['claim']}" in prompt)

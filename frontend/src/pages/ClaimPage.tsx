@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { api } from '../api'
+import { api, pageText } from '../api'
 import { useArchive, useLinks } from '../scope'
 import { time } from '../format'
 import { Badge, Card, ErrorNote, ExternalLink, Loading, Mono, PageHeader, TierBadge, VerdictBadge, timeChips } from '../ui'
@@ -26,7 +26,7 @@ export function ClaimPage() {
         <Card>
           <h2 className="font-semibold">The quote, in its page</h2>
           <p className="mt-2 text-sm leading-relaxed">…{c.before}<mark>{c.quote}</mark>{c.after}…</p>
-          <p className="mt-3 flex flex-wrap items-center gap-2 text-sm"><TierBadge tier={c.source_tier} /> <ExternalLink href={c.source_url}>{c.source_url}</ExternalLink></p>
+          <p className="mt-3 flex flex-wrap items-center gap-2 text-sm"><TierBadge tier={c.source_tier} />{c.page && <Badge tone="info">{pageText(c.page)}</Badge>} <ExternalLink href={c.source_url}>{c.source_url}</ExternalLink></p>
         </Card>
         <Card>
           <h2 className="font-semibold">When this claim holds</h2>

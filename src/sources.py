@@ -10,6 +10,7 @@ Web search always runs; routing only decides which connectors are worth a model 
 import json
 import re
 from functools import lru_cache
+from urllib.parse import parse_qsl, urlparse
 
 from config import PROJECT_ROOT
 
@@ -70,3 +71,29 @@ def priority_advice() -> str:
     p = priority()
     lines = [f"{r['rank']}. {r['kind']} ({r['examples']}): {r['why']}" for r in p["ranks"]]
     return "Prefer sources in this order, best first:\n" + "\n".join(lines) + f"\nNever {p['never']}."
+
+
+# --- is an address the page of a report, or only a site's front page? -----------------------------------------------------
+
+_FRONT = re.compile(r"^/?(?:(?:[a-z]{2}(?:[-_][a-z]{2})?|home|homepage|index(?:\.\w+)?|default\.\w+|welcome|main)/?)?$", re.I)
+_TRACKING = re.compile(r"^(?:utm_\w+|ref|source|lang|hl|gclid|fbclid|mc_\w+)$", re.I)
+
+
+def is_homepage(url: str) -> bool:
+    """A site's front page: no path beyond '/', a language root ('/en', '/en-us') or an index file, and no query that
+    names a page (tracking and language parameters aside)."""
+    u = urlparse(url or "")
+    if u.scheme not in ("http", "https"):
+        return False
+    query = [k for k, _ in parse_qsl(u.query, keep_blank_values=True) if not _TRACKING.match(k)]
+    return bool(_FRONT.match(u.path or "/")) and not query and not u.fragment.startswith("/")
+
+
+def not_citable(url: str, final_url: str) -> str | None:
+    """Why a fetched page cannot be cited for a claim, or None. A claim points at the report itself: its exact address,
+    never a site's homepage, and never a homepage that a deeper address redirected to (a moved or paywalled report)."""
+    if not is_homepage(final_url):
+        return None
+    if url and not is_homepage(url):
+        return f"{url} redirected to the site's homepage ({final_url}): the report itself was not reached"
+    return f"{final_url} is a site's homepage, not the page of a report"

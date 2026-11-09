@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { api, type Approval, type FigureCheck, type Report, type ReportClaim, type RunDetail, type RunEvent } from '../api'
+import { api, pageText, type Approval, type FigureCheck, type Report, type ReportClaim, type RunDetail, type RunEvent } from '../api'
 import { ACTIVE, describeEvent, lines, time } from '../format'
 import { Flow } from '../Flow'
 import { useRunEvents } from '../useRunEvents'
@@ -12,10 +12,13 @@ function ClaimCard({ claim, caution }: { claim: ReportClaim; caution?: boolean }
   const links = useLinks()
   return (
     <li className={`rounded-lg border bg-surface p-4 ${caution ? 'border-warn' : 'border-line'}`}>
-      <p className="font-medium">{claim.claim}</p>
-      <blockquote className="mt-2 border-l-4 border-line pl-3 text-sm italic text-muted">“{claim.quote}”</blockquote>
+      {claim.claim === claim.quote
+        ? <blockquote className="border-l-4 border-accent pl-3 font-medium">“{claim.quote}”</blockquote>
+        : <><p className="font-medium">{claim.claim}</p>
+            <blockquote className="mt-2 border-l-4 border-line pl-3 text-sm italic text-muted">“{claim.quote}”</blockquote></>}
       <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
         <TierBadge tier={claim.source_tier} />
+        {claim.page && <Badge tone="info">{pageText(claim.page)}</Badge>}
         {claim.source_label && <span className="text-muted">{claim.source_label}</span>}
         <Badge tone={claim.source_date ? 'neutral' : 'warn'}>
           {claim.source_date ? `Dated ${claim.source_date.slice(0, 10)}${claim.source_date_kind ? ` (${claim.source_date_kind.replace('_', ' ')})` : ''}` : 'No date found'}

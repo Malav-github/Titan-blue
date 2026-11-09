@@ -33,6 +33,7 @@ from skills.planning import sense as common_sense
 from skills.temporal.extract import DateFact, best_date, parse_date
 import corroboration
 import diagnosis
+import sentences
 import source_class
 import sources
 from config import DATA_DIR, LLM_MODE
@@ -113,16 +114,17 @@ class Selection(BaseModel):
     numbers: list[int] = Field(description="Numbers of the most useful pages, best first")
 
 
-class ExtractedClaim(BaseModel):
-    predicate: str = Field(description="Short dotted name for the fact, e.g. patent.assignee")
-    value: str = Field(description="The specific value, copied from the passage")
-    claim: str = Field(description="One self-contained sentence stating the fact")
-    quote: str = Field(description="Exact words copied from the passage that state the fact (20-300 characters)")
+class ChosenClaim(BaseModel):
+    """A fact the model found, given as the numbers of the passage's sentences that state it: code copies those sentences,
+    so the claim is the source's own words (sentences.py). The model types no quote and no paraphrase."""
+    predicate: str = Field(description="Short dotted name for the fact, e.g. financials.revenue")
+    sentences: list[int] = Field(description="Numbers of the sentence(s) that state the fact: one, or up to 3 next to each other")
+    value: str = Field(description="The specific value (a figure, a date, a name), copied exactly from those sentences")
     needed_fact: int = Field(description="Number of the NEEDED FACT this claim helps establish (1-based)")
 
 
 class Extraction(BaseModel):
-    claims: list[ExtractedClaim] = Field(default_factory=list)
+    claims: list[ChosenClaim] = Field(default_factory=list)
     _dropped: ClassVar[int] = 0      # malformed claims dropped since the last take_dropped() (telemetry only)
     _examples: ClassVar[list] = []   # what was dropped, so a dropped claim is never invisible
 
@@ -135,7 +137,7 @@ class Extraction(BaseModel):
             good = []
             for item in data["claims"]:
                 try:
-                    good.append(ExtractedClaim.model_validate(item))
+                    good.append(ChosenClaim.model_validate(item))
                 except ValidationError as exc:
                     cls._dropped += 1
                     if len(cls._examples) < 3:
@@ -245,20 +247,20 @@ class State(TypedDict, total=False):
 
 
 def extraction_prompt(question: str, needed: str, page_url: str, chunk: str) -> str:
-    """`needed` is the numbered list of facts wanted. Shared with the model eval so it tests what the pipeline sends."""
+    """`needed` is the numbered list of facts wanted. The passage is shown as numbered sentences (sentences.split), and the
+    model answers with sentence numbers. Shared with the model eval so it tests what the pipeline sends."""
     return (
         f"QUESTION: {question}\nNEEDED FACTS:\n{needed}\nPAGE: {page_url}\n\n"
-        f"PASSAGE:\n{chunk}\n\n"
-        "Extract up to 8 facts from the passage, mostly facts that establish one of the NEEDED FACTS "
-        "(give its number in `needed_fact`). Skip headings, marketing language and anything off-topic. "
-        "`claim` is ONE complete sentence in your own words stating the fact (for example: \"The plant's annual "
-        "capacity is 50,000 metric tons.\"); never paste the quote into it and never start it with \"quote:\". "
-        "`quote` must be copied EXACTLY from the passage (20-300 characters, no paraphrase, no fixing "
-        "typos, no ellipses). State only what the passage says; do not add facts or links between facts "
-        "that it does not state. Besides those, you may add up to 3 CONTEXT facts: material information about the same event that a reader "
-        "of the answer would want (the terms, price or size of a deal, the parties, the reason or circumstances, the financial impact); "
-        "give for `needed_fact` the number of the NEEDED FACT that event belongs to. If nothing in the passage establishes a needed fact "
-        "or gives such context, return no claims."
+        f"PASSAGE (numbered sentences):\n{sentences.numbered(sentences.split(chunk))}\n\n"
+        "Find up to 8 facts in the passage, mostly facts that establish one of the NEEDED FACTS (give its number in "
+        "`needed_fact`). For each fact give in `sentences` the number of the sentence that states it; if the fact needs the "
+        "sentence before or after to be complete, give up to 3 numbers next to each other. In `value` copy the specific value "
+        "(the figure, date or name) exactly as those sentences write it. Choose sentences that state the "
+        "fact themselves: skip headings, menus, marketing language and anything off-topic. Besides those, you may add up to 3 "
+        "CONTEXT facts: material information about the same event that a reader of the answer would want (the terms, price "
+        "or size of a deal, the parties, the reason or circumstances, the financial impact); give for `needed_fact` the "
+        "number of the NEEDED FACT that event belongs to. If no sentence establishes a needed fact or gives such context, "
+        "return no claims."
     )
 
 
@@ -341,6 +343,15 @@ def top_chunks(text: str, terms: set[str], k: int) -> list[str]:
     chunks = [text[i:i + CHUNK_CHARS] for i in range(0, max(len(text), 1), step)]
     scored = sorted(enumerate(chunks), key=lambda ic: (-len(terms & _terms(ic[1])), ic[0]))
     return [c for _, c in sorted(scored[:k])]  # best k, kept in page order
+
+
+def sentence_chunks(raw_text: str, terms: set[str], k: int) -> list[str]:
+    """Like `top_chunks`, but each chunk is whole sentences, one per line (sentences.split on the page's own lines, so a
+    heading is never glued to the sentence after it): what the model numbers and code copies."""
+    units = sentences.split(raw_text)
+    chunks = ["\n".join(w) for w in sentences.windows(units, CHUNK_CHARS)]
+    scored = sorted(enumerate(chunks), key=lambda ic: (-len(terms & _terms(ic[1])), ic[0]))
+    return [c for _, c in sorted(scored[:k])]
 
 
 class Runner:
@@ -949,6 +960,14 @@ class Runner:
         if n <= 0 or not cands:
             self.runs.emit(rid, "select", "sources_selected", {"urls": [], "reason": "nothing to fetch or budget spent"})
             return {"selected": []}
+        front = [c for c in cands if sources.is_homepage(c["url"])]
+        if front:                    # a homepage is never the page of a report: not worth a fetch, and never cited
+            self.runs.emit(rid, "select", "candidates_skipped", {"urls": [c["url"] for c in front][:10],
+                                                                "reason": "a site's homepage, not the page of a report"})
+            cands = [c for c in cands if c not in front]
+            if not cands:
+                self.runs.emit(rid, "select", "sources_selected", {"urls": [], "reason": "only homepages were found"})
+                return {"selected": []}
         shown = cands[:15]
         now = tclock.now(self.now_fn)
         scope = s.get("time_scope") or {}
@@ -1314,56 +1333,63 @@ class Runner:
         todo, backlog = list(s["new_sources"]), []
         for pos, sha in enumerate(todo):
             source = self.store.get_source(sha)
-            text = normalize(Path(source["text_path"]).read_text(encoding="utf-8"))
-            for chunk in top_chunks(text, terms, b["max_chunks_per_source"]):
+            if why := sources.not_citable(source["url"], source["final_url"]):
+                # a claim must point at the report itself, not at a site's front page
+                self.runs.emit(rid, "extract", "source_not_citable", {"url": source["url"], "final_url": source["final_url"], "reason": why})
+                continue
+            raw = Path(source["text_path"]).read_text(encoding="utf-8")
+            text = normalize(raw)
+            for chunk in sentence_chunks(raw, terms, b["max_chunks_per_source"]):
+                units = sentences.split(chunk)
                 prompt = extraction_prompt(s["question"], needed, source["final_url"], chunk)
                 Extraction.take_dropped(), Extraction.take_dropped_examples()
                 extraction = self._ask("extract", Extraction, prompt, rid, "extract")
                 if dropped := Extraction.take_dropped():
                     self.runs.emit(rid, "extract", "claims_malformed", {
                         "count": dropped, "source_url": source["final_url"], "examples": Extraction.take_dropped_examples()})
-                for c in (extraction.claims if extraction else [])[:5]:
-                    key = (sha, normalize(c.quote))
+                chosen = [(c, quote, why) for c in (extraction.claims if extraction else [])[:5]
+                          for quote, why in sentences.pick_all(units, c.sentences)]
+                for c, quote, why in chosen:
+                    if quote is None:
+                        rejected += 1
+                        self.runs.emit(rid, "extract", "claim_rejected", {
+                            "sentences": c.sentences, "reason": why, "source_url": source["final_url"]})
+                        continue
+                    if len(normalize(quote)) < MIN_QUOTE_CHARS and (wider := widen_quote(text, quote)):
+                        self.runs.emit(rid, "extract", "quote_widened", {"from": normalize(quote), "to": wider,
+                                                                         "source_url": source["final_url"]})
+                        quote = wider
+                    key = (sha, normalize(quote))
                     if key in seen:
                         continue
                     seen.add(key)
-                    if len(c.claim.split()) < 4 or NON_FACT.search(c.claim):  # "No claims", headings, remarks about the passage
+                    if len(quote.split()) < 4 or NON_FACT.search(quote):      # a heading, a menu line, a fragment
                         self.runs.emit(rid, "extract", "claim_rejected", {
-                            "claim": c.claim, "quote": c.quote, "reason": "not a statement of a fact",
-                            "source_url": source["final_url"]})
+                            "quote": quote, "reason": "not a statement of a fact", "source_url": source["final_url"]})
                         continue
                     if len(s["checklist"]) == 1:
                         c.needed_fact = 1          # one fact asked: a small model numbers it wrongly at times; the relevance check still judges it
                     if not 1 <= c.needed_fact <= len(s["checklist"]):
                         self.runs.emit(rid, "extract", "claim_rejected", {
-                            "claim": c.claim, "quote": c.quote, "reason": "does not address any needed fact",
-                            "source_url": source["final_url"]})
+                            "quote": quote, "reason": "does not address any needed fact", "source_url": source["final_url"]})
                         continue
-                    # `value` is metadata the model often fills badly; blank it rather than lose a verifiable claim
-                    value = c.value if normalize(c.value) and normalize(c.value) in normalize(f"{c.quote} {c.claim}") else ""
-                    quote = c.quote
-                    if narrowed := narrow_quote(quote, c.claim, value):
-                        self.runs.emit(rid, "extract", "quote_narrowed", {"from_chars": len(normalize(quote)), "to": narrowed,
-                                                                           "source_url": source["final_url"]})
-                        quote = narrowed
-                    if len(normalize(quote)) < MIN_QUOTE_CHARS and (wider := widen_quote(text, quote)):
-                        self.runs.emit(rid, "extract", "quote_widened", {"from": normalize(quote), "to": wider,
-                                                                         "source_url": source["final_url"]})
-                        quote = wider
-                    r = self.store.add_claim(s["entity_id"], c.predicate, value, c.claim, sha, quote,
+                    # the claim IS the quote: the source's own sentence, copied by code, never reworded; the value is kept
+                    # only as the quote writes it (it is how two sources' values are compared)
+                    value = c.value if normalize(c.value) and normalize(c.value) in normalize(quote) else ""
+                    r = self.store.add_claim(s["entity_id"], c.predicate, value, normalize(quote), sha, quote,
                                              created_by=f"runner:{rid[:8]}")
                     if r["ok"]:
                         new_ids.append(r["claim_id"])
                         items[str(r["claim_id"])] = c.needed_fact - 1
                         self._record_times(rid, r["claim_id"])
                         self.runs.emit(rid, "extract", "claim_recorded", {
-                            "claim_id": r["claim_id"], "claim": c.claim, "value": value, "quote": normalize(c.quote),
-                            "needed_fact": c.needed_fact,
+                            "claim_id": r["claim_id"], "claim": normalize(quote), "quote": normalize(quote), "value": value, "sentences": c.sentences,
+                            "needed_fact": c.needed_fact, "page": r.get("page"),
                             "source_url": source["final_url"], "source_sha256": sha, "source_tier": r["source_tier"]})
                     else:
                         rejected += 1
                         self.runs.emit(rid, "extract", "claim_rejected", {
-                            "claim": c.claim, "quote": c.quote, "reason": r["reason"],
+                            "quote": quote, "reason": r["reason"],
                             "closest_passage": r.get("closest_passage"), "source_url": source["final_url"]})
             if pos + 1 < len(todo) and self._backed(s, items, len(s["checklist"]), s.get("settle_sites", 2)):
                 backlog = todo[pos + 1:]               # every needed fact already has claims from enough sites: read the rest only if needed
@@ -1606,34 +1632,54 @@ class Runner:
             self.runs.emit(rid, "report", "summary_scored", {"form": form["id"], "score": result["score"], "grade": result["grade"],
                                                              "blockers": [b["id"] for b in result["blockers"]], "revisions": 0, "writer": "code"})
             return text, [], {**result, "revisions": 0, "uncited_removed": [], "requested_form": form["id"], "writer": "code"}
-        draft = self._ask("synthesis", Summary, prompt, rid, "report")
-        if not draft:
-            return "", [], {}
-        text, dropped = clean(draft.text)
+        # the answer is the sources' own words: their quotes, put together by code under the facts asked for, each with
+        # where it is (the exact address, and the page of a PDF). No model writes it, so nothing in it is paraphrased.
+        text = self._quoted_answer(s, rows, context_rows, gaps)
         result = rate(text)
-        revisions = 0
-        while revisions < writing.setting("max_revisions") and (result["blockers"] or (result["score"] or 100) < writing.setting("revise_below")):
-            again = self._ask("synthesis", Summary, writing.revision_prompt(prompt, text, result["issues"]), rid, "report")
-            if not again:
-                break
-            revisions += 1
-            new_text, new_dropped = clean(again.text)
-            new_result = rate(new_text)
-            self.runs.emit(rid, "report", "summary_revised", {"before": result["score"], "after": new_result["score"], "issues": result["issues"][:6]})
-            if (new_result["score"] or 0) >= (result["score"] or 0):      # a worse rewrite never replaces a better draft
-                text, dropped, result = new_text, new_dropped, new_result
-        text, uncited = writing.drop_uncited(text)          # a statement no claim backs does not stay in the answer
-        if uncited:
-            result = rate(text)
-            self.runs.emit(rid, "report", "uncited_removed", {"sentences": uncited})
-        self.runs.emit(rid, "report", "summary_scored", {"form": form["id"], "score": result["score"], "grade": result["grade"],
-                                                         "blockers": [b["id"] for b in result["blockers"]], "revisions": revisions})
-        return text, dropped, {**result, "revisions": revisions, "uncited_removed": uncited, "requested_form": writing.choose_form(s["question"], scope)["id"]}
+        self.runs.emit(rid, "report", "summary_scored", {"form": "quotes", "score": result["score"], "grade": result["grade"],
+                                                         "blockers": [b["id"] for b in result["blockers"]], "revisions": 0, "writer": "code"})
+        return text, [], {**result, "revisions": 0, "uncited_removed": [], "requested_form": form["id"], "writer": "code:quotes"}
+
+    QUOTES_PER_FACT = 3
 
     @staticmethod
-    def _sentence(text: str, cid: int) -> str:
-        body = text.strip().rstrip(".")
-        return f"{body} [claim:{cid}]."
+    def _where(r: dict) -> str:
+        """Where a quote is: the source, its date, the page of a PDF (and the page number printed on it), the exact address."""
+        bits = [r.get("source_label") or corroboration.site(r["source_url"])]
+        if r.get("source_date"):
+            bits.append(f"dated {str(r['source_date'])[:10]}")
+        if page := r.get("page"):
+            span = f"pages {page['page']}-{page['last_page']}" if page["last_page"] != page["page"] else f"page {page['page']}"
+            if printed := page.get("printed"):
+                last = page.get("printed_last")
+                span += f" (printed page {printed}-{last})" if last and last != printed else f" (printed page {printed})"
+            bits.append(f"{span} of {page['pages']}")
+        bits.append(r["source_url"])
+        return ", ".join(bits)
+
+    def _cite(self, r: dict) -> str:
+        label = f" [figures: {r['figures_label']}]" if r.get("figures_label") else ""
+        return f"“{r.get('quote') or r['claim']}” ({self._where(r)}) [claim:{r['claim_id']}]{label}"
+
+    def _quoted_answer(self, s: State, rows: list[dict], context_rows: list[dict], gaps: list[str]) -> str:
+        """Under each fact asked for, the quotes that establish it: primary sources first, then the newest. The rest stay
+        listed with the claims below the answer."""
+        def newest(r):
+            return -int(re.sub(r"\D", "", str(r.get("source_date") or ""))[:8] or 0)
+        parts = []
+        for i, fact in enumerate(s["checklist"]):
+            mine = sorted([r for r in rows if r.get("fact") == i], key=lambda r: (r.get("source_tier") != "primary", newest(r)))
+            if not mine:
+                continue
+            lines = [f"{fact}:"] + [f"- {self._cite(r)}" for r in mine[:self.QUOTES_PER_FACT]]
+            if (more := len(mine) - self.QUOTES_PER_FACT) > 0:
+                lines.append(f"- {more} more quote{'s' if more != 1 else ''} establish{'' if more != 1 else 'es'} this; listed below.")
+            parts.append("\n".join(lines))
+        if context_rows:
+            parts.append("\n".join(["Context:"] + [f"- {self._cite(r)}" for r in context_rows[:self.QUOTES_PER_FACT * 2]]))
+        if gaps:
+            parts.append("Not established from what was read: " + "; ".join(gaps) + ".")
+        return "\n\n".join(parts)
 
     def _roundup(self, s: State, rows: list[dict], context_rows: list[dict], facts: list, gaps: list[str]) -> str:
         """The round-up for a list question, by code. Claims are grouped by the document they come from (one document is one
@@ -1662,12 +1708,8 @@ class Runner:
             first = when(group)
             lead = f"On {first.human()}, " if first else "Undated: "
             group = sorted(group, key=lambda r: (r not in rows, r["claim_id"]))
-            sentences = [self._sentence(r["claim"], r["claim_id"]) for r in group]
-            opening = sentences[0]
-            if first and re.match(r"(?:The|A|An|Its|This)\b", opening):
-                opening = opening[0].lower() + opening[1:]          # 'On 15 October 2026, the company ...'; names keep their capitals
-            sentences[0] = lead + opening
-            parts.append(" ".join(sentences))
+            # the event's own sentences, quoted with where they are: nothing reworded
+            parts.append("\n".join([lead.rstrip(", ") + ":"] + [f"- {self._cite(r)}" for r in group]))
         if gaps:
             parts.append("Not established from what was read: " + "; ".join(gaps) + ".")
         return "\n\n".join(parts)
@@ -1722,7 +1764,8 @@ class Runner:
                    "source_url": source["final_url"], "source_sha256": claim["source_sha256"],
                    "source_tier": claim["source_tier"], "fact": s["claim_items"].get(str(cid)),
                    "times": self.store.claim_times(cid), "premise": cid in set(s.get("premise_claim_ids") or []),
-                   "source_date": best.value if best else None, "source_date_kind": best.kind if best else None}
+                   "source_date": best.value if best else None, "source_date_kind": best.kind if best else None,
+                   "page": self.store.page_of(claim["source_sha256"], claim["quote_start"], claim["quote_end"])}
             checks = self.store.support_checks_for(cid)
             if checks:
                 row["why"] = checks[-1]["reasoning"]

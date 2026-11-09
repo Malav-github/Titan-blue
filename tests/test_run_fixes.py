@@ -11,7 +11,8 @@ import pytest
 
 import corroboration
 import diagnosis
-from runner import Extraction, ExtractedClaim, Plan, no_guessed_figures, specific_premise
+from runner import Plan, no_guessed_figures, specific_premise
+from tests.scripted import Extraction, ExtractedClaim
 from skills.planning import enumeration
 from tests.test_runner import GOOD_QUOTE, env, make_runner, types  # noqa: F401
 
@@ -170,8 +171,10 @@ def test_the_round_up_is_written_by_code_one_dated_cited_paragraph_per_event(env
     text = runner._roundup(s, rows, ctx, facts, ["Each distinct announcement in December"])
     paras = text.split("\n\n")
     assert paras[0].startswith("The evidence read establishes 2 distinct announcements by Acme in 2026")
-    assert paras[1] == "On 14 September 2026, Acme agreed to acquire Fabrikam [claim:2]. The deal values Fabrikam at $1 billion in cash [claim:3]."
-    assert paras[2] == "On 2 March 2026, Acme launched Beacon, an AI search tool [claim:1]."
+    # each event: its date, then its own sentences quoted, with the exact address
+    assert paras[1] == ("On 14 September 2026:\n- “Acme agreed to acquire Fabrikam.” (acme.example, https://acme.example/fabrikam) [claim:2]"
+                        "\n- “The deal values Fabrikam at $1 billion in cash.” (acme.example, https://acme.example/fabrikam) [claim:3]")
+    assert paras[2] == "On 2 March 2026:\n- “Acme launched Beacon, an AI search tool.” (acme.example, https://acme.example/beacon) [claim:1]"
     assert paras[3].startswith("Not established from what was read")
 
 

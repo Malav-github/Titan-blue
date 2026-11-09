@@ -170,7 +170,7 @@ def test_the_statements_in_a_filing_are_read_by_code_and_recorded_during_the_run
 
 
 def test_the_figures_claims_quote_are_checked_against_the_statements_and_labelled(env):
-    from runner import ExtractedClaim, Extraction
+    from tests.scripted import ExtractedClaim, Extraction
     from tests.test_statements import RELEASE
     right = "Acme reported revenue of $1.2 billion for the three months ended September 30, 2026."
     wrong = "Acme said net income reached $900 million for the three months ended September 30, 2026."
@@ -193,7 +193,8 @@ def test_the_figures_claims_quote_are_checked_against_the_statements_and_labelle
     runner.fetch_fn = fetch
     result = runner.start("What did Acme report for the third quarter?", budgets={"max_iterations": 1})
     report = result["report"]
-    rows = {r["value"]: r for r in report["established"] if "sec.gov" in r["source_url"]}
+    rows = {("$1.2 billion" if "1.2 billion" in r["quote"] else "$900 million"): r for r in report["established"] if "sec.gov" in r["source_url"]}
+    assert all(r["claim"] == r["quote"] for r in rows.values())        # the claim is the source's own sentence
     assert rows["$1.2 billion"]["figures"][0]["verdict"] == "matches"
     assert rows["$1.2 billion"]["figures_label"] == "matches the company's statements"
     assert rows["$900 million"]["figures"][0]["verdict"] == "differs"

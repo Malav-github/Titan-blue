@@ -110,6 +110,23 @@ with what Titan already does about it and what could be done next (`definitions/
   small model plans it as one fact and stops at the first release; code now recognises the question, writes one checklist item
   for every distinct event, searches the company's releases on wire services, raises the budgets, never stops early, checks two
   claims per document, and writes a dated round-up, newest first.
+- **The sources' own words, and where they are** (`src/sentences.py`). Nothing in a claim or an answer is paraphrased:
+  - *Extraction by sentence choice.* The model is shown each passage as numbered sentences and answers with numbers; code
+    copies those sentences, so a claim **is** the source's sentence (one, or up to three adjacent ones), word for word. A model
+    asked to retype quotes misquoted 26-33 times a run and wrote "revenue ... is not directly provided in the passage" as a
+    claim; it now has nothing to retype. A fact spread over a page (patent family members in separate table rows) gives one
+    claim per run of adjacent sentences. The `value` it names is kept only if the quote writes it exactly. A verbatim claim
+    is "supported" by code (no model call). On the extraction eval qwen3:8b chose valid sentences every time in two runs
+    (quote_verbatim_rate 1.0) and found 8 of 9 facts.
+  - *The answer is quotes.* Code builds it: under each fact asked for, the quotes that establish it (primary sources first,
+    then the newest, three at most), each with its source, date, page and exact address, then context quotes and what was
+    not established. No model writes it; list round-ups are quoted the same way, dated, newest first.
+  - *The page of a PDF.* PDF text keeps its page breaks, so each claim from a PDF gives the page it is on ("page 18 of 120")
+    and, when the PDF prints its own numbers, the printed page ("printed page 17"). Shown in the answer, the report and the
+    claim page; PDFs read before this change have no page and none is guessed.
+  - *The exact address.* Every claim gives the address of the report itself. A site's homepage (`/`, `/en-us/`,
+    `index.html`) is never fetched from search results and never quoted; an address that redirected to the homepage (a
+    moved or paywalled report) is reported as not reaching the report (`source_not_citable`).
 - **Planner guards**: a generic acronym ('AI') is never taken as the subject when the question names an organisation; guessed
   figures are removed from queries; premises that name nothing specific are dropped before the premise check; an SEC registrant
   the question names is treated as a company (so its official domain is found and its own pages are labelled primary).

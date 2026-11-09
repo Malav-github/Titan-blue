@@ -225,18 +225,13 @@ def test_the_golden_file_round_trips(tmp_path):
 
 # --- in the runner ---
 
-def test_the_summary_prompt_carries_the_dates_and_a_blocking_draft_is_written_again_once(env):
-    seen = []
-
-    def summary(prompt):
-        seen.append(prompt)
-        return Summary(text="Starter costs $29 [claim:1]. Also the Team plan costs $89 [claim:2].") if len(seen) == 1 else \
-            Summary(text="Acme's Starter plan costs $29 per month [claim:1].")
-
-    result = make_runner(env, Summary=summary).start("What does Acme charge?")
-    assert "TODAY:" in seen[0] and "[claim:1]" in seen[0] and "RULES" in seen[0]
-    q = result["report"]["quality"]
-    assert q["score"] is not None and q["form"] in ("answer", "news")
+def test_no_model_writes_the_answer_it_is_the_quotes_with_where_they_are(env):
+    asked = []
+    result = make_runner(env, Summary=lambda p: asked.append(p) or Summary(text="Starter costs $29 [claim:1].")).start("What does Acme charge?")
+    report = result["report"]
+    assert asked == [] and report["quality"]["writer"] == "code:quotes"
+    assert report["summary"].startswith("Starter plan price:") and "[claim:1]" in report["summary"]
+    assert "https://acme.example/pricing" in report["summary"]                 # the exact address, never just the site
     assert "summary_scored" in types(env, result["run_id"])
 
 
@@ -263,9 +258,6 @@ def test_sentences_that_state_something_without_a_claim_are_removed_and_reported
     assert removed == ["Earlier, in 2020, it bought data firms."]
 
 
-def test_the_runner_removes_an_invented_sentence_and_says_so(env):
-    from tests.test_runner import types
-    result = make_runner(env, Summary=lambda p: Summary(text="Acme's Starter plan costs $29 per month [claim:1]. It has long led the market.")).start("What does Acme charge?")
-    report = result["report"]
-    assert "led the market" not in report["summary"] and report["quality"]["uncited_removed"] == ["It has long led the market."]
-    assert "uncited_removed" in types(env, result["run_id"])
+def test_an_invented_sentence_cannot_reach_the_answer(env):
+    result = make_runner(env, Summary=lambda p: Summary(text="It has long led the market [claim:1].")).start("What does Acme charge?")
+    assert "led the market" not in result["report"]["summary"]                # the answer holds only the sources' sentences

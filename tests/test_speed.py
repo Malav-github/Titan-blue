@@ -97,7 +97,7 @@ def test_one_claim_per_site_is_checked_before_a_second_from_the_same_site(env):
 
 
 def test_extraction_stops_when_every_fact_is_backed_and_keeps_the_rest_for_later(env):
-    from runner import Extraction, ExtractedClaim
+    from tests.scripted import Extraction, ExtractedClaim
     one = Extraction(claims=[ExtractedClaim(predicate="pricing.starter", value="$29", claim="Acme's Starter plan costs $29 per month.",
                                             quote=QUOTE, needed_fact=1)])
     runner = make_runner(env, Extraction=lambda p: one)

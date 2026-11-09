@@ -210,11 +210,12 @@ class FakeLLM:
         return self
 
     def invoke(self, prompt):
-        return self.result
+        from tests.scripted import resolved
+        return resolved(self.result, prompt)
 
 
 def test_extraction_keeps_verified_quotes_and_logs_rejections(store, tmp_path):
-    from runner import Extraction, ExtractedClaim
+    from tests.scripted import Extraction, ExtractedClaim
     good = ExtractedClaim(predicate="pricing.starter", value="$29", claim="The Starter plan costs $29 per month.",
                           quote=QUOTE, needed_fact=1)
     made_up = ExtractedClaim(predicate="pricing.team", value="$99", claim="The Team plan costs $99 per month.",
@@ -228,7 +229,9 @@ def test_extraction_keeps_verified_quotes_and_logs_rejections(store, tmp_path):
     rid = e.start(*e.single_block_graph("evidence.extract_claims", {}, {"source": src, "need": "Starter plan price", "subject": "Acme"}), "X")
     out = e.describe(rid)["outputs"]["n1"]["claims"]
     assert [c["quote"] for c in out] == [QUOTE]
-    assert store.counts()["rejected_claims"] == 1
+    assert [c["claim_text"] if "claim_text" in c else c.get("claim", QUOTE) for c in out] == [QUOTE]
+    # the made-up quote is no sentence of the page: refused before anything is stored, and said in the run
+    assert store.counts()["claims"] == 1
     assert "claim_rejected" in events(e, rid) and "claim_recorded" in events(e, rid)
 
 

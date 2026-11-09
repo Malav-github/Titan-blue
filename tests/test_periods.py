@@ -6,7 +6,8 @@ import pytest
 
 import corroboration
 from evidence import EvidenceStore
-from runner import Extraction, ExtractedClaim, Plan
+from runner import Plan
+from tests.scripted import Extraction, ExtractedClaim
 from skills.temporal.periods import analyse, find_events, find_periods, period_conflicts, period_from_xbrl
 from support import SupportVerdict, check_claim
 from tests.test_evidence import QUOTE, make_fetch, store, source, acme  # noqa: F401

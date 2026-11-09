@@ -102,6 +102,21 @@ export interface ReportClaim {
   why?: string
   figures?: FigureCheck[]
   figures_label?: string
+  page?: PageRef | null
+}
+/** Where a quote sits in a PDF: the PDF's own page count from 1, and the number printed on the page when the PDF gives it. */
+export interface PageRef {
+  page: number
+  last_page: number
+  pages: number
+  printed: string | null
+  printed_last: string | null
+}
+export function pageText(p?: PageRef | null): string {
+  if (!p) return ''
+  const span = p.last_page !== p.page ? `Pages ${p.page}-${p.last_page}` : `Page ${p.page}`
+  const printed = p.printed ? ` (printed ${p.printed_last && p.printed_last !== p.printed ? `${p.printed}-${p.printed_last}` : p.printed})` : ''
+  return `${span}${printed} of ${p.pages}`
 }
 /** A figure in a claim's quote checked against the company's own financial statements (code, no model). */
 export interface FigureCheck {
@@ -251,6 +266,7 @@ export interface ClaimDetail {
   support_checks: { verdict: string; reasoning: string; checker: string; created_at: string; unsupported_parts: string; missing_tokens: string }[]
   times?: ClaimTime[]
   conflicts?: { other_claim: number; note: string }[]
+  page?: PageRef | null
   source_dates?: { kind: string; value: string; precision: string; raw: string; origin: string; relative: number }[]
 }
 export interface Health {

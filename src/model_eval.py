@@ -20,6 +20,7 @@ from capability import DraftManifest, draft_prompt, normalize_draft, slug
 from config import PROJECT_ROOT
 from connectors.manifest import Manifest
 from evidence import normalize, verify_quote
+import sentences
 from runner import NON_FACT, Extraction, Relevance, extraction_prompt, relevance_prompt
 from support import CONTEXT_CHARS, PROMPT as SUPPORT_PROMPT, SupportVerdict
 
@@ -74,10 +75,13 @@ def run_extraction(llm, cases: list[dict]) -> dict:
         needed = "\n".join(f"{i}. {t}" for i, t in enumerate(case["checklist"], 1))
         out, secs, err = timed_call(llm, Extraction, extraction_prompt(case["question"], needed, case["url"], case["text"]))
         claims = out.claims[:5] if out else []
-        quote_ok = [verify_quote(case["text"], c.quote)["ok"] for c in claims]
-        usable = [ok and len(c.claim.split()) >= 4 and not NON_FACT.search(c.claim) and 1 <= c.needed_fact <= len(case["checklist"])
-                  for c, ok in zip(claims, quote_ok)]
-        quotes = [normalize(c.quote).lower() for c, u in zip(claims, usable) if u]
+        units = sentences.split(case["text"])
+        pairs = [(c, q) for c in claims for q, _ in sentences.pick_all(units, c.sentences)]   # code copies the chosen sentences
+        claims, picked = [c for c, _ in pairs], [q for _, q in pairs]
+        quote_ok = [q is not None and verify_quote(case["text"], q)["ok"] for q in picked]
+        usable = [ok and len(q.split()) >= 4 and not NON_FACT.search(q) and 1 <= c.needed_fact <= len(case["checklist"])
+                  for c, q, ok in zip(claims, picked, quote_ok)]
+        quotes = [normalize(q).lower() for q, u in zip(picked, usable) if u]
         hits = sum(any(e.lower() in q for q in quotes) for e in case["expected"])
         rows.append({"id": case["id"], "parsed": out is not None, "claims": len(claims), "quote_ok": sum(quote_ok),
                      "usable": sum(usable), "hits": hits, "expected": len(case["expected"]),

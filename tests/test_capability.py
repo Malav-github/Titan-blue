@@ -25,7 +25,8 @@ class ScriptedLLM:
                 out = handler(prompt)
                 if isinstance(out, Exception):
                     raise out
-                return out
+                from tests.scripted import resolved
+                return resolved(out, prompt)
         return Call()
 
 

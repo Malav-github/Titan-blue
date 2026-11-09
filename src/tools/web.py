@@ -74,12 +74,16 @@ def meta_block(html: str) -> str:
 MAX_PDF_PAGES = 100
 
 
+PAGE_BREAK = "\f"           # between the pages of a PDF's text: a quote's page is found from it (EvidenceStore.page_of)
+
+
 def pdf_text(body: bytes) -> str:
-    """Text layer of a PDF (no OCR). Scanned documents give an empty string, which callers treat as unreadable."""
+    """Text layer of a PDF (no OCR), its pages separated by a form feed. Whitespace is collapsed before quotes are matched,
+    so the page break changes no quote. Scanned documents give an empty string, which callers treat as unreadable."""
     from pypdf import PdfReader
     try:
         reader = PdfReader(io.BytesIO(body))
-        return "\n".join((page.extract_text() or "") for page in reader.pages[:MAX_PDF_PAGES])
+        return PAGE_BREAK.join((page.extract_text() or "") for page in reader.pages[:MAX_PDF_PAGES])
     except Exception:
         return ""
 
@@ -118,7 +122,7 @@ def extract_text(body: bytes, content_type: str, encoding: str, url: str) -> tup
     return ".bin", ""
 
 
-EXTRACTOR = f"trafilatura {trafilatura.__version__} + plain-fallback-v1 + meta-v1 + pypdf + json-render-v1"
+EXTRACTOR = f"trafilatura {trafilatura.__version__} + plain-fallback-v1 + meta-v1 + pypdf-pages + json-render-v1"
 
 
 def fetch_url(url: str, max_chars: int = 12_000, timeout: float = 20.0) -> dict:

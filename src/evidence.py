@@ -194,6 +194,18 @@ CREATE VIEW IF NOT EXISTS current_claims AS
 """
 
 
+def _page_labels(archive_path: str) -> list[str] | None:
+    """The page numbers a PDF prints, from its page labels ('i', 'ii', '1', ...); None when it defines none."""
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(str(archive_path))
+        if "/PageLabels" not in reader.trailer["/Root"]:
+            return None
+        return list(reader.page_labels)
+    except Exception:
+        return None
+
+
 def normalize(text: str) -> str:
     """Unicode NFC and collapsed whitespace. Case, punctuation and digits are left strictly alone."""
     return re.sub(r"\s+", " ", unicodedata.normalize("NFC", text)).strip()
@@ -453,7 +465,7 @@ class EvidenceStore:
                 (entity_id, predicate, value, claim_text, source_sha256, tier, normalize(quote),
                  check["start"], check["end"], source["text_sha256"], as_of, utc_now(), created_by),
             )
-        return {"ok": True, "claim_id": cur.lastrowid, "source_tier": tier}
+        return {"ok": True, "claim_id": cur.lastrowid, "source_tier": tier, "page": self.page_of(source_sha256, check["start"], check["end"])}
 
     @staticmethod
     def _check_source_files(source: sqlite3.Row) -> None:
@@ -506,6 +518,35 @@ class EvidenceStore:
                     (claim_id, r["kind"], r["value"], r["precision"], r["raw"], r["origin"], int(r.get("derived", 0)),
                      r.get("detail", ""), utc_now(), created_by)).rowcount
         return added
+
+    def page_of(self, source_sha256: str, start: int, end: int) -> dict | None:
+        """The page of a PDF a quote sits on, from the page breaks kept in its text: {"page", "last_page", "pages",
+        "printed", "printed_last"}. `page` counts the PDF's own pages from 1; `printed` is the page number printed on it
+        when the PDF defines page labels and they differ. None for a source that is not a PDF, or one whose text was
+        read before page breaks were kept (then its page is not known, and is not guessed)."""
+        source = self.get_source(source_sha256)
+        if source is None or not ((source["content_type"] or "").endswith("pdf") or str(source["archive_path"]).endswith(".pdf")):
+            return None
+        cache = self.__dict__.setdefault("_page_cache", {})
+        if source_sha256 not in cache:
+            raw = Path(source["text_path"]).read_text(encoding="utf-8")
+            pages = raw.split("\f")
+            spans, pos = [], 0
+            for i, page in enumerate(pages):
+                if n := normalize(page):
+                    spans.append((i, pos, pos + len(n)))
+                    pos += len(n) + 1
+            ok = len(pages) > 1 and " ".join(normalize(p) for p in pages if normalize(p)) == normalize(raw)
+            cache[source_sha256] = (spans if ok else None, _page_labels(source["archive_path"]) if ok else None, len(pages))
+        spans, labels, total = cache[source_sha256]
+        if not spans:
+            return None
+        first = next((i for i, lo, hi in spans if start < hi), spans[-1][0])
+        last = next((i for i, lo, hi in spans if end <= hi), spans[-1][0])
+        out = {"page": first + 1, "last_page": last + 1, "pages": total, "printed": None, "printed_last": None}
+        if labels and last < len(labels) and labels[first] != str(first + 1):
+            out["printed"], out["printed_last"] = labels[first], labels[last]
+        return out
 
     def link_source_entity(self, source_sha256: str, entity_id: int, created_by: str = "agent") -> None:
         """Record that a source's statements were read for this company, so its figures index the company's claims."""
@@ -606,6 +647,7 @@ class EvidenceStore:
                                          "text_sha256", "as_of", "created_at", "created_by")},
                 "entity": dict(entity), "source_url": source["final_url"], "fetched_at": source["first_fetched_at"],
                 "before": text[max(0, lo - context):lo], "after": text[hi:hi + context],
+                "page": self.page_of(claim["source_sha256"], lo, hi),
                 "support_checks": self.support_checks_for(claim_id), "status": [dict(e) for e in events],
                 "source_dates": self.source_dates(claim["source_sha256"]), "times": self.claim_times(claim_id),
                 "conflicts": self.conflicts_for(claim_id)}

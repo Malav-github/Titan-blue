@@ -4,7 +4,8 @@ import pytest
 
 from connectors.registry import ConnectorRegistry
 from evidence import EvidenceStore
-from runner import (Extraction, ExtractedClaim, Advice, FollowUps, Plan, PremiseList, PremiseScreen, Relevance, Runner, Selection, Summary, top_chunks)
+from tests.scripted import Extraction, ExtractedClaim, resolved
+from runner import (Advice, FollowUps, Plan, PremiseList, PremiseScreen, Relevance, Runner, Selection, Summary, top_chunks)
 from runs import RunStore
 from support import SupportVerdict
 from tools.archive import archive_bytes, utc_now
@@ -27,7 +28,7 @@ class ScriptedLLM:
                 out = handler(prompt)
                 if isinstance(out, Exception):
                     raise out
-                return out
+                return resolved(out, prompt)
         return Call()
 
 
@@ -105,8 +106,10 @@ def test_full_run_keeps_only_verified_supported_claims(env):
     assert report["established"][0]["quote"] == GOOD_QUOTE
     assert report["rejected_quotes"] == 1                       # the invented $89 quote never became a claim
     assert env["store"].counts()["claims"] == 1
-    assert "[claim:999]" not in report["summary"] and "invalid citation removed" in report["summary"]
-    assert report["invalid_citations_removed"] == [999]
+    # the answer is the quote itself, put together by code, with the page's exact address: no model wording at all
+    assert report["summary"] == ("Starter plan price:\n- “The Starter plan costs $29 per month, billed annually.” "
+                                 "(Web page by acme.example, https://acme.example/pricing) [claim:1]")
+    assert report["established"][0]["claim"] == GOOD_QUOTE and report["invalid_citations_removed"] == []
     assert report["gaps"] == []
     assert env["store"].audit() == []
     assert env["world"].fetched == ["https://acme.example/pricing"]  # model's bogus choice #99 was ignored
@@ -182,15 +185,24 @@ def test_planner_failure_falls_back_and_is_recorded(env):
     assert "llm_failed" in types(env, result["run_id"])
 
 
-def test_not_supported_claims_are_excluded_from_the_answer(env):
-    result = make_runner(env, SupportVerdict=lambda p: SupportVerdict(verdict="not_supported", reasoning="no")).start("q")
+def test_a_verbatim_claim_is_supported_by_code_and_no_model_judges_it(env):
+    asked = []
+    result = make_runner(env, SupportVerdict=lambda p: asked.append(p) or SupportVerdict(verdict="not_supported", reasoning="no")).start("q")
+    assert asked == []                                           # the claim is the quote: nothing for a model to judge
+    [check] = env["store"].support_checks_for(1)
+    assert check["verdict"] == "supported" and check["checker"] == "code:verbatim"
+    assert result["report"]["established"]
+
+
+def test_claims_that_do_not_state_the_needed_fact_are_excluded_from_the_answer(env):
+    result = make_runner(env, Relevance=lambda p: Relevance(addresses=False, reason="something else")).start("q")
     report = result["report"]
-    assert report["established"] == [] and report["not_supported"] >= 1  # a 2nd round fetched another page
+    assert report["established"] == [] and report["off_topic"] >= 1
     assert report["gaps"] == ["Starter plan price"]              # nothing established, so it is reported as a gap
 
 
 def test_loop_stops_at_the_iteration_budget_and_reports_gaps(env):
-    result = make_runner(env, SupportVerdict=lambda p: SupportVerdict(verdict="not_supported", reasoning="no"), FollowUps=lambda p: FollowUps(new_queries=["another query"])).start(
+    result = make_runner(env, Relevance=lambda p: Relevance(addresses=False, reason="no"), FollowUps=lambda p: FollowUps(new_queries=["another query"])).start(
         "q", budgets={"max_iterations": 2})
     assert result["status"] == "finished" and result["report"]["budget_used"]["iterations"] == 2
     assert result["report"]["gaps"] == ["Starter plan price"]
@@ -245,18 +257,16 @@ def _empty_page():
     return {"sha256": sha, "archive_path": path}
 
 
-def test_badly_filled_value_is_blanked_not_fatal_and_non_statements_are_dropped(env):
+def test_a_sentence_number_the_passage_does_not_have_is_refused_and_the_rest_kept(env):
     sloppy = Extraction(claims=[
-        ExtractedClaim(predicate="p", value="totally unrelated", claim="Acme's Starter plan costs $29 monthly.",
-                       quote=GOOD_QUOTE, needed_fact=1),
-        ExtractedClaim(predicate="p", value="x", claim="No claims", quote="The Team plan costs $99 per month with priority support.",
-                       needed_fact=1),
+        ExtractedClaim(predicate="p", quote=GOOD_QUOTE, needed_fact=1),
+        ExtractedClaim(predicate="p", quote="The Team plan costs $79 per month.", needed_fact=1),     # no such sentence
     ])
     result = make_runner(env, Extraction=lambda p: sloppy).start("q", budgets={"max_iterations": 1})
     [row] = result["report"]["established"]
-    assert row["claim_id"] == 1 and row["value"] == ""
+    assert row["claim_id"] == 1 and row["claim"] == GOOD_QUOTE and row["value"] == ""
     reasons = [e["payload"].get("reason") for e in env["runs"].events(result["run_id"]) if e["type"] == "claim_rejected"]
-    assert "not a statement of a fact" in reasons
+    assert any(r.startswith("no sentence numbered") for r in reasons)
 
 
 def test_true_but_off_topic_claims_do_not_count_as_established_or_covering(env):
@@ -267,10 +277,9 @@ def test_true_but_off_topic_claims_do_not_count_as_established_or_covering(env):
     assert report["gaps"] == ["Starter plan price"]
 
 
-def test_remarks_about_the_passage_are_not_claims(env):
-    remarks = Extraction(claims=[
-        ExtractedClaim(predicate="p", value="", claim="The passage does not provide exact patent numbers.", quote=GOOD_QUOTE, needed_fact=1),
-        ExtractedClaim(predicate="p", value="", claim="quote: EP3143075B1 active Active", quote=GOOD_QUOTE, needed_fact=1),
-    ])
-    result = make_runner(env, Extraction=lambda p: remarks).start("q", budgets={"max_iterations": 1})
-    assert env["store"].counts()["claims"] == 0
+def test_the_claim_is_the_sources_sentence_never_the_models_words(env):
+    # what a model would once have written ("The passage does not provide ...") cannot reach a claim: it only gives numbers
+    picks = Extraction(claims=[ExtractedClaim(predicate="p", quote=GOOD_QUOTE, needed_fact=1,
+                                              claim="The passage does not provide exact patent numbers.")] * 2)
+    result = make_runner(env, Extraction=lambda p: picks).start("q", budgets={"max_iterations": 1})
+    assert env["store"].counts()["claims"] == 1 and env["store"].get_claim(1)["claim_text"] == GOOD_QUOTE

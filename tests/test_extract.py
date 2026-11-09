@@ -61,7 +61,7 @@ def test_entities_sharing_one_domain_are_not_ambiguous(monkeypatch):
 
 # --- one malformed claim must not cost the batch (seen on a real patent page: a missing needed_fact) ---
 
-GOOD = {"predicate": "p", "value": "v", "claim": "The plant has a capacity of 50,000 tons.", "quote": "capacity of 50,000 metric tons per year", "needed_fact": 1}
+GOOD = {"predicate": "p", "sentences": [3], "value": "50,000", "needed_fact": 1}
 
 
 def test_a_malformed_claim_is_dropped_and_the_rest_of_the_batch_survives():
@@ -69,8 +69,8 @@ def test_a_malformed_claim_is_dropped_and_the_rest_of_the_batch_survives():
     Extraction.take_dropped()
     bad_missing = {k: v for k, v in GOOD.items() if k != "needed_fact"}
     bad_type = {**GOOD, "needed_fact": "first"}
-    out = Extraction.model_validate({"claims": [GOOD, bad_missing, {**GOOD, "claim": "Another fact stated in full."}, bad_type, "not even a dict"]})
-    assert [c.claim for c in out.claims] == [GOOD["claim"], "Another fact stated in full."]
+    out = Extraction.model_validate({"claims": [GOOD, bad_missing, {**GOOD, "sentences": [4, 5]}, bad_type, "not even a dict"]})
+    assert [c.sentences for c in out.claims] == [[3], [4, 5]]
     assert Extraction.take_dropped() == 3
     assert Extraction.take_dropped() == 0                       # reading resets the count
     examples = Extraction.take_dropped_examples()
@@ -80,8 +80,8 @@ def test_a_malformed_claim_is_dropped_and_the_rest_of_the_batch_survives():
 
 def test_nothing_is_repaired_or_invented_when_dropping():
     from runner import Extraction
-    out = Extraction.model_validate({"claims": [{k: v for k, v in GOOD.items() if k != "quote"}]})
-    assert out.claims == []                                      # a claim without a quote is gone, not filled in
+    out = Extraction.model_validate({"claims": [{k: v for k, v in GOOD.items() if k != "sentences"}]})
+    assert out.claims == []                                      # a claim without its sentences is gone, not filled in
     with pytest.raises(ValidationError):                         # only malformed items are tolerated; a malformed whole is still an error
         Extraction.model_validate({"claims": "garbage"})
     Extraction.take_dropped()

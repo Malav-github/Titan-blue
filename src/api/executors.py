@@ -119,43 +119,55 @@ def _ask(ctx: Context, task: str, schema: type[BaseModel], prompt: str, model: s
 
 
 def extract_claims(ctx: Context, inputs: dict, settings: dict) -> dict:
-    from runner import NON_FACT, Extraction, extraction_prompt, top_chunks, _terms
+    """Claims by sentence choice (sentences.py): the model gives sentence numbers, code copies the sentences, and the claim
+    is the source's own words."""
+    import sentences
+    import sources
+    from runner import NON_FACT, Extraction, extraction_prompt, sentence_chunks, _terms
     sha, need = inputs["source"]["sha256"], normalize(inputs["need"])
     source = ctx.store.get_source(sha)
-    text = normalize(Path(source["text_path"]).read_text(encoding="utf-8"))
+    if why := sources.not_citable(source["url"], source["final_url"]):
+        ctx.emit("source_not_citable", {"url": source["url"], "final_url": source["final_url"], "reason": why})
+        return {"claims": []}
+    raw = Path(source["text_path"]).read_text(encoding="utf-8")
+    text = normalize(raw)
     subject = normalize(inputs.get("subject") or "") or web_host(source["final_url"])
     entity_id = ctx.store.add_entity(subject)
     ids, rejected = [], 0
     seen: set[str] = set()
-    for chunk in top_chunks(text, _terms(need), 3):
+    for chunk in sentence_chunks(raw, _terms(need), 3):
+        units = sentences.split(chunk)
         Extraction.take_dropped(), Extraction.take_dropped_examples()
         extraction = _ask(ctx, "extract", Extraction, extraction_prompt(need, f"1. {need}", source["final_url"], chunk),
                           settings.get("model") or None)
         if dropped := Extraction.take_dropped():
             ctx.emit("claims_malformed", {"count": dropped, "source_url": source["final_url"], "examples": Extraction.take_dropped_examples()})
-        for c in (extraction.claims if extraction else [])[:5]:
-            key = normalize(c.quote)
-            if key in seen:
-                continue
-            seen.add(key)
-            if len(c.claim.split()) < 4 or NON_FACT.search(c.claim) or c.needed_fact != 1:
+        for c, quote, why in [(c, q, w) for c in (extraction.claims if extraction else [])[:5]
+                              for q, w in sentences.pick_all(units, c.sentences)]:
+            if quote is None:
                 rejected += 1
-                ctx.emit("claim_rejected", {"claim": c.claim, "quote": c.quote, "reason": "not a statement of the needed fact"})
+                ctx.emit("claim_rejected", {"sentences": c.sentences, "reason": why})
                 continue
-            value = c.value if normalize(c.value) and normalize(c.value) in normalize(f"{c.quote} {c.claim}") else ""
-            quote = c.quote
             if len(normalize(quote)) < MIN_QUOTE_CHARS and (wider := widen_quote(text, quote)):
                 ctx.emit("quote_widened", {"from": normalize(quote), "to": wider, "source_url": source["final_url"]})
                 quote = wider
-            r = ctx.store.add_claim(entity_id, c.predicate, value, c.claim, sha, quote, created_by=f"block:{ctx.run_id[:8]}")
+            key = normalize(quote)
+            if key in seen:
+                continue
+            seen.add(key)
+            if len(quote.split()) < 4 or NON_FACT.search(quote) or c.needed_fact != 1:
+                rejected += 1
+                ctx.emit("claim_rejected", {"quote": quote, "reason": "not a statement of the needed fact"})
+                continue
+            value = c.value if normalize(c.value) and normalize(c.value) in key else ""
+            r = ctx.store.add_claim(entity_id, c.predicate, value, key, sha, quote, created_by=f"block:{ctx.run_id[:8]}")
             if r["ok"]:
                 ids.append(r["claim_id"])
-                ctx.emit("claim_recorded", {"claim_id": r["claim_id"], "claim": c.claim, "quote": normalize(c.quote),
+                ctx.emit("claim_recorded", {"claim_id": r["claim_id"], "claim": key, "quote": key, "page": r.get("page"),
                                             "source_url": source["final_url"], "source_tier": r["source_tier"]})
             else:
                 rejected += 1
-                ctx.emit("claim_rejected", {"claim": c.claim, "quote": c.quote, "reason": r["reason"],
-                                            "closest_passage": r.get("closest_passage")})
+                ctx.emit("claim_rejected", {"quote": quote, "reason": r["reason"], "closest_passage": r.get("closest_passage")})
     return {"claims": [claim_ref(ctx.store, i) for i in ids]}
 
 

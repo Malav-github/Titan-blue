@@ -2,7 +2,8 @@
 titles and snippets) screens what the question takes for granted. The person answers the finding: accept it, overrule it, correct
 it, or hand over a source (which is then read and checked like any other evidence)."""
 
-from runner import Extraction, ExtractedClaim, Plan, PremiseList, PremiseScreen
+from runner import Plan, PremiseList, PremiseScreen
+from tests.scripted import Extraction, ExtractedClaim
 from tests.test_runner import GOOD_QUOTE, env, make_runner, types  # noqa: F401
 
 PREMISE = "Acme publishes a price list"

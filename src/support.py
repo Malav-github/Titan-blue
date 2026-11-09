@@ -73,6 +73,13 @@ def check_claim(store: EvidenceStore, claim_id: int, llm=None, checker: str | No
     claim = store.get_claim(claim_id)
     if claim is None:
         raise ValueError(f"unknown claim {claim_id}")
+    if normalize(claim["claim_text"]) == normalize(claim["quote"]):
+        # the claim is the source's own sentence, copied by code (extraction by sentence choice): it says exactly what the
+        # quote says, so there is nothing for a model to judge
+        reasoning = "The claim is the quoted sentence itself, copied from the source by code; nothing in it is reworded."
+        check_id = store.record_support_check(claim_id, "supported", reasoning, [], [], "code:verbatim", PROMPT_VERSION)
+        return {"check_id": check_id, "claim_id": claim_id, "verdict": "supported", "reasoning": reasoning,
+                "unsupported_parts": [], "missing_tokens": [], "checker": "code:verbatim"}
     if llm is None:
         from llm import get_chat_model
         llm = get_chat_model(task="claim_support", temperature=0)
