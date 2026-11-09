@@ -71,6 +71,7 @@ class Value:
     verdict: str = ""               # verified | agreed | doubt | read  (set by grade() after the checks)
     reasons: list = field(default_factory=list)      # why it is in doubt
     notes: list = field(default_factory=list)        # what was noticed but settled (an engine misread, settled by a sum)
+    proposed: dict | None = None    # for a scanned figure in doubt: the reading it is taken as, and why (checks.grade)
 
 
 @dataclass

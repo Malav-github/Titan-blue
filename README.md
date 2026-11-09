@@ -137,11 +137,15 @@ with what Titan already does about it and what could be done next (`definitions/
     **agreed**: scanned, read the same by both, confidently, but no sum covers it; **read**: text layer or XBRL, no sum
     covers it; **doubt**: the engines disagree, only one read it, one was unsure, its grouping or decimals are wrong for its
     column, it sits in a sum that does not add up, or its column's period could not be read. One unconfirmed figure in a sum
-    that adds up, with every other figure confirmed, is settled by the arithmetic (and says so); two are not. A doubtful
-    figure keeps both readings and its place on the page, is left out of the index, and is reported in the run
-    (`statements_doubt`, and in *Why parts of this run failed*). On a real scanned Indian results page (VTM Limited, Q2 FY26)
-    the pair caught Tesseract reading 1,071.38 as 4,071.38 and 152.84 as 162.84, and RapidOCR reading 7,316.94 as
-    "7.316.94", which also broke its sum.
+    that adds up, with every other figure confirmed, is settled by the arithmetic (and says so); two are not.
+  - A doubtful figure is never dropped. A scanned one is taken as its likeliest reading, and says which and why: first a
+    reading with which its sums add up, then one that fits its column (either engine's, or one repaired by the column's
+    format: "7.316.94" in a column of two-decimal figures is 7,316.94), then RapidOCR's as it stands. A figure read
+    otherwise than RapidOCR printed it stays doubt however well it adds up. It keeps what was printed, both readings and
+    its place on the page, is left out of the index unless asked for, and is reported in the run with "please
+    double-check" (`statements_doubt`, and in *Why parts of this run failed*). On a real scanned Indian results page (VTM
+    Limited, Q2 FY26) the pair caught Tesseract reading 1,071.38 as 4,071.38 and 152.84 as 162.84; RapidOCR read 7,316.94
+    as "7.316.94", which is taken as 7,316.94 (Tesseract's reading, and with it the total adds up) and flagged.
   - Numbers as markets print them: 12,34,567, 1.234.567,89, brackets and dashes, lakh and crore, Arabic-Indic digits; a
     lone "1.234" is left unread unless the market's decimal mark settles it.
   - Periods are read, never invented: "Sept'25" stays at month precision; "Q2 FY26" is dated only where the law fixes the

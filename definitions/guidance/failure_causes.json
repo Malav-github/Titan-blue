@@ -181,7 +181,7 @@
       "event": "statements_doubt",
       "field": "doubts",
       "label": "Figures in a financial statement could not be confirmed (scanned page: the two OCR engines disagreed, only one read it, or one was unsure; or the figure is in a sum that does not add up, or its column's period could not be read)",
-      "handled_by": "the figure is kept with both readings and its place on the page, marked doubt, and left out of the figures answers are checked against",
+      "handled_by": "the figure is kept, never dropped: taken as its likeliest reading (one with which its sums add up, else one that fits its column, e.g. '7.316.94' in a two-decimal column as 7,316.94), with what was printed, both readings, its place on the page and why; marked doubt with 'please double-check', and left out of the figures answers are checked against unless asked for",
       "workaround": "a person checks the figure on the page; a cleaner copy of the document (the company's own PDF with a text layer, or its XBRL filing) replaces OCR entirely"
     },
     {

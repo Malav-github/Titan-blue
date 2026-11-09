@@ -66,17 +66,11 @@ VERDICTS = {
     "verified": "inside a sum that adds up" + "; for a scanned page, both OCR engines read it the same",
     "agreed": "scanned page: both OCR engines read it the same, confidently, but no sum covers this line",
     "read": "text layer or XBRL, not covered by any sum",
-    "doubt": "not to be used until a person has looked at it",
+    "doubt": "kept, with the reading it is taken as and why, for a person to check before it is relied on",
 }
 
 
-def grade(table: Table) -> None:
-    """Give every value a verdict, with reasons, after the checks have run:
-      verified  - inside a sum that adds up (and, if scanned, both OCR engines read it the same, confidently)
-      agreed    - scanned; both engines read it the same, confidently; no sum covers it
-      read      - text layer or XBRL; no sum covers it
-      doubt     - the engines disagree, only one read it, either was unsure, its grouping or decimals are wrong for its
-                  column, or it is in a sum that does not add up. Said loudly, never used silently."""
+def _coverage(table: Table) -> tuple[dict, dict]:
     covered: dict[tuple[int, int], list[Check]] = {}
     members: dict[int, list] = {}
     for c in table.checks:
@@ -85,7 +79,22 @@ def grade(table: Table) -> None:
                 covered.setdefault((r.index, c.column), []).append(c)
                 if (v := table.value_at(r.index, c.column)) is not None:
                     members.setdefault(id(c), []).append(v)
+    return covered, members
+
+
+def grade(table: Table) -> None:
+    """Give every value a verdict, with reasons, after the checks have run:
+      verified  - inside a sum that adds up (and, if scanned, both OCR engines read it the same, confidently)
+      agreed    - scanned; both engines read it the same, confidently; no sum covers it
+      read      - text layer or XBRL; no sum covers it
+      doubt     - the engines disagree, only one read it, either was unsure, its grouping or decimals are wrong for its
+                  column, or it is in a sum that does not add up. Said loudly, never used silently.
+    A figure in doubt is kept, never dropped: a scanned one is taken as its likeliest reading (`propose`), with why, and
+    the checks are run again on those readings."""
     decimals = _column_decimals(table)
+    if propose(table, decimals):
+        table.checks = run(table)
+    covered, members = _coverage(table)
     for v in table.values:
         engines = _ocr_doubts(v.ocr) if v.ocr else []          # disagreement, one engine only, an unsure engine
         reasons = []
@@ -104,6 +113,10 @@ def grade(table: Table) -> None:
         # this one is the only unknown, and the arithmetic fixes it. Two unconfirmed figures could hide each other's error.
         settled_by = next((c for c in checks_here if c.verdict == "pass"
                            and all(o is v or not o.ocr or (o.ocr.get("agree") and not _ocr_doubts(o.ocr)) for o in members.get(id(c), []))), None)
+        if v.proposed and v.proposed["changed"]:
+            # read otherwise than the layout engine printed it (the other engine's reading, or a repair): however well
+            # it adds up, a person confirms it
+            reasons.append(f"taken as {v.proposed['reading']} (printed '{v.proposed['printed']}'): {v.proposed['why']}")
         v.notes = []
         if engines and settled_by and not reasons:
             v.notes = engines + [f"settled by arithmetic ({settled_by.rule} adds up, every other figure in it read the same by both engines)"]
@@ -112,8 +125,130 @@ def grade(table: Table) -> None:
         v.reasons = reasons
         v.verdict = ("doubt" if reasons else "verified" if any(c.verdict == "pass" for c in checks_here)
                      else "agreed" if v.ocr else "read")
-        if v.verdict == "doubt" and v.ocr and not v.ocr.get("agree"):
-            v.full = None          # two readings, or one, and nothing settles it: no amount until a person does
+        if v.verdict != "doubt":
+            v.proposed = None
+
+
+def propose(table: Table, decimals: dict[int, int] | None = None) -> bool:
+    """For every scanned figure with an OCR problem, the reading it is taken as, from what the engines printed and what the
+    column prints, in this order:
+      1. a reading with which every sum the figure is in adds up (when one of them fails as read);
+      2. a reading that fits the column: valid grouping and the column's decimal places. Either engine's reading, or one
+         repaired by the column's format: "7.316.94" in a column printing two decimals is 7,316.94, the last separator
+         being the decimal point;
+      3. otherwise RapidOCR's reading as it stands (the stronger engine on scans).
+    The figure's amount becomes that reading; `v.proposed` says which, why, and what was printed. Returns whether any
+    amount changed (the checks must then run again)."""
+    from .ocr import _norm
+    decimals = _column_decimals(table) if decimals is None else decimals
+    covered, _ = _coverage(table)
+    changed = False
+    for v in table.values:
+        if not v.ocr or not _needs_reading(v, decimals.get(v.col)):
+            continue
+        d = None if v.unit in ("per_share", "ratio", "shares") else decimals.get(v.col)
+        cands = _candidates(v, d, _norm)
+        if not cands:
+            continue
+        here = [(c.rule, c.column) for c in covered.get((v.row, v.col), [])]
+        failing = any(c.verdict == "fail" for c in covered.get((v.row, v.col), []))
+        chosen, confirmed = None, []
+        if failing:
+            original = v.amount
+            for cand in cands:
+                v.amount = cand["amount"]
+                after = {(c.rule, c.column): c for c in run(table) if (c.rule, c.column) in here}
+                if after and all(c.verdict == "pass" for c in after.values()):
+                    chosen, confirmed = cand, sorted({r for r, _ in after})
+                    break
+            v.amount = original
+        if chosen is None:
+            chosen = next((c for c in cands if c["fits"]), cands[0])
+        why = chosen["why"]
+        if confirmed:
+            why += f"; with it {', '.join(confirmed)} add{'s' if len(confirmed) == 1 else ''} up"
+        elif failing:
+            why += "; no reading makes its sums add up"
+        same = (chosen["amount"].value, chosen["amount"].decimals) == (v.amount.value, v.amount.decimals)
+        v.proposed = {"reading": chosen["text"], "kind": chosen["kind"], "why": why, "printed": v.amount.raw,
+                      "confirmed_by": confirmed, "changed": not same}
+        if not same:
+            _set_amount(table, v, chosen["amount"])
+            changed = True
+    return changed
+
+
+def _needs_reading(v, d: int | None) -> bool:
+    return bool(_ocr_doubts(v.ocr)) or not valid_grouping(v.amount.raw) or (
+        d is not None and v.unit not in ("per_share", "ratio", "shares") and v.amount.decimals != d)
+
+
+def _candidates(v, d: int | None, norm) -> list[dict]:
+    """Readings of one figure, best first: RapidOCR's, Tesseract's, then each repaired to the column's format. A reading
+    `fits` when its grouping is valid and its decimals are the column's."""
+    from .numbers import Amount, parse_amount
+    out, seen = [], set()
+
+    def add(text: str, kind: str, why: str, raw: str):
+        a = parse_amount(text)
+        if a is None or (a.value, a.decimals) in seen:
+            return
+        seen.add((a.value, a.decimals))
+        fits = valid_grouping(text) and (d is None or a.decimals == d)
+        # an engine's reading is what was printed; a repair keeps what was printed and changes only how it is read
+        out.append({"text": text, "kind": kind, "why": why, "fits": fits,
+                    "amount": Amount(a.value, a.decimals, a.negative, raw if kind == "repair" else text, a.percent)})
+
+    readings = [(e, norm(v.ocr[e])) for e in ("rapidocr", "tesseract") if v.ocr.get(e) and "?" not in v.ocr[e]]
+    agree = len({t for _, t in readings}) == 1 and len(readings) == 2
+    for engine, text in readings:
+        add(text, "engine", "both engines read it so" if agree else f"{engine}'s reading", text)
+    for engine, text in readings:
+        if (rep := repair_separators(text, d)) and rep != text:
+            why = (f"'{text}' ({engine}) is not a figure as printed: no market groups digits so" if d is None else
+                   f"'{text}' ({engine}) does not fit its column, which prints {d} decimal place{'s' if d != 1 else ''}")
+            add(rep, "repair", why + (", so the last separator is the decimal point and the others group digits" if d != 0
+                                      else ", so every separator groups digits"), text)
+    return sorted(out, key=lambda c: (not c["fits"], c["kind"] == "repair"))
+
+
+def repair_separators(text: str, d: int | None) -> str | None:
+    """A figure whose separators were misread, rewritten in the column's format, or None when that is not possible:
+    "7.316.94" with 2 decimals -> "7,316.94"; "1.234" with 0 decimals -> "1,234"; "12,34,567.8" with 2 -> None (the digits
+    after the last separator do not fit). Brackets and signs are kept. With the column's format unknown (`d` None), only a
+    figure no market groups so is repaired: one separator printed twice or more with one or two digits after the last
+    ("7.316.94"), which can only be grouping followed by decimals."""
+    import re
+    m = re.search(r"\d[\d.,]*\d", text)
+    if not m or not re.search(r"[.,]", m[0]):
+        return None
+    core = m[0]
+    groups = re.split(r"[.,]", core)
+    if d is None:
+        if len(groups) < 3 or len(groups[-1]) not in (1, 2):
+            return None
+        d = len(groups[-1])
+    if d > 0:
+        if len(groups) < 2 or len(groups[-1]) != d:
+            return None
+        whole, frac = groups[:-1], groups[-1]
+        fixed = ",".join(whole) + "." + frac
+    else:
+        fixed = ",".join(groups)
+    fixed_whole = fixed.split(".")[0]
+    if not valid_grouping(fixed_whole):
+        return None
+    return text[:m.start()] + fixed + text[m.end():]
+
+
+def _set_amount(table: Table, v, a) -> None:
+    v.amount = a
+    if v.unit in ("per_share", "ratio") or a.percent:
+        v.full = a.value
+    elif table.scale and table.scale.factor is not None:
+        v.full = a.value * table.scale.factor
+    else:
+        v.full = None
 
 
 def _totals(rule_id: str) -> list[str]:
@@ -142,6 +277,8 @@ def valid_grouping(text: str) -> bool:
     """1,234,567 (Western) and 12,34,567 (Indian) are valid; 1,2345 or 12,345,67 are not (a lost or extra digit)."""
     import re
     t = re.sub(r"[()\s$₹₱%+\-−]|Rs\.?", "", text)
+    if re.fullmatch(r"\d+([.,])\d+(?:\1\d+)+", t) and len(re.split(r"[.,]", t)[-1]) != 3:
+        return False            # "7.316.94": one separator twice is grouping, and grouping ends in three digits
     whole = re.split(r"\.(?=\d+$)", t)[0]
     if "," not in whole:
         return True

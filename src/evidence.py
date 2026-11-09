@@ -159,7 +159,8 @@ CREATE TABLE IF NOT EXISTS statement_values (
     verdict TEXT NOT NULL DEFAULT '',      -- verified | agreed | read | doubt
     reasons TEXT NOT NULL DEFAULT '[]',    -- JSON: why it is in doubt
     notes TEXT NOT NULL DEFAULT '[]',      -- JSON: what was noticed but settled
-    ocr TEXT NOT NULL DEFAULT ''           -- JSON: both engines' readings and confidences, the box on the page
+    ocr TEXT NOT NULL DEFAULT '',          -- JSON: both engines' readings and confidences, the box on the page
+    proposed TEXT NOT NULL DEFAULT ''      -- JSON, for a scanned figure in doubt: the reading `amount` is taken as, and why
 );
 CREATE INDEX IF NOT EXISTS statement_values_concept ON statement_values (concept, period_end);
 CREATE TABLE IF NOT EXISTS statement_checks (
@@ -280,7 +281,7 @@ class EvidenceStore:
 
     NEW_COLUMNS = {"statement_values": [("reading", "TEXT NOT NULL DEFAULT 'text'"), ("verdict", "TEXT NOT NULL DEFAULT ''"),
                                         ("reasons", "TEXT NOT NULL DEFAULT '[]'"), ("notes", "TEXT NOT NULL DEFAULT '[]'"),
-                                        ("ocr", "TEXT NOT NULL DEFAULT ''")]}
+                                        ("ocr", "TEXT NOT NULL DEFAULT ''"), ("proposed", "TEXT NOT NULL DEFAULT ''")]}
 
     @classmethod
     def _add_columns(cls, db) -> None:
@@ -580,14 +581,15 @@ class EvidenceStore:
                 db.executemany(
                     "INSERT INTO statement_values (table_id, row_index, col_index, label, label_note, section, concept, concept_origin,"
                     " printed, amount, decimals, value, unit, period_kind, period_start, period_end, period_months, xbrl, created_at,"
-                    " reading, verdict, reasons, notes, ocr)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " reading, verdict, reasons, notes, ocr, proposed)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     [(tid, v.row, v.col, rows[v.row].label, rows[v.row].derived_label, rows[v.row].section, rows[v.row].concept,
                       rows[v.row].concept_origin, v.amount.raw, str(v.amount.value), v.amount.decimals,
                       _plain(v.full) if v.full is not None else None, v.unit, colmap[v.col].kind, colmap[v.col].start,
                       colmap[v.col].end, colmap[v.col].months, json.dumps(v.fact, sort_keys=True) if v.fact else "", now,
                       "ocr" if v.ocr else "xbrl" if v.fact else "text", v.verdict, json.dumps(v.reasons), json.dumps(v.notes),
-                      json.dumps(v.ocr, sort_keys=True) if v.ocr else "")
+                      json.dumps(v.ocr, sort_keys=True) if v.ocr else "",
+                      json.dumps(v.proposed, sort_keys=True) if getattr(v, "proposed", None) else "")
                      for v in t.values])
                 db.executemany(
                     "INSERT INTO statement_checks (table_id, rule, col_index, verdict, expected, computed, detail, created_at)"
@@ -614,7 +616,8 @@ class EvidenceStore:
     def find_values(self, concept: str, period_end: str | None = None, source_sha256: str | None = None,
                     primary_only: bool = True, include_doubt: bool = False) -> list[dict]:
         """Values of one line item across every document read: the index sentences and quotes are checked against. A value
-        in doubt is left out unless asked for: it is not evidence until a person settles it."""
+        in doubt is kept in the store with the reading it is taken as, but left out here unless asked for: whoever uses
+        it must show it as needing a check."""
         where, args = ["v.concept = ?"], [concept]
         if not include_doubt:
             where.append("v.verdict != 'doubt'")

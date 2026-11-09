@@ -125,13 +125,18 @@ def read_source(store, source_sha256: str, url: str = "", market: str | None = N
 
 
 def doubt_row(t: Table, v) -> dict:
-    """One figure in doubt, said so a person can check it: where it is, what each reader saw, and why it is doubted."""
+    """One figure in doubt, said so a person can check it: where it is, what each reader saw, the reading it is taken as,
+    and why it is doubted."""
     row = next(r for r in t.rows if r.index == v.row)
     col = next(c for c in t.columns if c.index == v.col)
     where = f", page {t.raw.locator['page']}" if t.raw.locator.get("page") else ""
-    return {"summary": f"{row.label or '(unlabelled line)'}, {col.label or 'period unread'}{where}: printed '{v.amount.raw}'; "
-                       f"{'; '.join(v.reasons)}",
-            "statement": t.statement, "line": row.label, "period": col.label, "printed": v.amount.raw,
+    p = v.proposed
+    printed = p["printed"] if p else v.amount.raw
+    taken = ("" if p and p["changed"] else f"kept as read ({p['why']}); " if p else "")      # a change is in the reasons
+    return {"summary": f"{row.label or '(unlabelled line)'}, {col.label or 'period unread'}{where}: printed '{printed}'; "
+                       f"{taken}{'; '.join(v.reasons)}; please double-check",
+            "statement": t.statement, "line": row.label, "period": col.label, "printed": printed,
+            "taken_as": p["reading"] if p else v.amount.raw, "value": str(v.full) if v.full is not None else None,
             "readings": {k: v.ocr.get(k) for k in ("tesseract", "rapidocr")} if v.ocr else None,
             "page": t.raw.locator.get("page"), "box": (v.ocr or {}).get("page_box"), "reasons": v.reasons}
 

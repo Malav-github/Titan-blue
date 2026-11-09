@@ -50,7 +50,8 @@ def test_table_rules_read_as_characters_are_not_part_of_a_number():
 
 
 @pytest.mark.parametrize("text, ok", [("1,234,567", True), ("12,34,567", True), ("8,987.59", True), ("(1,348.95)", True),
-                                      ("1,2345", False), ("12,345,67", False), ("7.316.94", True), ("123", True)])
+                                      ("1,2345", False), ("12,345,67", False), ("7.316.94", False), ("7,316,94", False),
+                                      ("1.234.567", True), ("123", True)])
 def test_digit_grouping(text, ok):
     assert valid_grouping(text) is ok
 
@@ -115,19 +116,59 @@ def test_two_unconfirmed_figures_in_one_sum_stay_in_doubt(monkeypatch):
     v = _verdicts(t)
     col = t.columns[0].index
     assert v[("(b) Other Income", col)][0] == "doubt" and "one OCR engine only" in v[("(b) Other Income", col)][2][0]
-    assert v[("Total Income (1+2)", col)][0] == "doubt" and v[("Total Income (1+2)", col)][1] is None   # no amount given
+    total = v[("Total Income (1+2)", col)]
+    assert total[0] == "doubt" and total[1] == Decimal("910400000")      # kept as RapidOCR read it, never dropped
+    assert any("disagree" in r for r in total[2])
+    assert t.value_at(next(r.index for r in t.rows if r.label.startswith("Total")), col).proposed["kind"] == "engine"
 
 
-def test_a_misread_that_breaks_a_sum_is_doubt_for_every_figure_in_it(monkeypatch):
+def test_a_misread_is_taken_as_the_reading_that_makes_its_sum_add_up_and_flagged(monkeypatch):
     t = _scanned(monkeypatch, [
         ("(a) Revenue from operations", [("7,316.94", "7.316.94", 0.95), ("7,316.94", "7,316.94", 0.95)]),
         ("(b) Other Income", [("207.64", "207.64", 0.95), ("207.64", "207.64", 0.95)]),
         ("Total Income (1+2)", [("7,524.58", "7,524.58", 0.94), ("7,524.58", "7,524.58", 0.94)])])
     v = _verdicts(t)
     col = t.columns[0].index
+    verdict, full, reasons, _ = v[("(a) Revenue from operations", col)]
+    assert verdict == "doubt" and full == Decimal("731694000")          # 7,316.94 lakh, not 731,694 lakh
+    assert any("taken as 7,316.94 (printed '7.316.94'): tesseract's reading; with it total_income adds up" in r for r in reasons)
+    assert all(c.verdict == "pass" for c in t.checks)
+    assert v[("Total Income (1+2)", col)][0] == "verified" and v[("(b) Other Income", col)][0] == "verified"
+
+
+def test_a_figure_both_engines_misread_is_repaired_by_its_column_format_and_flagged(monkeypatch):
+    t = _scanned(monkeypatch, [
+        ("(a) Revenue from operations", [("7.316.94", "7.316.94", 0.95), ("8,987.59", "8,987.59", 0.95)]),
+        ("(b) Other Income", [("207.64", "207.64", 0.95), ("116.41", "116.41", 0.95)]),
+        ("Total Income (1+2)", [("7,524.58", "7,524.58", 0.94), ("9,104.00", "9,104.00", 0.94)]),
+        ("Employee benefits expense", [("526.06", "526.06", 0.96), ("661.11", "661.11", 0.95)])])
+    col = t.columns[0].index
+    rev = t.value_at(next(r.index for r in t.rows if r.label.startswith("(a)")), col)
+    assert rev.verdict == "doubt" and rev.amount.value == Decimal("7316.94") and rev.proposed["kind"] == "repair"
+    assert rev.proposed["confirmed_by"] == ["total_income"]
+    assert any("the last separator is the decimal point" in r for r in rev.reasons)
+    row = statements.doubt_row(t, rev)
+    assert row["printed"] == "7.316.94" and row["taken_as"] == "7,316.94" and row["summary"].endswith("please double-check")
+
+
+def test_a_misread_no_reading_can_settle_stays_doubt_for_every_figure_in_its_sum(monkeypatch):
+    t = _scanned(monkeypatch, [
+        ("(a) Revenue from operations", [("7,816.94", "7,816.94", 0.95), ("7,316.94", "7,316.94", 0.95)]),
+        ("(b) Other Income", [("207.64", "207.64", 0.95), ("207.64", "207.64", 0.95)]),
+        ("Total Income (1+2)", [("7,524.58", "7,524.58", 0.94), ("7,524.58", "7,524.58", 0.94)])])
+    v = _verdicts(t)
+    col = t.columns[0].index
     assert all(v[(label, col)][0] == "doubt" for label in ("(a) Revenue from operations", "(b) Other Income", "Total Income (1+2)"))
     assert any("does not add up" in r for r in v[("Total Income (1+2)", col)][2])
-    assert any("disagree" in r for r in v[("(a) Revenue from operations", col)][2])
+    assert v[("(a) Revenue from operations", col)][1] == Decimal("781694000")     # kept as both engines read it
+
+
+@pytest.mark.parametrize("text,d,fixed", [("7.316.94", 2, "7,316.94"), ("(1.690.69)", 2, "(1,690.69)"), ("7,316,94", 2, "7,316.94"),
+                                          ("1.234", 0, "1,234"), ("12.34.567", 0, "12,34,567"), ("12,34,567.8", 2, None),
+                                          ("7316", 2, None), ("7.316.94", None, "7,316.94"), ("7.316", None, None),
+                                          ("1.234.567", None, None)])
+def test_separator_repair(text, d, fixed):
+    assert checks.repair_separators(text, d) == fixed
 
 
 def test_an_unsure_reading_with_nothing_to_confirm_it_is_doubt(monkeypatch):
@@ -143,19 +184,21 @@ def test_an_unsure_reading_with_nothing_to_confirm_it_is_doubt(monkeypatch):
 def test_figures_in_doubt_are_kept_out_of_the_index_but_stored_with_both_readings(monkeypatch, tmp_path):
     from evidence import EvidenceStore
     from tests.test_statements import _ingest
-    t_rows = [("(a) Revenue from operations", [("8,987.59", "8,987.59", 0.96), ("7,316.94", "7.316.94", 0.95)]),
+    t_rows = [("(a) Revenue from operations", [("8,987.59", "8,987.59", 0.96), ("7.316.94", "7.316.94", 0.95)]),
               ("(b) Other Income", [("116.41", "116.41", 0.97), ("207.64", "207.64", 0.95)]),
               ("Total Income (1+2)", [("9,104.00", "9,104.00", 0.96), ("7,524.58", "7,524.58", 0.94)])]
     _scanned(monkeypatch, t_rows)                                        # sets up the fake OCR
     store = EvidenceStore(tmp_path / "evidence.db")
     sha = _ingest(store, _pdf([]), "https://www.mabini.example/results-q2.pdf", "application/pdf")
     summary = statements.read_source(store, sha)
-    assert summary["ocr_pages"] == [1] and summary["doubt_count"] == 3
-    assert "printed '7.316.94'" in summary["doubts"][0]["summary"] or any("7.316.94" in d["summary"] for d in summary["doubts"])
+    assert summary["ocr_pages"] == [1] and summary["doubt_count"] == 1             # the repair; its sum then adds up
+    assert summary["doubts"][0]["printed"] == "7.316.94" and summary["doubts"][0]["taken_as"] == "7,316.94"
     assert [v["value"] for v in store.find_values("revenue")] == ["898759000"]          # the doubtful 2024 figure is left out
     doubtful = store.find_values("revenue", include_doubt=True)
     stored = next(v for v in doubtful if v["verdict"] == "doubt")
-    assert stored["reading"] == "ocr" and '"rapidocr": "7.316.94"' in stored["ocr"] and stored["value"] is None
+    assert stored["reading"] == "ocr" and '"rapidocr": "7.316.94"' in stored["ocr"]
+    assert stored["printed"] == "7.316.94" and stored["value"] == "731694000"          # kept, as the reading it is taken as
+    assert '"kind": "repair"' in stored["proposed"]
 
 
 def test_a_scanned_page_without_ocr_is_reported_never_silently_empty(monkeypatch):
