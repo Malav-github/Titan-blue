@@ -124,5 +124,59 @@
     "GDP",
     "CPI",
     "ETF"
-  ]
+  ],
+  "same_meaning": {
+    "announce": [
+      "announce",
+      "announces",
+      "announced",
+      "announcement",
+      "announcements",
+      "update",
+      "updates",
+      "news",
+      "launch",
+      "launches",
+      "launched",
+      "product",
+      "products",
+      "release",
+      "releases",
+      "press",
+      "initiative",
+      "initiatives",
+      "unveil",
+      "unveils",
+      "unveiled",
+      "introduces",
+      "introduced",
+      "rollout",
+      "developments",
+      "development",
+      "push",
+      "moves"
+    ],
+    "strategy": [
+      "strategy",
+      "strategies",
+      "plan",
+      "plans",
+      "roadmap",
+      "vision",
+      "approach"
+    ],
+    "adoption": [
+      "adoption",
+      "adopts",
+      "adopted",
+      "use",
+      "uses",
+      "deployment",
+      "deploys",
+      "integration",
+      "integrates",
+      "implementation"
+    ]
+  },
+  "same_meaning_note": "Words that, in a search, ask for the same thing: two queries that differ only by them are one query ('AI updates' and 'AI product launches'), so the second is dropped and its slot goes to another angle (the company's own releases, a wire service, a filing). Found in a real run: three such queries returned the same press release over and over."
 }

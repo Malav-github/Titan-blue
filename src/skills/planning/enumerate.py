@@ -25,7 +25,8 @@ def _topic(question: str, noun: str | None, subject: str) -> str:
     m = re.search(rf"\b((?:[\w&.'’-]+\s+){{0,3}}){re.escape(noun)}\b", question, re.I)
     words = (m.group(1) if m else "").split()
     drop = {w.lower() for w in re.findall(r"[\w&.-]+", subject)} | {"what", "which", "list", "all", "every", "each", "the", "key", "major",
-                                                                     "main", "recent", "did", "has", "have", "of", "its", "their", "how", "many"}
+                                                                     "main", "recent", "did", "has", "have", "of", "its", "their", "how", "many",
+                                                                     "latest", "newest", "new", "ytd", "so", "far"}   # time words, not the topic
     keep = [w for w in words if len(w) > 1 and w.lower().rstrip("'s") not in drop and not re.search(r"['’]s$", w.lower())]
     return " ".join(keep[-2:])
 

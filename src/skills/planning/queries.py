@@ -76,6 +76,21 @@ def the_subject(subject: str, company: str | None, question: str) -> str:
         unusable = True
     if unusable and (found := named_in_question(question)):
         return found
+    return organisation_in(name, question)
+
+
+def organisation_in(name: str, question: str) -> str:
+    """The organisation in a subject that also names a topic: 'S&P Global's AI push' -> 'S&P Global'. Every query names
+    the organisation; the topic belongs in the queries themselves, not stuck to the front of each one (a real run searched
+    "S&P Global's AI push S&P Global AI announcements ..."). Unchanged when the subject is just a name."""
+    for found in [named_in_question(question), *names_in_question(name)]:
+        if not found or len(found) >= len(name):
+            continue
+        i = name.lower().find(found.lower())
+        if i >= 0 and (len(found.split()) > 1 or "&" in found):
+            return name[i:i + len(found)]               # the subject's own spelling ('S&P Global', not 'S&P GLobal')
+    if m := re.match(r"^(.+?)['’]s\s+\S", name):          # "<organisation>'s <topic>"
+        return m.group(1).strip()
     return name
 
 
@@ -93,8 +108,15 @@ def _anchor(query: str, subject: str) -> str:
     return f'{subject} {query}'.strip()
 
 
+def _meaning(tokens: set[str]) -> set[str]:
+    """Words that ask a search for the same thing ('updates', 'product launches', 'press releases') counted as one."""
+    groups = lenses().get("same_meaning", {})
+    canon = {w: key for key, words in groups.items() for w in words}
+    return {canon.get(t, t) for t in tokens}
+
+
 def _alike(a: str, b: str, drop: set[str]) -> bool:
-    x, y = _tokens(a, drop), _tokens(b, drop)
+    x, y = _meaning(_tokens(a, drop)), _meaning(_tokens(b, drop))
     if not x or not y:
         return a.strip().lower() == b.strip().lower()
     return len(x & y) / len(x | y) >= lenses()["similarity_threshold"]

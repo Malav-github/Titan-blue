@@ -1,7 +1,7 @@
 {
   "about": "Questions that ask for a list of events ('What did S&P Global announce in 2026?', 'What AI initiatives did ...', 'List Acme's acquisitions') are answered by collecting distinct events, not by settling one fact. A small model plans such a question as one fact and stops at the first page that states one event (a real run found one release, its wire copy, and stopped). So code recognises the question, writes the checklist item and the searches, raises the budgets, and keeps reading until the budget is spent; each document is one candidate event and is checked on its own.",
   "list_nouns": "initiatives|announcements|acquisitions|deals|transactions|launches|products|partnerships|moves|developments|investments|events|changes|updates|releases|milestones|divestitures|agreements|appointments|layoffs|news",
-  "list_cues": "\\b(?:list|all|every|each|how many|which|what|key|major|main|recent)\\b",
+  "list_cues": "\\b(?:list|all|every|each|how many|which|what|key|major|main|recent|latest|ytd|so far|this year|to date|year[- ]to[- ]date|since)\\b",
   "announce_question": "\\bwhat\\s+(?:did|has|have)\\s+(.+?)\\s+(?:announce[ds]?|launch(?:ed)?|unveil(?:ed)?|release[ds]?|do|done)\\b",
   "singular": "\\b(?:latest|last|most recent|newest|first|the (?:biggest|largest|main))\\s+(?:\\w+\\s+){0,2}(?:move|announcement|initiative|deal|acquisition|launch|product|partnership|development|investment|event|change|update|release)\\b",
   "item": "Each distinct {what} {subject} announced{window}, with its date",
@@ -13,7 +13,13 @@
     "\"{subject}\" partnership {topic} {year}",
     "\"{subject}\" acquisition OR agreement {topic} {year}"
   ],
-  "budgets": {"max_searches": 8, "max_fetches": 12, "max_fetches_per_iter": 8, "max_queries_per_iter": 6, "max_chunks_per_source": 2},
+  "budgets": {
+    "max_searches": 8,
+    "max_fetches": 12,
+    "max_fetches_per_iter": 8,
+    "max_queries_per_iter": 6,
+    "max_chunks_per_source": 2
+  },
   "checks_per_document": 2,
   "form": "roundup"
 }

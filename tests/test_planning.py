@@ -215,3 +215,28 @@ def test_every_step_logs_the_model_it_used_and_the_search_engines_that_answered(
     scout = next(e["payload"] for e in events if e["type"] == "scout_done")
     assert scout["engines"] == ["fake"]
     assert next(e["payload"] for e in events if e["type"] == "search_done")["providers"][0]["provider"] == "fake"
+
+
+# --- a real run: three near-identical searches, the topic stuck to the front of each ----------------------------------------
+
+def test_a_subject_that_names_a_topic_is_reduced_to_its_organisation():
+    from skills.planning import queries as Q
+    q = "Latest AI announcements by S&P GLobal in 2026 ytd"
+    assert Q.the_subject("S&P Global's AI push", None, q) == "S&P Global"          # not "S&P Global's AI push" before every query
+    assert Q.organisation_in("Acme's pricing", "What does Acme charge?") == "Acme"
+    assert Q.organisation_in("S&P Global", q) == "S&P Global"
+
+
+def test_queries_that_differ_only_by_same_meaning_words_are_one_query():
+    from skills.planning import queries as Q
+    drop = set(Q.lenses()["noise_words"]) | Q._tokens("S&P Global", set())
+    assert Q._alike("S&P Global AI updates 2026 press releases", "S&P Global AI product launches 2026", drop)
+    assert not Q._alike("S&P Global AI announcements 2026 site:spglobal.com", "S&P Global AI updates 2026 press releases", drop)
+
+
+def test_latest_announcements_this_year_is_a_list_question():
+    from skills.planning import enumerate as E
+    listing = E.enumeration("Latest AI announcements by S&P GLobal in 2026 ytd", "S&P Global", {"years": [2026]})
+    assert listing and listing["item"] == "Each distinct AI announcement S&P Global announced in 2026, with its date"
+    assert any("prnewswire" in q for q in listing["queries"])                      # wires and the company's releases, not one phrasing
+    assert E.enumeration("What is S&P Global's latest AI announcement?", "S&P Global", {"years": [2026]}) is None   # one thing
