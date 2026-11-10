@@ -1,10 +1,12 @@
-"""When one source is enough to answer (definitions/guidance/answer_settling.json, decided with the user).
+"""Source tiers, and when one source is enough to answer (definitions/guidance/answer_settling.json, the user's tiers).
 
-A claim from a strong source settles its needed fact on its own, and the run answers at once: the company's own filing or
-release, the other party's own filing or release in a deal, a regulatory filing (whoever filed it), or a Tier 1 news
-publication. A claim from any other source needs claims from two independent sites. Read by code; nothing here asks a model.
+Tier 1, the official note or document: the company's own filing or release (on its website, EDGAR, or a wire service such
+as PR Newswire), the other involved company's own filing or release in a deal, or a regulatory filing whoever filed it.
+Tier 2, a reputed top-tier publisher's report (Bloomberg, WSJ, Reuters, ...): an exclusive or a report of a possible
+announcement, not the official document. Tier 3, everything else. Tiers 1 and 2 settle a fact on their own (Tier 1 is read
+first); Tier 3 needs two independent sites. Read by code; nothing here asks a model.
 
-    strength(profile, url, question, names) -> {"id", "label", "why"} | None     None: not strong, needs a second site
+    strength(profile, url, question, names) -> {"id", "tier", "label", "tier_label", "why"} | None    None: Tier 3
 """
 
 import json
@@ -21,15 +23,23 @@ PATH = PROJECT_ROOT / "definitions" / "guidance" / "answer_settling.json"
 def rules() -> dict:
     d = json.loads(PATH.read_text(encoding="utf-8"))
     d["_by_id"] = {r["id"]: r for r in d["strong"]}
-    for need in ("company_document", "deal_party_document", "regulatory_filing", "tier1_news"):
+    for need in ("company_document", "deal_party_document", "regulatory_filing", "top_publisher"):
         if need not in d["_by_id"]:
             raise ValueError(f"answer_settling.json: rule {need} is missing")
+    for rule in d["strong"]:
+        if str(rule["tier"]) not in d["tiers"] or rule["tier"] not in d["settles_alone"]:
+            raise ValueError(f"answer_settling.json: rule {rule['id']} has a tier that does not settle alone")
     d["_deal"] = re.compile(rf"\b(?:{d['_by_id']['deal_party_document']['deal_cues']})\b", re.I)
     return d
 
 
 def others_need_sites() -> int:
-    return int(rules()["others_need_sites"])
+    """Independent sites a Tier 3 fact needs."""
+    return int(rules()["tier3_need_sites"])
+
+
+def tier_label(tier: int) -> str:
+    return rules()["tiers"][str(tier)]["label"]
 
 
 def _host(url: str) -> str:
@@ -52,16 +62,17 @@ def strength(profile: dict, url: str, question: str = "", names: list[str] | Non
     host = _host(url)
 
     def strong(rule_id: str, why: str) -> dict:
-        return {"id": rule_id, "label": r[rule_id]["label"], "why": why}
+        tier = r[rule_id]["tier"]
+        return {"id": rule_id, "tier": tier, "label": r[rule_id]["label"], "tier_label": tier_label(tier), "why": why}
 
     if profile.get("tier") == "primary":
         return strong("company_document", f"{profile.get('label') or 'the company itself'}")
     if reg := _on(host, r["regulatory_filing"]["hosts"]):
         return strong("regulatory_filing", f"a document on {reg}" + (f" filed by {profile['issuer']}" if profile.get("issuer") else ""))
-    if pub := _on(host, r["tier1_news"]["hosts"]):
-        return strong("tier1_news", r["tier1_news"]["hosts"][pub])
     if party := _deal_party(profile, host, question, names or []):
         return strong("deal_party_document", f"{profile.get('document_label') or 'a document'} by {party}, a party to the deal asked about")
+    if pub := _on(host, r["top_publisher"]["hosts"]):
+        return strong("top_publisher", f"reported by {r['top_publisher']['hosts'][pub]}; not the official document")
     return None
 
 

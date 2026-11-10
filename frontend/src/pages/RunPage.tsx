@@ -23,7 +23,7 @@ function ClaimCard({ claim, caution }: { claim: ReportClaim; caution?: boolean }
         <Badge tone={claim.source_date ? 'neutral' : 'warn'}>
           {claim.source_date ? `Dated ${claim.source_date.slice(0, 10)}${claim.source_date_kind ? ` (${claim.source_date_kind.replace('_', ' ')})` : ''}` : 'No date found'}
         </Badge>
-        {claim.corroboration && <Badge tone={claim.corroboration === 'sources disagree' ? 'bad' : claim.corroboration === 'single source, unconfirmed' ? 'warn' : 'ok'}>{claim.corroboration}</Badge>}
+        {claim.corroboration && <Badge tone={claim.corroboration === 'sources disagree' ? 'bad' : claim.corroboration.endsWith('single source, unconfirmed') ? 'warn' : claim.corroboration.startsWith('Tier 2') ? 'info' : 'ok'}>{claim.corroboration}</Badge>}
         <ExternalLink href={claim.source_url}>{claim.source_url}</ExternalLink>
       </p>
       {(claim.copies ?? []).length > 0 && <p className="mt-1 text-xs text-muted">The same document is also on {(claim.copies ?? []).join(', ')}: counted as one source, not several.</p>}

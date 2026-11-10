@@ -206,8 +206,8 @@ def test_site_groups_subdomains_and_country_suffixes():
 
 def test_labels():
     assert corroboration.label(row(1, "x", tier="primary"), {"a.com"}, False) == "primary source"
-    assert corroboration.label(row(1, "x"), {"a.com"}, False) == "single source, unconfirmed"
-    assert corroboration.label(row(1, "x"), {"a.com", "b.com"}, False) == "2 independent sources"
+    assert corroboration.label(row(1, "x"), {"a.com"}, False) == "Tier 3: single source, unconfirmed"
+    assert corroboration.label(row(1, "x"), {"a.com", "b.com"}, False) == "Tier 3: 2 independent sources"
     assert corroboration.label(row(1, "x", tier="primary"), {"a.com"}, True) == "sources disagree"
 
 
@@ -258,7 +258,7 @@ def test_a_recorded_claim_gets_its_period_and_the_report_shows_it(env):
     row_ = result["report"]["established"][0]
     period = next(t for t in row_["times"] if t["kind"] == "period")
     assert period["value"] == "3 months ended 2026-09-26" and period["detail"]["change"] == "+8%"
-    assert row_["corroboration"] == "single source, unconfirmed"
+    assert row_["corroboration"] == "Tier 3: single source, unconfirmed"
     assert result["report"]["conflicts"] == []
     assert "claim_time_recorded" in [e["type"] for e in env["runs"].events(result["run_id"])]
 

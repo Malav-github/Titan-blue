@@ -127,15 +127,16 @@ with what Titan already does about it and what could be done next (`definitions/
   - *The exact address.* Every claim gives the address of the report itself. A site's homepage (`/`, `/en-us/`,
     `index.html`) is never fetched from search results and never quoted; an address that redirected to the homepage (a
     moved or paywalled report) is reported as not reaching the report (`source_not_citable`).
-- **Answer as soon as one strong source states it** (`definitions/guidance/answer_settling.json`, `src/settling.py`). A claim
-  settles its fact on its own, and the run answers without reading or checking further, when its source is: the company's
-  own filing or release (its confirmed website, its own filings, its releases on a wire service); for a question about an
-  acquisition, merger or investment, the other party's own filing or release; a regulatory filing on a regulator's system,
-  whoever filed it (sec.gov; SEBI, MCA and RBI in India; the SEC and BSP in the Philippines); or a Tier 1 publication
-  (Bloomberg, WSJ, Reuters, Financial Times, AP). Any other source, Tier 2 publications included, needs a second independent
-  site. Strong sources are read and checked first, and the report labels each claim ("strong source: a regulatory filing").
-  The code checks (word-for-word quote, exact address and page, period, figures against the statements) always run;
-  corroboration beyond this is a separate verification step.
+- **Source tiers, and answering at once** (`definitions/guidance/answer_settling.json`, `src/settling.py`; the user's tiers).
+  **Tier 1, the official note or document**: the company's own website (a confirmed domain), its filings, its releases
+  (also on PR Newswire and other wires); in an acquisition, merger or investment, the other involved company's own release
+  or filing; and regulatory filings, whoever filed them (sec.gov; SEBI, MCA and RBI in India; the SEC and BSP in the
+  Philippines). **Tier 2, a top-tier publisher's report** (Bloomberg, WSJ, Reuters, Financial Times, AP): an exclusive or a
+  report of a possible announcement, labelled as not the official document. **Tier 3**: everything else. A Tier 1 or Tier 2
+  claim settles its fact on its own and the run answers without reading or checking further (Tier 1 is read and checked
+  first); a Tier 3 fact needs two independent sites. Each claim's label names its tier ("Tier 1: official document, a
+  regulatory filing"). The code checks (word-for-word quote, exact address and page, period, figures against the
+  statements) always run; corroboration beyond this is a separate verification step.
 - **Pause, resume, stop** (run page buttons; `POST /api/runs/{id}/pause`, `/resume`, `/stop`). A pause takes effect at the
   next safe point: between steps, or while reading pages and checking claims, between one model call and the next (on a
   real S&P Global run it paused 13.8 s after the press, after the call in progress). Everything done is checkpointed; Resume

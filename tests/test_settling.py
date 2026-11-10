@@ -20,12 +20,12 @@ def strength(url, text="", question="What did Acme announce?", names=("Acme",), 
     ("https://www.sec.gov/Archives/edgar/data/9999/000099992626000001/buyer-8k.htm", "regulatory_filing"),   # filed by someone else
     ("https://www.sebi.gov.in/filings/2026/acme-order.html", "regulatory_filing"),
     ("https://www.sec.gov.ph/notices/acme-2026.pdf", "regulatory_filing"),
-    ("https://www.reuters.com/business/acme-buys-fabrikam-2026-10-01/", "tier1_news"),
-    ("https://www.bloomberg.com/news/articles/2026-10-01/acme", "tier1_news"),
-    ("https://www.wsj.com/business/acme-deal-123", "tier1_news"),
-    ("https://www.ft.com/content/abc", "tier1_news"),
+    ("https://www.reuters.com/business/acme-buys-fabrikam-2026-10-01/", "top_publisher"),
+    ("https://www.bloomberg.com/news/articles/2026-10-01/acme", "top_publisher"),
+    ("https://www.wsj.com/business/acme-deal-123", "top_publisher"),
+    ("https://www.ft.com/content/abc", "top_publisher"),
 ])
-def test_regulatory_filings_and_tier1_publications_settle_alone(url, kind):
+def test_tier1_documents_and_tier2_publishers_settle_alone(url, kind):
     got = strength(url)["id"]
     # the subject's own filing is also the company's own document: either way it settles alone
     assert got == kind or (kind == "regulatory_filing" and got == "company_document" and "/1234/" in url)
@@ -35,7 +35,7 @@ def test_regulatory_filings_and_tier1_publications_settle_alone(url, kind):
     "https://www.cnbc.com/2026/10/01/acme.html", "https://fortune.com/2026/10/01/acme/", "https://www.forbes.com/sites/x/acme/",
     "https://seekingalpha.com/news/acme", "https://acme-fans.blogspot.com/2026/10/acme.html", "https://en.wikipedia.org/wiki/Acme",
 ])
-def test_tier2_publications_and_other_sites_need_a_second_source(url):
+def test_tier3_sources_need_a_second_source(url):
     assert strength(url) is None
 
 
@@ -55,7 +55,7 @@ def test_the_other_partys_release_settles_alone_for_a_deal_question():
     assert not_a_deal is None                                    # the same release is not strong for a question about something else
 
 
-def test_a_tier1_report_settles_a_fact_with_one_check(env):
+def test_a_tier2_report_settles_a_fact_with_one_check(env):
     log = []
     runner = runner_with_log(env, log)
     items = add_claims(env, ["https://www.cnbc.com/2026/p", "https://www.reuters.com/business/p"])
@@ -65,7 +65,7 @@ def test_a_tier1_report_settles_a_fact_with_one_check(env):
     assert sum(e["type"] == "check_skipped" for e in env["runs"].events("r1")) == 1
 
 
-def test_tier2_reports_need_two_independent_sites(env):
+def test_tier3_reports_need_two_independent_sites(env):
     log = []
     runner = runner_with_log(env, log)
     items = add_claims(env, ["https://www.cnbc.com/2026/p", "https://fortune.com/2026/p", "https://www.forbes.com/2026/p"])
@@ -77,5 +77,13 @@ def test_tier2_reports_need_two_independent_sites(env):
 
 def test_the_rule_is_data_and_complete():
     r = settling.rules()
-    assert {x["id"] for x in r["strong"]} == {"company_document", "deal_party_document", "regulatory_filing", "tier1_news"}
+    assert {(x["id"], x["tier"]) for x in r["strong"]} == {("company_document", 1), ("deal_party_document", 1), ("regulatory_filing", 1),
+                                                          ("top_publisher", 2)}
+    assert r["settles_alone"] == [1, 2] and settling.tier_label(2).startswith("Tier 2")
     assert settling.others_need_sites() == 2 and "sec.gov" in r["_by_id"]["regulatory_filing"]["hosts"]
+
+
+def test_tier1_is_read_before_tier2_and_tier2_says_it_is_a_report():
+    assert strength("https://www.sec.gov/Archives/edgar/data/9999/000099992626000001/x.htm")["tier"] == 1
+    reuters = strength("https://www.reuters.com/business/acme-2026-10-01/")
+    assert reuters["tier"] == 2 and "not the official document" in reuters["why"]

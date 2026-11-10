@@ -1263,8 +1263,8 @@ class Runner:
         """Why a source settles a fact on its own (settling.py: the company's own document, the other party's in a deal, a
         regulatory filing, a Tier 1 publication), or None when its claims need a second independent site."""
         if claim is not None and claim["source_tier"] == "primary":   # recorded on the company's confirmed domain
-            return {"id": "company_document", "label": settling.rules()["_by_id"]["company_document"]["label"],
-                    "why": "a page on the company's confirmed official domain"}
+            return {"id": "company_document", "tier": 1, "label": settling.rules()["_by_id"]["company_document"]["label"],
+                    "tier_label": settling.tier_label(1), "why": "a page on the company's confirmed official domain"}
         src = self.store.get_source(sha)
         profile = dict(self._profile(s, sha))
         if src["final_url"].startswith(("upload:",)):
@@ -1469,7 +1469,7 @@ class Runner:
         needed = "\n".join(f"{i}. {t}" for i, t in enumerate(s["checklist"], 1))
         todo, backlog = list(left.get("sources") or s["new_sources"]), []
         if not left:          # strong sources first: one of them can settle a fact, and the rest need not be read
-            todo.sort(key=lambda sha: not self._strong(s, sha))
+            todo.sort(key=lambda sha: (self._strong(s, sha) or {}).get("tier", 3))
         if left:
             self.runs.emit(rid, "extract", "extract_resumed", {"sources_left": len(todo), "from_chunk": left.get("chunk", 0)})
 
@@ -1666,7 +1666,7 @@ class Runner:
             fact = s.get("claim_items", {}).get(str(cid))
             # a statement row that is the fact asked for is settled by code, with no model call: check it before the rest
             row = fact is not None and "|" in claim["quote"] and self._statement_row(s, claim, s["checklist"][fact]) is not None
-            keyed.append((not row, not self._strong(s, claim["source_sha256"], claim), seen[where], len(keyed), cid))
+            keyed.append((not row, (self._strong(s, claim["source_sha256"], claim) or {}).get("tier", 3), seen[where], len(keyed), cid))
         return [cid for *_, cid in sorted(keyed)]
 
     def n_check(self, s: State) -> dict:
@@ -1845,7 +1845,7 @@ class Runner:
             return -int(re.sub(r"\D", "", str(r.get("source_date") or ""))[:8] or 0)
         parts = []
         for i, fact in enumerate(s["checklist"]):
-            mine = sorted([r for r in rows if r.get("fact") == i], key=lambda r: (not r.get("strength"), newest(r)))
+            mine = sorted([r for r in rows if r.get("fact") == i], key=lambda r: ((r.get("strength") or {}).get("tier", 3), newest(r)))
             if not mine:
                 continue
             lines = [f"{fact}:"] + [f"- {self._cite(r)}" for r in mine[:self.QUOTES_PER_FACT]]

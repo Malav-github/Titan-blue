@@ -80,7 +80,7 @@ def test_a_company_release_on_a_wire_is_primary_and_labelled(env):
     row = run(env, "What is Acme's latest announcement?", Plan=lambda p: Plan(subject="Acme", queries=["acme"], checklist=["Starter plan price"]))["report"]["established"][0]
     assert row["source_class"] == "wire_release" and row["source_tier"] == "primary"
     assert row["source_label"] == "Press release by Acme, via PR Newswire"
-    assert row["corroboration"] == "strong source: the company's own filing or release"     # settles the fact on its own
+    assert row["corroboration"] == "Tier 1: official document, the company's own filing or release"     # settles the fact on its own
     assert row["source"]["issuer"] == "Acme" and row["source"]["venue"] == "wire_service" and row["source"]["publisher"] == "PR Newswire"
 
 

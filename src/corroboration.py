@@ -56,13 +56,13 @@ def copy_groups(prints: dict[str, set[int]]) -> dict[str, str]:
 def label(row: dict, sites_for_fact: set[str], disputed: bool) -> str:
     if disputed:
         return "sources disagree"
-    if strong := row.get("strength"):                 # settles on its own (settling.py): say which kind of strong source
-        return f"strong source: {strong['label']}"
-    if row.get("source_tier") == "primary":
+    if strong := row.get("strength"):                 # Tier 1 or 2 (settling.py): settles on its own; say its tier and kind
+        return f"{strong['tier_label']}, {strong['label']}"
+    if row.get("source_tier") == "primary":           # a row built without the tier rule (older callers)
         return "primary source"
     if len(sites_for_fact) >= 2:
-        return f"{len(sites_for_fact)} independent sources"
-    return "single source, unconfirmed"
+        return f"Tier 3: {len(sites_for_fact)} independent sources"
+    return "Tier 3: single source, unconfirmed"
 
 
 def _norm(value: str) -> str:
