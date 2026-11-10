@@ -34,6 +34,7 @@ from skills.temporal.extract import DateFact, best_date, parse_date
 import corroboration
 import diagnosis
 import sentences
+import selection
 import settling
 import source_class
 import sources
@@ -250,13 +251,14 @@ class State(TypedDict, total=False):
     report: dict
 
 
-def extraction_prompt(question: str, needed: str, page_url: str, chunk: str) -> str:
-    """`needed` is the numbered list of facts wanted. The passage is shown as numbered sentences (sentences.split), and the
-    model answers with sentence numbers. Shared with the model eval so it tests what the pipeline sends."""
+def extraction_prompt(question: str, needed: str, page_url: str, chunk: str, numbered: str | None = None) -> str:
+    """`needed` is the numbered list of facts wanted. The passage is shown as numbered sentences (sentences.split), or, when
+    code picked them from a whole document, as `numbered` ('[57] ...' lines, '...' for what was left out), and the model
+    answers with sentence numbers. Shared with the model eval so it tests what the pipeline sends."""
     return (
         f"QUESTION: {question}\nNEEDED FACTS:\n{needed}\nPAGE: {page_url}\n\n"
-        f"PASSAGE (numbered sentences):\n{sentences.numbered(sentences.split(chunk))}\n\n"
-        "Find up to 8 facts in the passage, mostly facts that establish one of the NEEDED FACTS (give its number in "
+        f"PASSAGE (numbered sentences):\n{numbered or sentences.numbered(sentences.split(chunk))}\n\n"
+        "Find up to 15 facts in the passage, mostly facts that establish one of the NEEDED FACTS (give its number in "
         "`needed_fact`). For each fact give in `sentences` the number of the sentence that states it; if the fact needs the "
         "sentence before or after to be complete, give up to 3 numbers next to each other. In `value` copy the specific value "
         "(the figure, date or name) exactly as those sentences write it. Choose sentences that state the "
@@ -1027,6 +1029,13 @@ class Runner:
             if not cands:
                 self.runs.emit(rid, "select", "sources_selected", {"urls": [], "reason": "only homepages were found"})
                 return {"selected": []}
+        # coverage, not repetition (source_selection.json): one article is read once, from its best copy; no site fills the list
+        cands, merged, capped = selection.diversify(cands)
+        if merged or capped:
+            self.runs.emit(rid, "select", "candidates_merged", {
+                "copies": [{"url": c["url"], "copy_of": c["copy_of"]} for c in merged][:20],
+                "over_site_limit": [c["url"] for c in capped][:20],
+                "reason": "one document is one source: its copies are not fetched, and no single site takes more than its share"})
         shown = cands[:15]
         now = tclock.now(self.now_fn)
         scope = s.get("time_scope") or {}
@@ -1512,6 +1521,10 @@ class Runner:
         if left:
             self.runs.emit(rid, "extract", "extract_resumed", {"sources_left": len(todo), "from_chunk": left.get("chunk", 0)})
 
+        names = self._names(s)
+        name_words = {w for n in names for w in re.findall(r"[a-z0-9]{4,}", (n or "").lower())}
+        done_docs = [self.store.get_claim(c)["source_sha256"] for c in prior]
+
         def paused_at(pos: int, chunk: int) -> dict:
             """Stop reading here, at a safe point between model calls: what is left is read when the run is resumed."""
             self.runs.emit(rid, "extract", "extract_paused", {"sources_left": len(todo) - pos, "at_chunk": chunk,
@@ -1526,24 +1539,36 @@ class Runner:
                 # a claim must point at the report itself, not at a site's front page
                 self.runs.emit(rid, "extract", "source_not_citable", {"url": source["url"], "final_url": source["final_url"], "reason": why})
                 continue
+            if (copy_of := self._read_already(s, sha, done_docs)) is not None:
+                # the same document (a release and its copies on wires and portals) is read once, from its strongest copy
+                self.runs.emit(rid, "extract", "copy_skipped", {"url": source["final_url"], "same_as": self.store.get_source(copy_of)["final_url"]})
+                continue
             raw = Path(source["text_path"]).read_text(encoding="utf-8")
             text = normalize(raw)
+            units = sentences.split(raw)
+            # code reads the whole document and picks the sentences worth a model call; the model reads big packs of them
+            chosen = sentences.candidates(units, terms, name_words)
+            batches = sentences.packs(units, chosen, limit=b["max_chunks_per_source"])
+            self.runs.emit(rid, "extract", "source_read", {
+                "url": source["final_url"], "source_sha256": sha, "chars": len(text), "sentences": len(units),
+                "scanned": "all", "sent_to_model_chars": sum(len(units[i]) for p in batches for i in p),
+                "candidate_sentences": len(chosen), "packs": len(batches)})
+            done_docs.append(sha)
             first = left.get("chunk", 0) if pos == 0 else 0
-            for k, chunk in enumerate(sentence_chunks(raw, terms, b["max_chunks_per_source"])):
+            for k, pack in enumerate(batches):
                 if k < first:
                     continue                       # read before the pause
                 if (pos or k > first) and self._wanted(rid):
                     return paused_at(pos, k)
-                units = sentences.split(chunk)
-                prompt = extraction_prompt(s["question"], needed, source["final_url"], chunk)
+                prompt = extraction_prompt(s["question"], needed, source["final_url"], "", numbered=sentences.numbered_at(units, pack))
                 Extraction.take_dropped(), Extraction.take_dropped_examples()
                 extraction = self._ask("extract", Extraction, prompt, rid, "extract")
                 if dropped := Extraction.take_dropped():
                     self.runs.emit(rid, "extract", "claims_malformed", {
                         "count": dropped, "source_url": source["final_url"], "examples": Extraction.take_dropped_examples()})
-                chosen = [(c, quote, why) for c in (extraction.claims if extraction else [])[:5]
+                picked = [(c, quote, why) for c in (extraction.claims if extraction else [])[:15]
                           for quote, why in sentences.pick_all(units, c.sentences)]
-                for c, quote, why in chosen:
+                for c, quote, why in picked:
                     if quote is None:
                         rejected += 1
                         self.runs.emit(rid, "extract", "claim_rejected", {
@@ -1593,6 +1618,13 @@ class Runner:
                 break
         return {"new_claim_ids": prior + new_ids, "all_claim_ids": s["all_claim_ids"] + new_ids, "rejected": rejected,
                 "new_sources": [], "claim_items": items, "backlog": backlog, "extract_left": None}
+
+    def _read_already(self, s: State, sha: str, done: list[str]) -> str | None:
+        """The source already read in this run that holds the same document as `sha` (shared long sentences), or None."""
+        if not done:
+            return None
+        groups = self._documents(done + [sha])
+        return next((d for d in done if d != sha and groups.get(d) == groups.get(sha)), None)
 
     def _documents(self, shas: list[str]) -> dict[str, str]:
         """Source -> the first source holding the same document (itself if it has no copy among `shas`)."""

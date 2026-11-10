@@ -1,0 +1,15 @@
+{
+  "id": "source_selection",
+  "title": "Choosing which pages to read: coverage, not repetition",
+  "note": "Read by code (src/selection.py) before pages are fetched, and by the extraction step after. A real run read one S&P Global release six times (its own newsroom, PR Newswire, Nasdaq, Stockhouse, TradingView, ad-hoc-news) and cited it as several sources. One document is one source: it is fetched and read once, from its strongest copy, and the slots it would have taken go to other documents. Added 2026-11-11 at the user's request: selection should encourage comprehensive coverage.",
+  "same_article": {
+    "title_similarity": 0.7,
+    "note": "Two search results whose headlines share at least this share of their words (after the site's name and punctuation are removed) are one article. Only the best copy is fetched; the others are kept on record as copies."
+  },
+  "prefer": ["company_site", "filing", "wire_release", "major_publication", "other", "reference"],
+  "prefer_note": "Which copy of one article to read: the company's own page or filing first (the original), then its release on a wire, then a top-tier publisher, then anything else.",
+  "max_per_site": 2,
+  "max_per_site_note": "Pages from one site per round, so one portal cannot fill the reading list. Not applied to the subject's own site or to a regulator, where several different documents are the point.",
+  "exempt_classes": ["company_site", "filing"],
+  "after_fetch": "A fetched page that holds the same document as one already read (long sentences shared word for word) is not sent to the model: its claims would repeat the first copy's. It is listed as a copy."
+}

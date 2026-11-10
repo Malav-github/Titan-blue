@@ -134,3 +134,58 @@ def pick_all(sentences: list[str], numbers: list[int]) -> list[tuple[str | None,
     if len(runs) > MAX_PIECES:
         out.append((None, f"more than {MAX_PIECES} separate passages chosen for one fact; the rest were not read"))
     return out
+
+
+PACK_CHARS = 18_000        # one model call reads this much: reading is fast (about 2,300 tokens a second here), writing is slow
+NUMBER = re.compile(r"\d")
+
+
+def candidates(units: list[str], terms: set[str], names: set[str] | None = None, lead: int = 3) -> list[int]:
+    """The sentences worth showing the model, by code, over the WHOLE document: each sentence that shares a word with the
+    question or the needed facts (a figure in it counts extra), with the sentence before and after it for context, and the
+    document's first sentences (its title and lead). Indices into `units`, best first."""
+    names = {n[:5] for n in (names or set())}
+    want = {t[:5] for t in terms} - names              # word stems: 'reported' meets 'report', 'revenues' meets 'revenue'
+    scored: dict[int, float] = {}
+    for i, u in enumerate(units):
+        words = {w[:5] for w in re.findall(r"[a-z0-9]{4,}", u.lower())}
+        hits = len(words & want)
+        if hits:
+            scored[i] = hits + (0.5 if NUMBER.search(u) else 0)
+    picked: dict[int, float] = {i: 100.0 - i for i in range(min(lead, len(units)))}
+    for i, sc in scored.items():
+        for j, bonus in ((i, 0.0), (i - 1, -0.5), (i + 1, -0.5)):     # its neighbours carry the context
+            if 0 <= j < len(units):
+                picked[j] = max(picked.get(j, -1e9), sc + bonus)
+    return sorted(picked, key=lambda i: -picked[i])
+
+
+def packs(units: list[str], chosen: list[int], size: int = PACK_CHARS, limit: int | None = None) -> list[list[int]]:
+    """The chosen sentences in packs of about `size` characters: the best first, each pack in the document's own order.
+    A document that fits in the packs allowed is sent whole: nothing is filtered out when the model can read it all."""
+    if sum(len(u) + 8 for u in units) <= size * (limit or 10**6):
+        chosen = list(range(len(units)))
+    out, cur, n = [], [], 0
+    for i in chosen:
+        if cur and n + len(units[i]) > size:
+            out.append(sorted(cur))
+            cur, n = [], 0
+            if limit and len(out) >= limit:
+                return out
+        cur.append(i)
+        n += len(units[i]) + 8
+    if cur and (not limit or len(out) < limit):
+        out.append(sorted(cur))
+    return out
+
+
+def numbered_at(units: list[str], indices: list[int]) -> str:
+    """'[57] sentence' lines for the chosen sentences, numbered by their place in the whole document, '...' where text was
+    left out, so the model's numbers point back at the document."""
+    lines, last = [], None
+    for i in indices:
+        if last is not None and i != last + 1:
+            lines.append("...")
+        lines.append(f"[{i + 1}] {units[i]}")
+        last = i
+    return "\n".join(lines)
