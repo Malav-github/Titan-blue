@@ -177,7 +177,7 @@ def create_app(registry: Registry | None = None, token: str | None = None,
     @app.get("/api/harness/research")
     def research_harness():
         """The research pipeline as nodes and edges, for the flowchart."""
-        return harness.research()
+        return harness.research(strict=False)      # a drift between code and file still draws the chart, said in "problems"
 
     @app.get("/api/port-types")
     def port_types():

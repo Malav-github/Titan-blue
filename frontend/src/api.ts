@@ -328,7 +328,7 @@ export interface Models {
 
 export interface HarnessNode { id: string; label: string; col: number; row: number; does: string }
 export interface HarnessEdge { from: string; to: string; label?: string; bend?: number; via?: [number, number][]; control?: boolean }
-export interface Harness { id: string; title: string; nodes: HarnessNode[]; edges: HarnessEdge[]; control_note?: string }
+export interface Harness { id: string; title: string; nodes: HarnessNode[]; edges: HarnessEdge[]; control_note?: string; problems?: string[] }
 
 // ---- calls -------------------------------------------------------------------------------------
 

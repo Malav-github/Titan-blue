@@ -17,7 +17,10 @@ def graph_structure() -> tuple[set[str], set[tuple[str, str]]]:
     return nodes, edges
 
 
-def research() -> dict:
+def research(strict: bool = True) -> dict:
+    """The flowchart. `strict` (tests, start-up checks): the file must match the graph exactly, or ValueError. Not strict (the
+    app): a mismatch (say a server still running older code after definitions changed) still draws the chart, from the real
+    graph's steps and links, and says what differs in `problems`, instead of the chart disappearing."""
     spec = json.loads(PATH.read_text(encoding="utf-8"))
     nodes, edges = graph_structure()
     declared = {(e["from"], e["to"]) for e in spec["edges"]}
@@ -26,8 +29,15 @@ def research() -> dict:
         problems.append(f"nodes differ: only in the graph {sorted(nodes - set(spec['nodes']))}, only in the file {sorted(set(spec['nodes']) - nodes)}")
     if declared != edges:
         problems.append(f"edges differ: only in the graph {sorted(edges - declared)}, only in the file {sorted(declared - edges)}")
-    if problems:
+    if problems and strict:
         raise ValueError("definitions/harness/research.json does not match the research graph: " + "; ".join(problems))
-    return {"id": spec["id"], "title": spec["title"],
-            "nodes": [{"id": k, **v} for k, v in spec["nodes"].items()], "edges": spec["edges"],
-            "control_note": spec.get("control_note", "")}
+    shown_nodes = [{"id": k, **v} for k, v in spec["nodes"].items() if k in nodes]
+    placed = {n["id"] for n in shown_nodes}
+    # steps the file does not describe yet are still drawn (a row below the rest), so the chart never loses a step
+    lowest = max([n.get("row", 0) for n in shown_nodes] or [0])
+    shown_nodes += [{"id": k, "label": k.replace("_", " ").title(), "does": "A step the chart's description does not cover yet.",
+                     "col": i, "row": lowest + 1} for i, k in enumerate(sorted(nodes - placed))]
+    shown_edges = [e for e in spec["edges"] if (e["from"], e["to"]) in edges]
+    shown_edges += [{"from": a, "to": b, "control": a == b} for a, b in sorted(edges - declared)]
+    return {"id": spec["id"], "title": spec["title"], "nodes": shown_nodes, "edges": shown_edges,
+            "control_note": spec.get("control_note", ""), "problems": problems}

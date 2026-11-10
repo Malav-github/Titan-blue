@@ -138,6 +138,7 @@ export function Flow({ events, status }: { events?: RunEvent[]; status?: string 
           <Badge tone="ok">done</Badge><Badge tone="info">working now</Badge><Badge tone="warn">waiting for you</Badge><Badge tone="bad">failed</Badge>
           <span>Dashed lines are decisions. Click a step to see what it does{live ? ' and what it has done in this run' : ''}.</span>
           {harness.data.control_note && <span>{harness.data.control_note}</span>}
+          {(harness.data.problems ?? []).length > 0 && <span>The chart's description is out of step with the running code (restart the server to match): {(harness.data.problems ?? []).join('; ')}</span>}
         </p>
       )}
       {selected ? (

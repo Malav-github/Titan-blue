@@ -44,3 +44,16 @@ def test_endpoint_serves_the_flowchart(tmp_path):
     data = c.get("/api/harness/research", headers={"x-titan-token": "t"}).json()
     assert len(data["nodes"]) == 14 and len(data["edges"]) == 25
     assert sum(1 for e in data["edges"] if e.get("control")) == 4 and data["control_note"]   # pause and stop, said in words
+
+
+def test_the_app_still_draws_the_chart_when_the_file_and_the_graph_drift(tmp_path, monkeypatch):
+    # a server still running older code after definitions changed must not lose its chart (it once showed nothing)
+    spec = json.loads(harness.PATH.read_text(encoding="utf-8"))
+    spec["edges"].append({"from": "report", "to": "plan"})
+    del spec["nodes"]["select"]
+    bad = tmp_path / "research.json"
+    bad.write_text(json.dumps(spec), encoding="utf-8")
+    monkeypatch.setattr(harness, "PATH", bad)
+    data = harness.research(strict=False)
+    assert data["problems"] and any(n["id"] == "select" for n in data["nodes"])          # the step is still drawn
+    assert not any(e["from"] == "report" and e["to"] == "plan" for e in data["edges"])    # a link the graph lacks is not
