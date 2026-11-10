@@ -3,11 +3,23 @@
   "title": "Source tiers, and when one source is enough to answer",
   "note": "Read by code (src/settling.py). Tiers as the user defined them on 2026-11-10. Tier 1 is the official note or document itself; Tier 2 is a reputed top-tier publisher's report (an exclusive, or a report of a possible announcement), not the official document; Tier 3 is everything else. A claim from a tier listed in `settles_alone` settles its fact on its own and the run answers at once (Tier 1 is read and checked before Tier 2); a Tier 3 claim needs claims from at least `tier3_need_sites` independent sites (copies of one document count once). Every claim still needs its word-for-word quote, exact address and the code checks; further checking (a second source, contradictions, newer documents) is a separate verification step the person asks for.",
   "tiers": {
-    "1": {"label": "Tier 1: official document", "meaning": "the official note or document itself"},
-    "2": {"label": "Tier 2: top-tier publisher's report", "meaning": "reported by a reputed top-tier publisher (an exclusive, or a report of a possible announcement); not the official document"},
-    "3": {"label": "Tier 3: other source", "meaning": "any other publication or site; needs a second independent source"}
+    "1": {
+      "label": "Tier 1: official document",
+      "meaning": "the official note or document itself"
+    },
+    "2": {
+      "label": "Tier 2: top-tier publisher's report",
+      "meaning": "reported by a reputed top-tier publisher (an exclusive, or a report of a possible announcement); not the official document"
+    },
+    "3": {
+      "label": "Tier 3: other source",
+      "meaning": "any other publication or site; needs a second independent source"
+    }
   },
-  "settles_alone": [1, 2],
+  "settles_alone": [
+    1,
+    2
+  ],
   "tier3_need_sites": 2,
   "strong": [
     {
@@ -28,17 +40,83 @@
       "tier": 1,
       "label": "a regulatory filing",
       "rule": "a document on a regulator's own system, whoever filed it (an 8-K by the buyer about the subject counts)",
-      "hosts": ["sec.gov", "sebi.gov.in", "mca.gov.in", "rbi.org.in", "sec.gov.ph", "bsp.gov.ph"],
+      "hosts": [
+        "sec.gov",
+        "sebi.gov.in",
+        "mca.gov.in",
+        "rbi.org.in",
+        "sec.gov.ph",
+        "bsp.gov.ph"
+      ],
       "hosts_note": "US SEC (EDGAR); India: SEBI, Ministry of Corporate Affairs, Reserve Bank of India; Philippines: SEC, Bangko Sentral. Stock exchanges' portals (NSE, BSE, PSE EDGE) are not read: their terms forbid automated use (definitions/skills/statements.json)."
+    },
+    {
+      "id": "official_blog",
+      "tier": 1,
+      "label": "an official blog post by a company the question names",
+      "rule": "a post on the official blog of a major brand (checked on Wikidata: its official website is the blog's domain, and it has articles in many Wikipedias) when that brand is the subject or another company the question names"
     },
     {
       "id": "top_publisher",
       "tier": 2,
       "label": "a top-tier publisher's report",
       "rule": "a report by one of these publishers: reputed, but second-hand (an exclusive or a report of a possible announcement), so it is labelled as a report and not the official document",
-      "hosts": {"bloomberg.com": "Bloomberg", "wsj.com": "The Wall Street Journal", "reuters.com": "Reuters", "ft.com": "Financial Times",
-                "apnews.com": "AP"},
-      "hosts_note": "Top-tier publishers as named by the user (Bloomberg, WSJ, Reuters, etc.). Other major publications (CNBC, Forbes, Fortune, ...) are Tier 3 unless added here."
+      "hosts": {
+        "bloomberg.com": "Bloomberg",
+        "wsj.com": "The Wall Street Journal",
+        "reuters.com": "Reuters",
+        "ft.com": "Financial Times",
+        "apnews.com": "AP",
+        "nytimes.com": "The New York Times",
+        "washingtonpost.com": "The Washington Post",
+        "economist.com": "The Economist",
+        "barrons.com": "Barron's",
+        "cnbc.com": "CNBC",
+        "bbc.com": "BBC",
+        "bbc.co.uk": "BBC",
+        "theguardian.com": "The Guardian",
+        "fortune.com": "Fortune",
+        "asia.nikkei.com": "Nikkei Asia",
+        "nikkei.com": "Nikkei",
+        "scmp.com": "South China Morning Post",
+        "straitstimes.com": "The Straits Times",
+        "economictimes.indiatimes.com": "The Economic Times",
+        "livemint.com": "Mint",
+        "business-standard.com": "Business Standard",
+        "thehindubusinessline.com": "BusinessLine",
+        "thehindu.com": "The Hindu",
+        "financialexpress.com": "Financial Express",
+        "bworldonline.com": "BusinessWorld",
+        "inquirer.net": "Philippine Daily Inquirer",
+        "philstar.com": "The Philippine Star"
+      },
+      "hosts_note": "Top-tier publishers: the user's examples (Bloomberg, WSJ, Reuters) and others of the same standing, global and in the markets Titan covers first (India, the Philippines). Matched by exact host or its subdomains, so economictimes.indiatimes.com counts and other indiatimes.com sites do not. Left out on purpose: Forbes (much of it is contributor blogs), aggregators and portals that mix news with user content (Moneycontrol, Yahoo Finance). Everything else is Tier 3."
     }
-  ]
+  ],
+  "blogs": {
+    "note": "A blog post is checked before it is given a tier (settling.blog_check, tools.primary.brand_of_domain). An official blog of a major brand is that brand's own note: Tier 1 when the brand is the subject or a company the question names; Tier 3 otherwise. A blog that cannot be shown to be official is Tier 3 and says why.",
+    "platform_hosts": [
+      "medium.com",
+      "substack.com",
+      "wordpress.com",
+      "blogspot.com",
+      "tumblr.com",
+      "ghost.io",
+      "hashnode.dev",
+      "dev.to",
+      "blogger.com",
+      "wixsite.com",
+      "weebly.com",
+      "typepad.com",
+      "livejournal.com"
+    ],
+    "platform_paths": {
+      "linkedin.com": "^/pulse/",
+      "forbes.com": "^/sites/"
+    },
+    "host_cues": "^(?:blog|blogs|engineering|techblog|tech-blog)\\.",
+    "path_cues": "(?:^|/)(?:blog|blogs|engineering-blog|techblog|tech-blog)(?:/|$)",
+    "major_brand_min_wikipedias": 10,
+    "major_brand_note": "'major brand' is measured, not judged: a Wikidata organisation with articles in at least this many Wikipedias, whose 'official website' (P856) is the blog's own domain."
+  }
 }

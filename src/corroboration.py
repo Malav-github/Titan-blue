@@ -60,9 +60,10 @@ def label(row: dict, sites_for_fact: set[str], disputed: bool) -> str:
         return f"{strong['tier_label']}, {strong['label']}"
     if row.get("source_tier") == "primary":           # a row built without the tier rule (older callers)
         return "primary source"
+    blog = f" ({row['blog']['why']})" if (row.get("blog") or {}).get("why") else ""     # why a blog post is not Tier 1
     if len(sites_for_fact) >= 2:
-        return f"Tier 3: {len(sites_for_fact)} independent sources"
-    return "Tier 3: single source, unconfirmed"
+        return f"Tier 3: {len(sites_for_fact)} independent sources{blog}"
+    return f"Tier 3: single source, unconfirmed{blog}"
 
 
 def _norm(value: str) -> str:

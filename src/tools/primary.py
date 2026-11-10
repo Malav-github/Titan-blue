@@ -82,6 +82,68 @@ def _wikidata(params: dict) -> dict:
     return resp.json()
 
 
+_TWO_LEVEL = {"co.uk", "org.uk", "co.in", "net.in", "org.in", "gov.in", "com.ph", "gov.ph", "org.ph", "com.au", "co.jp",
+              "com.sg", "com.cn", "co.kr", "com.br", "co.za", "com.mx", "com.hk", "com.tw", "co.id", "com.my"}
+
+
+def registrable(host: str) -> str:
+    """The domain a company registers ('nvidia.com' for blogs.nvidia.com, 'tata.co.in' for blog.tata.co.in)."""
+    parts = host.lower().removeprefix("www.").split(".")
+    return ".".join(parts[-3:]) if ".".join(parts[-2:]) in _TWO_LEVEL else ".".join(parts[-2:])
+
+
+def brand_label(host: str) -> str:
+    """The brand a host is named for: 'nvidia' (blogs.nvidia.com), 'google' (blog.google, a brand's own top-level domain)."""
+    reg = registrable(host)
+    first = reg.split(".")[0]
+    if first in ("blog", "blogs") and "." in reg:
+        return reg.split(".")[-1]
+    return first
+
+
+def brand_of_domain(host: str, min_wikipedias: int = 10, limit: int = 5) -> dict:
+    """Is `host` the domain of a major brand? From Wikidata: an item found by the host's brand name whose 'official website'
+    (P856) is on the same registrable domain (or, for a brand's own top-level domain like .google, whose official site is
+    named for it), with articles in at least `min_wikipedias` Wikipedias. Returns {"official", "brand", "id",
+    "official_website", "wikipedias", "why"}; never raises (a failed lookup says so, and the blog is not counted as official)."""
+    label = brand_label(host)
+    try:
+        found = _wikidata({"action": "wbsearchentities", "search": label, "language": "en", "type": "item", "limit": limit}).get("search", [])
+        ids = [f["id"] for f in found]
+        entities = _wikidata({"action": "wbgetentities", "ids": "|".join(ids), "props": "claims|sitelinks|labels",
+                              "languages": "en"}).get("entities", {}) if ids else {}
+    except Exception as exc:
+        return {"official": False, "brand": None, "why": f"the brand behind {host} could not be looked up ({type(exc).__name__})"}
+    dot_brand = host.lower().endswith("." + label) and registrable(host).startswith(("blog.", "blogs."))
+    seen = []
+    for f in found:
+        ent = entities.get(f["id"], {})
+        sites = [c["mainsnak"]["datavalue"]["value"] for c in ent.get("claims", {}).get("P856", []) if c.get("mainsnak", {}).get("datavalue")]
+        for site in sites:
+            site_host = host_of(site)
+            same = registrable(site_host) == registrable(host) or (
+                dot_brand and (brand_label(site_host) == label or site_host.endswith("." + label)))     # about.google, blog.google
+            if not same:
+                continue
+            wikis = sum(1 for k in ent.get("sitelinks", {}) if k.endswith("wiki") and k not in ("commonswiki", "specieswiki", "metawiki",
+                                                                                                  "wikidatawiki", "mediawikiwiki"))
+            name = ent.get("labels", {}).get("en", {}).get("value") or f.get("label") or label
+            seen.append({"brand": name, "id": f["id"], "official_website": site, "wikipedias": wikis})
+            break
+    # several items may list the same domain (Google and 'Google Knowledge Graph'): the brand itself is the one named exactly
+    # for the domain, else the best-known one
+    seen.sort(key=lambda i: (re.sub(r"[^a-z0-9]", "", i["brand"].lower()) != label, -i["wikipedias"]))
+    if seen and seen[0]["wikipedias"] >= min_wikipedias:
+        i = seen[0]
+        return {**i, "official": True, "why": f"Wikidata {i['id']} '{i['brand']}' lists {i['official_website']} as its official website, "
+                                              f"with articles in {i['wikipedias']} Wikipedias"}
+    if seen:
+        s = seen[0]
+        return {**s, "official": False, "why": f"{host} is {s['brand']}'s own domain (Wikidata {s['id']}), but with articles in only "
+                                              f"{s['wikipedias']} Wikipedias it is not a major brand by Titan's measure"}
+    return {"official": False, "brand": None, "why": f"no Wikidata organisation lists {registrable(host)} as its official website"}
+
+
 def resolve_domain(company: str, limit: int = 5) -> dict:
     """Candidate official domains from Wikidata's 'official website' property, each with its evidence.
 

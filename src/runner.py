@@ -1272,8 +1272,28 @@ class Runner:
         cache = self.__dict__.setdefault("_strength", {})
         key = (sha, s.get("question", ""), tuple(self._names(s)))
         if key not in cache:
-            cache[key] = settling.strength(profile, src["final_url"], s.get("question", ""), self._names(s))
+            blog = self._blog(s, src["final_url"])
+            cache[key] = settling.strength(profile, src["final_url"], s.get("question", ""), self._names(s), blog=blog)
         return cache[key]
+
+    def _blog(self, s: State, url: str) -> dict | None:
+        """For a blog post: is it a major brand's official blog? A blogging platform never is; a blog on a site's own domain
+        is checked on Wikidata (tools.primary.brand_of_domain), once per domain. Said in the run log either way."""
+        kind = settling.blog_kind(url)
+        if kind is None:
+            return None
+        found = self.__dict__.setdefault("_blogs", {})
+        key = primary.registrable(primary.host_of(url)) if kind == "own_domain" else url
+        if key not in found:
+            found[key] = (settling.platform_note(url) if kind == "platform"
+                          else self.brand_lookup(primary.host_of(url), settling.min_wikipedias()))
+            if s.get("run_id"):
+                self.runs.emit(s["run_id"], "extract", "blog_checked", {"url": url, "kind": kind, **found[key]})
+        return found[key]
+
+    @staticmethod
+    def brand_lookup(host: str, min_wikipedias: int) -> dict:
+        return primary.brand_of_domain(host, min_wikipedias)
 
     def _tier(self, s: State, claim: dict) -> str:
         if claim["source_tier"] != "secondary":     # on the company's confirmed domain, or a connector's or an upload's own tier
@@ -1944,7 +1964,8 @@ class Runner:
                    "times": self.store.claim_times(cid), "premise": cid in set(s.get("premise_claim_ids") or []),
                    "source_date": best.value if best else None, "source_date_kind": best.kind if best else None,
                    "page": self.store.page_of(claim["source_sha256"], claim["quote_start"], claim["quote_end"]),
-                   "strength": self._strong(s, claim["source_sha256"], claim)}
+                   "strength": self._strong(s, claim["source_sha256"], claim),
+                   "blog": self._blog(s, source["final_url"])}
             fact_i = s["claim_items"].get(str(cid))
             if fact_i is not None and "|" in claim["quote"] and (st_row := self._statement_row(s, claim, s["checklist"][fact_i])):
                 row["statement_row"] = {k: st_row[k] for k in ("label", "statement", "title", "figure", "why")}

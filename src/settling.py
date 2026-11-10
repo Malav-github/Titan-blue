@@ -56,8 +56,9 @@ def _compact(name: str) -> str:
                                           (name or "").lower()))
 
 
-def strength(profile: dict, url: str, question: str = "", names: list[str] | None = None) -> dict | None:
-    """Why this source settles a fact on its own, or None. `profile` is the source's description (source_class.classify)."""
+def strength(profile: dict, url: str, question: str = "", names: list[str] | None = None, blog: dict | None = None) -> dict | None:
+    """Why this source settles a fact on its own, or None. `profile` is the source's description (source_class.classify);
+    `blog` the result of the blog check (`blog_kind` and tools.primary.brand_of_domain) when the page is a blog post."""
     r = rules()["_by_id"]
     host = _host(url)
 
@@ -69,6 +70,12 @@ def strength(profile: dict, url: str, question: str = "", names: list[str] | Non
         return strong("company_document", f"{profile.get('label') or 'the company itself'}")
     if reg := _on(host, r["regulatory_filing"]["hosts"]):
         return strong("regulatory_filing", f"a document on {reg}" + (f" filed by {profile['issuer']}" if profile.get("issuer") else ""))
+    if blog and blog.get("official") and (brand := blog.get("brand")):
+        # the official blog of a major brand: its own note, Tier 1 when it is the company asked about or one the question names
+        if any(_compact(brand) == _compact(n) or _compact(n) in _compact(brand) for n in names or [] if n and len(_compact(n)) > 2):
+            return strong("company_document", f"the official blog of {brand} ({blog['why']})")
+        if len(_compact(brand)) > 2 and _compact(brand) in _compact(question):
+            return strong("official_blog", f"the official blog of {brand}, named in the question ({blog['why']})")
     if party := _deal_party(profile, host, question, names or []):
         return strong("deal_party_document", f"{profile.get('document_label') or 'a document'} by {party}, a party to the deal asked about")
     if pub := _on(host, r["top_publisher"]["hosts"]):
@@ -90,3 +97,28 @@ def _deal_party(profile: dict, host: str, question: str, names: list[str]) -> st
     if profile.get("venue") == "wire_service" or _compact(site) == _compact(issuer):
         return issuer
     return None
+
+
+def blog_kind(url: str) -> str | None:
+    """'platform' for a post on a blogging platform (Medium, Substack, LinkedIn posts, Forbes contributors: anyone can write
+    there, so it is never taken as official), 'own_domain' for a blog on a site's own domain (to be checked: is it a major
+    brand's official blog?), None when the page is not a blog."""
+    b = rules()["blogs"]
+    u = urlparse(url or "")
+    host, path = _host(url), u.path or "/"
+    if _on(host, b["platform_hosts"]):
+        return "platform"
+    for site, pattern in b["platform_paths"].items():
+        if _on(host, [site]) and re.search(pattern, path):
+            return "platform"
+    if re.search(b["host_cues"], host) or re.search(b["path_cues"], path, re.I):
+        return "own_domain"
+    return None
+
+
+def platform_note(url: str) -> dict:
+    return {"official": False, "brand": None, "why": f"a post on {_host(url)}, a blogging platform where anyone can publish: not an official blog"}
+
+
+def min_wikipedias() -> int:
+    return int(rules()["blogs"]["major_brand_min_wikipedias"])

@@ -131,8 +131,13 @@ with what Titan already does about it and what could be done next (`definitions/
   **Tier 1, the official note or document**: the company's own website (a confirmed domain), its filings, its releases
   (also on PR Newswire and other wires); in an acquisition, merger or investment, the other involved company's own release
   or filing; and regulatory filings, whoever filed them (sec.gov; SEBI, MCA and RBI in India; the SEC and BSP in the
-  Philippines). **Tier 2, a top-tier publisher's report** (Bloomberg, WSJ, Reuters, Financial Times, AP): an exclusive or a
-  report of a possible announcement, labelled as not the official document. **Tier 3**: everything else. A Tier 1 or Tier 2
+  Philippines). **Tier 2, a top-tier publisher's report** (Bloomberg, WSJ, Reuters, FT, AP, NYT, The Economist, Nikkei
+  Asia, CNBC, ...; in India The Economic Times, Mint, Business Standard, BusinessLine; in the Philippines BusinessWorld, the
+  Inquirer, The Philippine Star): an exclusive or a report of a possible announcement, labelled as not the official document.
+  **Blog posts are checked first**: a post on a blogging platform (Medium, Substack, LinkedIn posts, Forbes contributors) is
+  never official; a blog on a site's own domain is an official blog of a major brand only if Wikidata lists that domain as
+  the brand's official website and the brand has articles in at least 10 Wikipedias (blogs.nvidia.com: Nvidia, 79). It is
+  Tier 1 when the brand is the subject or a company the question names, Tier 3 otherwise, and the label says why. **Tier 3**: everything else. A Tier 1 or Tier 2
   claim settles its fact on its own and the run answers without reading or checking further (Tier 1 is read and checked
   first); a Tier 3 fact needs two independent sites. Each claim's label names its tier ("Tier 1: official document, a
   regulatory filing"). The code checks (word-for-word quote, exact address and page, period, figures against the
