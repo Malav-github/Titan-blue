@@ -101,6 +101,7 @@ class RunStore:
             payload = json.loads(r["payload"])
             entry = found.setdefault(r["run_id"], {"run_id": r["run_id"], "started_at": r["ts"], "question": None, "kind": None})
             entry["question"] = payload.get("question") or entry["question"]
-            entry["kind"] = ("block" if "graph" in payload else "research") if r["type"] == "run_started" else payload.get("kind", entry["kind"])
+            entry["kind"] = (("block" if "graph" in payload else "verify" if payload.get("kind") == "verify" else "research")
+                             if r["type"] == "run_started" else payload.get("kind", entry["kind"]))
         newest = list(found.values())[::-1][:limit]
         return [{**e, "status": self.status(e["run_id"])} for e in newest]

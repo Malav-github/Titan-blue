@@ -17,7 +17,7 @@ def run_kind(events: list[dict]) -> str | None:
     """block | research, from the first event of a run. None for an unknown run."""
     for e in events:
         if e["type"] == "run_started":
-            return "block" if "graph" in e["payload"] else "research"
+            return "block" if "graph" in e["payload"] else e["payload"].get("kind") if e["payload"].get("kind") == "verify" else "research"
         if e["type"] == "queued":
             return e["payload"].get("kind")
     return None
@@ -95,6 +95,40 @@ class Jobs:
             self.runner.stop(run_id)
         except Exception as exc:
             self.runs.emit(run_id, "api", "run_failed", {"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
+
+    # -- verification (on request, after a research run) ------------------------------------------------------------------
+
+    @property
+    def verifier(self):
+        from verification import Verifier
+        return Verifier(self.runner)
+
+    def start_verification(self, of_run_id: str, claim_ids: list[int] | None = None) -> str:
+        verify_id = uuid.uuid4().hex
+        self.runs.emit(verify_id, "api", "queued", {"kind": "verify", "of_run": of_run_id, "question": "Verification"})
+        self._submit(self._start_verification, verify_id, of_run_id, claim_ids)
+        return verify_id
+
+    def _start_verification(self, verify_id: str, of_run_id: str, claim_ids) -> None:
+        try:
+            self.verifier.start(of_run_id, claim_ids, verify_id=verify_id)
+        except Exception as exc:
+            self.runs.emit(verify_id, "api", "run_failed", {"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
+
+    def resume_verification(self, verify_id: str) -> None:
+        self.runs.emit(verify_id, "api", "queued", {"kind": "verify"})
+        self._submit(self._resume_verification, verify_id)
+
+    def _resume_verification(self, verify_id: str) -> None:
+        try:
+            self.verifier.resume(verify_id)
+        except Exception as exc:
+            self.runs.emit(verify_id, "api", "run_failed", {"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
+
+    def stop_verification(self, verify_id: str) -> None:
+        """A paused verification: end it, keeping the claims verified so far."""
+        started = next(e["payload"] for e in self.runs.events(verify_id) if e["type"] == "run_started")
+        self.verifier._finish(verify_id, started["of_run"], stopped=True)
 
     def report(self, run_id: str) -> dict | None:
         try:

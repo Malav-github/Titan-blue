@@ -139,13 +139,25 @@ with what Titan already does about it and what could be done next (`definitions/
   when the brand is the subject or a company the question names, Tier 3 otherwise. A brand's blog or product blog on a
   third-party platform (medium.com/netflix-techblog, acme.substack.com: the publication is named for a major brand on Wikidata,
   an organisation with its own website, not a person's name) is Tier 3: it needs a second, independent reference. **Every
-  other blog is Tier 4**: poorly sourced. It never settles a fact or counts as an independent source; it is shown in its own
-  section with a strong recommendation to verify it before use, and the report warns. A fact counts as covered only by these
+  other blog is Tier 4**: poorly sourced. It is treated like Tier 3 (a fact needs two independent sources, and it can be one
+  of them), but every quote from it is marked TIER 4: POORLY SOURCED in the answer, with a strong recommendation to verify it
+  before use, and the report warns. A fact counts as covered only by these
   rules: one Tier 1 or 2 claim, or Tier 3 claims from two independent sites.
   claim settles its fact on its own and the run answers without reading or checking further (Tier 1 is read and checked
   first); a Tier 3 fact needs two independent sites. Each claim's label names its tier ("Tier 1: official document, a
   regulatory filing"). The code checks (word-for-word quote, exact address and page, period, figures against the
   statements) always run; corroboration beyond this is a separate verification step.
+- **Verification, on request** (`src/verification.py`). An answer comes as soon as the tier rule is met; checking further is
+  the person's choice, per claim on the run page. *Verify it yourself*: open the source at the quote, then mark the claim
+  Confirmed, Wrong or Not what I asked, with a note (kept with the claim, append-only, `claim_reviews`; shown on the claim).
+  *Run the verification agent*: a separate run (pause, resume, stop like any run) that, for each claim, by code: fetches the
+  source again at its exact address (unchanged, quote still there, quote gone, unreachable); searches for an independent
+  second source and reads it for a sentence naming the subject with the same amount (compared as amounts: "$3.68 billion"
+  agrees with the 10-Q's 3,678 million) or the same value, recorded word for word with its tier; flags a sentence giving
+  another amount for the same line item and period; lists newer reports; and checks figures against the statements. Each
+  claim ends corroborated, contradicted or unconfirmed, with the evidence (`claim_verifications`). On the live S&P Global run
+  it found TradingView's "revenue up 6.8% year on year to $3.68 billion" in 12 s and marked the claim corroborated.
+  `POST /api/runs/{id}/verify`, `GET /api/runs/{id}/verification`, `POST /api/evidence/claims/{id}/review`.
 - **Pause, resume, stop** (run page buttons; `POST /api/runs/{id}/pause`, `/resume`, `/stop`). A pause takes effect at the
   next safe point: between steps, or while reading pages and checking claims, between one model call and the next (on a
   real S&P Global run it paused 13.8 s after the press, after the call in progress). Everything done is checkpointed; Resume

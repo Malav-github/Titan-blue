@@ -28,7 +28,7 @@ HINT_CONTEXT = 60
 
 TABLES = ["sources", "fetches", "entities", "claims", "rejected_claims", "claim_events", "contradictions", "source_dates",
           "support_checks", "claim_time", "statement_tables", "statement_values", "statement_checks", "source_entities",
-          "claim_figures"]
+          "claim_figures", "claim_reviews", "claim_verifications"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -188,6 +188,23 @@ CREATE TABLE IF NOT EXISTS claim_figures (   -- a figure in a claim's quote chec
     mention TEXT NOT NULL,                 -- JSON: what was read from the sentence (amount, period, currency)
     compared_with TEXT NOT NULL,           -- JSON: the statement values it was compared with (value_id, printed, period)
     checker TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS claim_reviews (   -- a person's own check of a claim against its source (manual verification)
+    review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    claim_id INTEGER NOT NULL REFERENCES claims(claim_id),
+    verdict TEXT NOT NULL CHECK (verdict IN ('confirmed', 'wrong', 'not_what_i_asked')),
+    note TEXT NOT NULL DEFAULT '',
+    run_id TEXT NOT NULL DEFAULT '',       -- the run whose answer it was checked in
+    created_at TEXT NOT NULL, created_by TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS claim_verifications (   -- the verification agent's findings for a claim (a verdict, with its evidence)
+    verification_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    claim_id INTEGER NOT NULL REFERENCES claims(claim_id),
+    verify_run_id TEXT NOT NULL,           -- the verification run
+    of_run_id TEXT NOT NULL,               -- the research run whose answer was verified
+    outcome TEXT NOT NULL CHECK (outcome IN ('corroborated', 'contradicted', 'unconfirmed')),
+    checks TEXT NOT NULL,                  -- JSON: each check, its result and evidence (quotes, addresses)
+    created_at TEXT NOT NULL
 );
 CREATE VIEW IF NOT EXISTS current_claims AS
     SELECT * FROM claims WHERE claim_id NOT IN (SELECT claim_id FROM claim_events);
@@ -548,6 +565,47 @@ class EvidenceStore:
             out["printed"], out["printed_last"] = labels[first], labels[last]
         return out
 
+    REVIEW_VERDICTS = ("confirmed", "wrong", "not_what_i_asked")
+
+    def record_review(self, claim_id: int, verdict: str, note: str = "", run_id: str = "", created_by: str = "user") -> int:
+        """A person's check of a claim against its source. Never changed: a later review is a new row."""
+        if verdict not in self.REVIEW_VERDICTS:
+            raise ValueError(f"verdict must be one of {self.REVIEW_VERDICTS}")
+        if self.get_claim(claim_id) is None:
+            raise ValueError(f"unknown claim {claim_id}")
+        with closing(self._connect()) as db, db:
+            return db.execute("INSERT INTO claim_reviews (claim_id, verdict, note, run_id, created_at, created_by) VALUES (?,?,?,?,?,?)",
+                              (claim_id, verdict, note.strip()[:2000], run_id, utc_now(), created_by)).lastrowid
+
+    def reviews_for(self, claim_id: int) -> list[dict]:
+        with closing(self._connect()) as db:
+            return [dict(r) for r in db.execute("SELECT * FROM claim_reviews WHERE claim_id=? ORDER BY review_id", (claim_id,))]
+
+    def latest_reviews(self, claim_ids: list[int]) -> dict[int, dict]:
+        """The newest review of each claim (the person's current judgement)."""
+        out: dict[int, dict] = {}
+        if not claim_ids:
+            return out
+        with closing(self._connect()) as db:
+            marks = ",".join("?" * len(claim_ids))
+            for r in db.execute(f"SELECT * FROM claim_reviews WHERE claim_id IN ({marks}) ORDER BY review_id", list(claim_ids)):
+                out[r["claim_id"]] = dict(r)
+        return out
+
+    def record_verification(self, claim_id: int, verify_run_id: str, of_run_id: str, outcome: str, checks: list[dict]) -> int:
+        with closing(self._connect()) as db, db:
+            return db.execute("INSERT INTO claim_verifications (claim_id, verify_run_id, of_run_id, outcome, checks, created_at)"
+                              " VALUES (?,?,?,?,?,?)", (claim_id, verify_run_id, of_run_id, outcome,
+                                                        json.dumps(checks, default=str), utc_now())).lastrowid
+
+    def verifications_of_run(self, of_run_id: str) -> list[dict]:
+        """Every verification of a research run's claims, newest verification run last."""
+        with closing(self._connect()) as db:
+            rows = [dict(r) for r in db.execute("SELECT * FROM claim_verifications WHERE of_run_id=? ORDER BY verification_id", (of_run_id,))]
+        for r in rows:
+            r["checks"] = json.loads(r["checks"])
+        return rows
+
     def link_source_entity(self, source_sha256: str, entity_id: int, created_by: str = "agent") -> None:
         """Record that a source's statements were read for this company, so its figures index the company's claims."""
         with closing(self._connect()) as db, db:
@@ -648,7 +706,7 @@ class EvidenceStore:
                                          "text_sha256", "as_of", "created_at", "created_by")},
                 "entity": dict(entity), "source_url": source["final_url"], "fetched_at": source["first_fetched_at"],
                 "before": text[max(0, lo - context):lo], "after": text[hi:hi + context],
-                "page": self.page_of(claim["source_sha256"], lo, hi),
+                "page": self.page_of(claim["source_sha256"], lo, hi), "reviews": self.reviews_for(claim_id),
                 "support_checks": self.support_checks_for(claim_id), "status": [dict(e) for e in events],
                 "source_dates": self.source_dates(claim["source_sha256"]), "times": self.claim_times(claim_id),
                 "conflicts": self.conflicts_for(claim_id)}

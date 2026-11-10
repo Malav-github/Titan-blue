@@ -1,14 +1,43 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { api, pageText, type Approval, type FigureCheck, type Report, type ReportClaim, type RunDetail, type RunEvent } from '../api'
+import { api, pageText, type Approval, type ClaimReview, type ClaimVerification, type FigureCheck, type Verification, type Report, type ReportClaim, type RunDetail, type RunEvent } from '../api'
 import { ACTIVE, describeEvent, lines, time } from '../format'
 import { Flow } from '../Flow'
 import { useRunEvents } from '../useRunEvents'
 import { useArchive, useLinks } from '../scope'
 import { Badge, Button, Card, ErrorNote, ExternalLink, Loading, Mono, PageHeader, StatusBadge, TierBadge, timeChips } from '../ui'
 
-function ClaimCard({ claim, caution }: { claim: ReportClaim; caution?: boolean }) {
+const REVIEW_WORDS: Record<ClaimReview['verdict'], [string, 'ok' | 'bad' | 'warn']> = {
+  confirmed: ['Confirmed by you', 'ok'], wrong: ['Marked wrong by you', 'bad'], not_what_i_asked: ['Not what you asked', 'warn'],
+}
+const OUTCOME_WORDS: Record<ClaimVerification['outcome'], [string, 'ok' | 'bad' | 'warn']> = {
+  corroborated: ['Corroborated by the verification agent', 'ok'], contradicted: ['Contradicted: see the findings below', 'bad'],
+  unconfirmed: ['Unconfirmed by the verification agent', 'warn'],
+}
+
+/** Verify it yourself: open the source at the quote, then say what you found. Kept with the claim, never overwritten. */
+function ReviewButtons({ claim, runId }: { claim: ReportClaim; runId?: string }) {
+  const qc = useQueryClient()
+  const [note, setNote] = useState('')
+  const review = useMutation({
+    mutationFn: (verdict: ClaimReview['verdict']) => api.reviewClaim(claim.claim_id, { verdict, note, run_id: runId }),
+    onSuccess: () => { setNote(''); qc.invalidateQueries({ queryKey: ['run', runId] }) },
+  })
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+      <span className="text-muted">Checked it yourself?</span>
+      <Button variant="secondary" disabled={review.isPending} onClick={() => review.mutate('confirmed')}>Confirmed</Button>
+      <Button variant="secondary" disabled={review.isPending} onClick={() => review.mutate('wrong')}>Wrong</Button>
+      <Button variant="secondary" disabled={review.isPending} onClick={() => review.mutate('not_what_i_asked')}>Not what I asked</Button>
+      <input aria-label={`Note on claim ${claim.claim_id}`} className="min-w-40 flex-1 rounded border border-line bg-surface px-2 py-1"
+        placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
+      {review.error && <ErrorNote error={review.error} />}
+    </div>
+  )
+}
+
+function ClaimCard({ claim, caution, runId, verification }: { claim: ReportClaim; caution?: boolean; runId?: string; verification?: ClaimVerification }) {
   const links = useLinks()
   return (
     <li className={`rounded-lg border bg-surface p-4 ${caution ? 'border-warn' : 'border-line'}`}>
@@ -32,7 +61,27 @@ function ClaimCard({ claim, caution }: { claim: ReportClaim; caution?: boolean }
         <p className="mt-2 flex flex-wrap gap-2">{timeChips(claim.times).map((c, i) => <Badge key={i} tone={c.tone}>{c.text}</Badge>)}</p>
       )}
       {claim.why && <p className="mt-2 text-sm text-muted">Why: {claim.why}</p>}
+      {claim.review && (
+        <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+          <Badge tone={REVIEW_WORDS[claim.review.verdict][1]}>{REVIEW_WORDS[claim.review.verdict][0]}</Badge>
+          <span className="text-muted">{time(claim.review.created_at)}{claim.review.note ? `: ${claim.review.note}` : ''}</span>
+        </p>
+      )}
+      {verification && (
+        <div className="mt-2 text-sm">
+          <Badge tone={OUTCOME_WORDS[verification.outcome][1]}>{OUTCOME_WORDS[verification.outcome][0]}</Badge>
+          <ul className="mt-1 flex flex-col gap-1 text-muted">
+            {verification.checks.map((c, i) => (
+              <li key={i}><strong>{c.check.replace('_', ' ')}</strong>: {c.result}{c.detail ? ` (${c.detail})` : ''}
+                {c.quote && <> “{c.quote}”</>}{c.tier_label && <> [{c.tier_label}]</>}{c.url && <> <ExternalLink href={c.url}>{c.url}</ExternalLink></>}
+                {(c.items ?? []).map((it, j) => <span key={j}> · <ExternalLink href={it.url}>{it.title || it.url}</ExternalLink> ({it.published})</span>)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <p className="mt-2 text-sm"><Link className="text-accent underline" to={links.claim(claim.claim_id)}>Open claim #{claim.claim_id} with the quote in context</Link></p>
+      {runId && <ReviewButtons claim={claim} runId={runId} />}
     </li>
   )
 }
@@ -78,10 +127,42 @@ function Answer({ text }: { text: string }) {
   })}</>
 }
 
-function ReportView({ report }: { report: Report }) {
+/** The verification agent: a separate run on request, which can be paused and stopped, and what it found. */
+function VerificationPanel({ runId, verification }: { runId: string; verification?: Verification }) {
+  const qc = useQueryClient()
+  const start = useMutation({ mutationFn: () => api.verifyRun(runId), onSuccess: () => qc.invalidateQueries({ queryKey: ['verification', runId] }) })
+  const v = verification
+  const counts = (v?.results ?? []).reduce<Record<string, number>>((a, r) => ({ ...a, [r.outcome]: (a[r.outcome] ?? 0) + 1 }), {})
+  const working = !!v?.status && ACTIVE.has(v.status)
+  return (
+    <Card>
+      <h3 className="font-semibold">Verification</h3>
+      <p className="mt-1 text-sm text-muted">
+        The answer below was given as soon as a strong enough source stated each fact. Check a claim yourself with the buttons under it,
+        or run the verification agent: it reads each source again, looks for an independent second source and for contradictions,
+        lists newer reports, and checks figures against the company's statements.
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        {!working && <Button disabled={start.isPending} onClick={() => start.mutate()}>{v?.verify_run_id ? 'Run the verification agent again' : 'Run the verification agent'}</Button>}
+        {v?.verify_run_id && v.status && <><RunControls runId={v.verify_run_id} status={v.status} /><StatusBadge status={v.status} /></>}
+        {v?.results?.length ? <span className="text-sm">{['corroborated', 'contradicted', 'unconfirmed'].filter((k) => counts[k]).map((k) => `${counts[k]} ${k}`).join(' · ')}</span> : null}
+      </div>
+      {start.error && <ErrorNote error={start.error} />}
+    </Card>
+  )
+}
+
+function ReportView({ report, runId }: { report: Report; runId?: string }) {
+  const verification = useQuery({
+    queryKey: ['verification', runId], queryFn: () => api.verification(runId ?? ''), enabled: !!runId,
+    refetchInterval: (q) => (q.state.data?.status && ACTIVE.has(q.state.data.status) ? 1500 : false),
+  })
+  const found = Object.fromEntries((verification.data?.results ?? []).map((v) => [v.claim_id, v]))
+  const card = (c: ReportClaim, caution?: boolean) => <ClaimCard key={c.claim_id} claim={c} caution={caution} runId={runId} verification={found[c.claim_id]} />
   return (
     <section aria-labelledby="report-h" className="flex flex-col gap-4">
       <h2 id="report-h" className="text-xl font-semibold">Result</h2>
+      {runId && <VerificationPanel runId={runId} verification={verification.data} />}
       {report.time && (
         <p className="text-sm text-muted">
           As of <strong>{report.time.today}</strong>
@@ -158,22 +239,24 @@ function ReportView({ report }: { report: Report }) {
       <div>
         <h3 className="mb-2 font-semibold">Established ({report.established.length})</h3>
         {report.established.length === 0 ? <p className="text-sm text-muted">No claim passed every check.</p> :
-          <ul className="flex flex-col gap-3">{report.established.map((c) => <ClaimCard key={c.claim_id} claim={c} />)}</ul>}
+          <ul className="flex flex-col gap-3">{report.established.map((c) => card(c))}</ul>}
       </div>
       {(report.context ?? []).length > 0 && (
         <div>
           <h3 className="mb-1 font-semibold">Context ({(report.context ?? []).length})</h3>
           <p className="mb-2 text-sm text-muted">Verified, and not the fact asked for, but material to it: terms, parties, reasons, circumstances. The answer may use them.</p>
-          <ul className="flex flex-col gap-3">{(report.context ?? []).map((c) => <ClaimCard key={c.claim_id} claim={c} />)}</ul>
+          <ul className="flex flex-col gap-3">{(report.context ?? []).map((c) => card(c))}</ul>
         </div>
       )}
       {(report.poorly_sourced ?? []).length > 0 && (
         <div>
           <h3 className="mb-1 font-semibold text-bad">Poorly sourced, Tier 4 ({(report.poorly_sourced ?? []).length})</h3>
           <p role="alert" className="mb-2 rounded-md border border-bad bg-bad-bg p-2 text-sm text-bad">
-            These come only from blogs that are not a major brand's. They are not part of the answer. Verify them before any use.
+            These claims rest on blogs that are not a major brand's. They are treated like Tier 3 (a fact needs two independent
+            sources) and may be in the answer above, marked. Verify them before any use: check them yourself, or run the
+            verification agent.
           </p>
-          <ul className="flex flex-col gap-3">{(report.poorly_sourced ?? []).map((c) => <ClaimCard key={c.claim_id} claim={c} caution />)}</ul>
+          <p className="text-sm text-muted">{(report.poorly_sourced ?? []).map((c) => `#${c.claim_id}`).join(', ')}</p>
         </div>
       )}
       {(report.reference_only ?? []).length > 0 && (
@@ -182,7 +265,7 @@ function ReportView({ report }: { report: Report }) {
       {report.partial.length > 0 && (
         <div>
           <h3 className="mb-2 font-semibold">Partly supported: treat with caution ({report.partial.length})</h3>
-          <ul className="flex flex-col gap-3">{report.partial.map((c) => <ClaimCard key={c.claim_id} claim={c} caution />)}</ul>
+          <ul className="flex flex-col gap-3">{report.partial.map((c) => card(c, true))}</ul>
         </div>
       )}
       {report.gaps.length > 0 && (
@@ -505,7 +588,7 @@ export function RunPage() {
           : 'This run was stopped before doing any research.'}</p></Card>}
         {data.status === 'paused' && !archive && <Card><p className="text-sm">Paused. Everything done so far is saved; Resume carries on from here, even after a restart.</p></Card>}
         <Flow events={events} status={data.status} />
-        {data.report && <ReportView report={data.report} />}
+        {data.report && <ReportView report={data.report} runId={archive ? undefined : id} />}
         <Timeline events={events} working={working} />
       </div>
     </>

@@ -15,6 +15,8 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from typing import Literal
+
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -248,7 +250,24 @@ def create_app(registry: Registry | None = None, token: str | None = None,
                 "approval": last("awaiting_approval") if status == "awaiting_approval" else None,
                 "capability": last("capability_needed") if status == "needs_capability" else None,
                 "source_request": last("source_needed") if status == "needs_source" else None,
-                "report": jobs.report(run_id) if status in ("finished", "stopped") else None, "event_count": len(events)}
+                "report": with_reviews(jobs.report(run_id)) if status in ("finished", "stopped") else None, "event_count": len(events)}
+
+    def with_reviews(report: dict | None) -> dict | None:
+        """Each claim of a report with the person's latest check of it (manual verification), read live from the store."""
+        if not report:
+            return report
+        rows = [r for k in ("established", "partial", "context") for r in report.get(k) or []]
+        latest = engine.store.latest_reviews([r["claim_id"] for r in rows])
+        for r in rows:
+            r["review"] = latest.get(r["claim_id"])
+        return report
+
+    def describe_verification(run_id: str, events: list[dict]) -> dict:
+        started = next((e["payload"] for e in events if e["type"] == "run_started"),
+                       next((e["payload"] for e in events if e["type"] == "queued"), {}))
+        return {"run_id": run_id, "kind": "verify", "status": engine.runs.status(run_id), "title": started.get("question") or "Verification",
+                "of_run": started.get("of_run"), "subject": started.get("subject"), "claims": started.get("claims", []),
+                "results": [e["payload"] for e in events if e["type"] == "claim_verified"], "event_count": len(events)}
 
     @app.get("/api/runs/{run_id}")
     def run(run_id: str):
@@ -256,7 +275,11 @@ def create_app(registry: Registry | None = None, token: str | None = None,
         kind = run_kind(events)
         if kind is None:
             raise HTTPException(404, "No such run")
-        return {**engine.describe(run_id), "kind": "block"} if kind == "block" else describe_research(run_id, events)
+        if kind == "block":
+            return {**engine.describe(run_id), "kind": "block"}
+        if kind == "verify":
+            return describe_verification(run_id, events)
+        return describe_research(run_id, events)
 
     @app.get("/api/runs/{run_id}/events")
     def run_events(run_id: str, after: int = 0):
@@ -322,9 +345,12 @@ def create_app(registry: Registry | None = None, token: str | None = None,
     WAITING = {"paused", "awaiting_approval", "needs_capability", "needs_source"}
 
     def research_status(run_id: str) -> str:
-        if run_kind(engine.runs.events(run_id)) != "research":
-            raise HTTPException(404, "No such research run")
+        if run_kind(engine.runs.events(run_id)) not in ("research", "verify"):
+            raise HTTPException(404, "No such research or verification run")
         return engine.runs.status(run_id)
+
+    def is_verify(run_id: str) -> bool:
+        return run_kind(engine.runs.events(run_id)) == "verify"
 
     @app.post("/api/runs/{run_id}/pause", status_code=202)
     def pause_run(run_id: str):
@@ -344,7 +370,7 @@ def create_app(registry: Registry | None = None, token: str | None = None,
             return {"ok": True, "status": "running"}
         if status != "paused":
             raise HTTPException(409, {"problems": [f"this run is {status}, not paused"]})
-        jobs.resume_research(run_id, None)
+        (jobs.resume_verification(run_id) if is_verify(run_id) else jobs.resume_research(run_id, None))
         return {"ok": True, "status": "queued"}
 
     @app.post("/api/runs/{run_id}/stop", status_code=202)
@@ -355,8 +381,44 @@ def create_app(registry: Registry | None = None, token: str | None = None,
             raise HTTPException(409, {"problems": [f"this run is already {status}"]})
         engine.runs.emit(run_id, "api", "stop_requested", {})
         if status in WAITING:
-            jobs.stop_research(run_id)                 # not working now: end it straight away
+            (jobs.stop_verification(run_id) if is_verify(run_id) else jobs.stop_research(run_id))   # not working now: end it now
         return {"ok": True, "status": "stopping"}
+
+    class VerifyRequest(BaseModel):
+        claim_ids: list[int] = []                      # empty: every claim of the answer
+
+    @app.post("/api/runs/{run_id}/verify", status_code=202)
+    def verify_run(run_id: str, body: VerifyRequest):
+        """Start the verification agent on a finished research run's answer (a separate run, which can be paused and stopped)."""
+        if run_kind(engine.runs.events(run_id)) != "research":
+            raise HTTPException(404, "No such research run")
+        if engine.runs.status(run_id) not in ("finished", "stopped"):
+            raise HTTPException(409, {"problems": ["verify a run once it has its answer"]})
+        return {"verify_run_id": jobs.start_verification(run_id, body.claim_ids or None)}
+
+    @app.get("/api/runs/{run_id}/verification")
+    def run_verification(run_id: str):
+        """The verification agent's findings for a research run: the latest verification run, its status and each claim's result."""
+        found = engine.store.verifications_of_run(run_id)
+        verify_runs = [r for r in engine.runs.runs(200) if r.get("kind") == "verify"]
+        mine = [r["run_id"] for r in verify_runs
+                if next((e["payload"].get("of_run") for e in engine.runs.events(r["run_id"]) if e["type"] in ("run_started", "queued")), None) == run_id]
+        latest = mine[0] if mine else None
+        return {"verify_run_id": latest, "status": engine.runs.status(latest) if latest else None,
+                "results": [v for v in found if v["verify_run_id"] == latest] if latest else []}
+
+    class Review(BaseModel):
+        verdict: Literal["confirmed", "wrong", "not_what_i_asked"]
+        note: str = ""
+        run_id: str = ""
+
+    @app.post("/api/evidence/claims/{claim_id}/review", status_code=201)
+    def review_claim(claim_id: int, body: Review):
+        """Your own check of a claim against its source: confirmed, wrong, or not what you asked. Kept with the claim."""
+        if engine.store.get_claim(claim_id) is None:
+            raise HTTPException(404, "No such claim")
+        rid = engine.store.record_review(claim_id, body.verdict, body.note, body.run_id)
+        return {"review_id": rid, "latest": engine.store.latest_reviews([claim_id]).get(claim_id)}
 
     @app.post("/api/runs/{run_id}/continue", status_code=202)
     def continue_run(run_id: str, body: Continue):

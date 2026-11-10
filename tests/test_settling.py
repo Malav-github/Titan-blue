@@ -182,11 +182,12 @@ def test_a_blog_post_is_checked_in_the_run_and_its_label_says_why(env, monkeypat
     rows = result["report"]["established"] + result["report"]["partial"]
     events = [e["payload"] for e in env["runs"].events(result["run_id"]) if e["type"] == "blog_checked"]
     assert events and events[0]["kind"] == "own_domain" and not events[0]["official"]
-    assert not rows                                                # Tier 4: never an established fact
-    [poor] = result["report"]["poorly_sourced"]
-    assert poor["corroboration"].startswith("Tier 4: poorly sourced (no Wikidata organisation lists")
-    assert any("Tier 4" in w and "verify them before any use" in w for w in result["report"]["warnings"])
-    assert "Starter plan price" in result["report"]["gaps"]
+    [poor] = result["report"]["poorly_sourced"]                    # treated like Tier 3: listed with the claims, warned loudly
+    assert rows and rows[0]["claim_id"] == poor["claim_id"]
+    assert poor["corroboration"].startswith("Tier 4: poorly sourced, single source, unconfirmed (no Wikidata organisation lists")
+    assert any("Tier 4" in w and "verified before any use" in w for w in result["report"]["warnings"])
+    assert "Starter plan price" in result["report"]["gaps"]                # one source, like Tier 3: needs a second
+    assert "TIER 4: POORLY SOURCED" in result["report"]["summary"]
 
 
 
@@ -235,7 +236,19 @@ def test_a_personal_blog_on_a_platform_is_tier4(env, monkeypatch):
     runner = blog_runner(env, monkeypatch, "https://medium.com/@jane/acme-prices")
     report = runner.start("What does Acme charge?", budgets={"max_iterations": 1})["report"]
     [poor] = report["poorly_sourced"]
-    assert "by an author, not a brand" in poor["corroboration"] and report["established"] == []
+    assert "by an author, not a brand" in poor["corroboration"] and report["gaps"] == ["Starter plan price"]
+
+
+def test_two_independent_tier4_sources_establish_a_fact_like_tier3_but_still_warn(env):
+    from tests.test_speed import add_claims, runner_with_log, state
+    from runner import Runner
+    log = []
+    runner = runner_with_log(env, log)
+    runner.brand_lookup = staticmethod(lambda host, n: {"official": False, "brand": None, "why": "no Wikidata organisation lists it"})
+    items = add_claims(env, ["https://blog.one.example/p", "https://blog.two.example/p", "https://blog.three.example/p"])
+    runner.CHECK_WAVE = 1
+    out = runner.n_check(state(items, settle_sites=2))
+    assert log.count("relevance") == 2                               # two Tier 4 sites settle it, as two Tier 3 sites would
 
 
 def test_an_official_brand_blog_on_its_own_domain_is_unchanged(env, monkeypatch):

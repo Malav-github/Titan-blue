@@ -103,7 +103,19 @@ export interface ReportClaim {
   figures?: FigureCheck[]
   figures_label?: string
   page?: PageRef | null
+  review?: ClaimReview | null
 }
+/** A person's own check of a claim against its source. */
+export interface ClaimReview { review_id: number; claim_id: number; verdict: 'confirmed' | 'wrong' | 'not_what_i_asked'; note: string; created_at: string }
+/** The verification agent's findings for one claim. */
+export interface ClaimVerification {
+  claim_id: number
+  verify_run_id: string
+  outcome: 'corroborated' | 'contradicted' | 'unconfirmed'
+  checks: { check: string; result: string; detail?: string; quote?: string; url?: string; tier_label?: string; items?: { title: string; url: string; published: string }[] }[]
+  created_at: string
+}
+export interface Verification { verify_run_id: string | null; status: string | null; results: ClaimVerification[] }
 /** Where a quote sits in a PDF: the PDF's own page count from 1, and the number printed on the page when the PDF gives it. */
 export interface PageRef {
   page: number
@@ -335,6 +347,9 @@ export const api = {
   pauseRun: (id: string) => post(`/api/runs/${id}/pause`, {}),
   resumeRun: (id: string) => post(`/api/runs/${id}/resume`, {}),
   stopRun: (id: string) => post(`/api/runs/${id}/stop`, {}),
+  verifyRun: (id: string, claimIds: number[] = []) => post<{ verify_run_id: string }>(`/api/runs/${id}/verify`, { claim_ids: claimIds }),
+  verification: (id: string) => request<Verification>(`/api/runs/${id}/verification`),
+  reviewClaim: (id: number, body: { verdict: ClaimReview['verdict']; note?: string; run_id?: string }) => post(`/api/evidence/claims/${id}/review`, body),
   connectors: () => request<ConnectorSummary[]>('/api/connectors'),
   requests: () => request<Omit<CapabilityRequest, 'events' | 'gate'>[]>('/api/capability/requests'),
   request: (id: string) => request<CapabilityRequest>(`/api/capability/requests/${id}`),
