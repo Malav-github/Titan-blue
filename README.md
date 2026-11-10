@@ -134,10 +134,14 @@ with what Titan already does about it and what could be done next (`definitions/
   Philippines). **Tier 2, a top-tier publisher's report** (Bloomberg, WSJ, Reuters, FT, AP, NYT, The Economist, Nikkei
   Asia, CNBC, ...; in India The Economic Times, Mint, Business Standard, BusinessLine; in the Philippines BusinessWorld, the
   Inquirer, The Philippine Star): an exclusive or a report of a possible announcement, labelled as not the official document.
-  **Blog posts are checked first**: a post on a blogging platform (Medium, Substack, LinkedIn posts, Forbes contributors) is
-  never official; a blog on a site's own domain is an official blog of a major brand only if Wikidata lists that domain as
-  the brand's official website and the brand has articles in at least 10 Wikipedias (blogs.nvidia.com: Nvidia, 79). It is
-  Tier 1 when the brand is the subject or a company the question names, Tier 3 otherwise, and the label says why. **Tier 3**: everything else. A Tier 1 or Tier 2
+  **Blog posts are checked first.** An official blog of a major brand on its own domain (Wikidata lists the domain as the
+  brand's official website, and the brand has articles in at least 10 Wikipedias: blogs.nvidia.com is Nvidia's, 79) is Tier 1
+  when the brand is the subject or a company the question names, Tier 3 otherwise. A brand's blog or product blog on a
+  third-party platform (medium.com/netflix-techblog, acme.substack.com: the publication is named for a major brand on Wikidata,
+  an organisation with its own website, not a person's name) is Tier 3: it needs a second, independent reference. **Every
+  other blog is Tier 4**: poorly sourced. It never settles a fact or counts as an independent source; it is shown in its own
+  section with a strong recommendation to verify it before use, and the report warns. A fact counts as covered only by these
+  rules: one Tier 1 or 2 claim, or Tier 3 claims from two independent sites.
   claim settles its fact on its own and the run answers without reading or checking further (Tier 1 is read and checked
   first); a Tier 3 fact needs two independent sites. Each claim's label names its tier ("Tier 1: official document, a
   regulatory filing"). The code checks (word-for-word quote, exact address and page, period, figures against the

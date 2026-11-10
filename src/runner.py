@@ -1277,16 +1277,27 @@ class Runner:
         return cache[key]
 
     def _blog(self, s: State, url: str) -> dict | None:
-        """For a blog post: is it a major brand's official blog? A blogging platform never is; a blog on a site's own domain
-        is checked on Wikidata (tools.primary.brand_of_domain), once per domain. Said in the run log either way."""
+        """For a blog post, its tier (settling.blog_tier): on a site's own domain, is it a major brand's official blog
+        (tools.primary.brand_of_domain)? On a third-party platform, is the publication named for a major brand
+        (tools.primary.major_brand)? Anything else is Tier 4. Checked once per domain or publication; said in the run log."""
         kind = settling.blog_kind(url)
         if kind is None:
             return None
         found = self.__dict__.setdefault("_blogs", {})
-        key = primary.registrable(primary.host_of(url)) if kind == "own_domain" else url
+        handle = settling.platform_handle(url) if kind == "platform" else None
+        key = primary.registrable(primary.host_of(url)) if kind == "own_domain" else f"{primary.host_of(url)}:{handle}"
         if key not in found:
-            found[key] = (settling.platform_note(url) if kind == "platform"
-                          else self.brand_lookup(primary.host_of(url), settling.min_wikipedias()))
+            if kind == "own_domain":
+                check = self.brand_lookup(primary.host_of(url), settling.min_wikipedias())
+            elif handle and (brand := self.brand_name_lookup(handle, settling.min_wikipedias())).get("major"):
+                check = {"official": False, "brand": brand["brand"], "tier": 3,
+                         "why": f"a {brand['brand']} blog on {primary.host_of(url)}, a third-party platform ({brand['why']}); it needs "
+                                f"a second, independent reference"}
+            else:
+                check = {"official": False, "brand": None,
+                         "why": (f"a post on {primary.host_of(url)} by an author, not a brand" if not handle
+                                 else f"'{handle}' on {primary.host_of(url)} is not a major brand's blog")}
+            found[key] = settling.blog_tier(url, check)
             if s.get("run_id"):
                 self.runs.emit(s["run_id"], "extract", "blog_checked", {"url": url, "kind": kind, **found[key]})
         return found[key]
@@ -1294,6 +1305,14 @@ class Runner:
     @staticmethod
     def brand_lookup(host: str, min_wikipedias: int) -> dict:
         return primary.brand_of_domain(host, min_wikipedias)
+
+    @staticmethod
+    def brand_name_lookup(name: str, min_wikipedias: int) -> dict:
+        return primary.major_brand(name, min_wikipedias)
+
+    def _poorly_sourced(self, s: State, sha: str) -> bool:
+        """A Tier 4 source (a blog that is not a major brand's): it never settles a fact or counts as an independent site."""
+        return settling.tier4(self._blog(s, self.store.get_source(sha)["final_url"]))
 
     def _tier(self, s: State, claim: dict) -> str:
         if claim["source_tier"] != "secondary":     # on the company's confirmed domain, or a connector's or an upload's own tier
@@ -1624,7 +1643,8 @@ class Runner:
         sites: dict[int, set] = {}
         primary: set[int] = set()
         claims = {cid: self.store.get_claim(int(cid)) for cid in items}
-        claims = {cid: c for cid, c in claims.items() if self._on_point(s, s["checklist"][items[cid]], c["claim_text"])}
+        claims = {cid: c for cid, c in claims.items() if self._on_point(s, s["checklist"][items[cid]], c["claim_text"])
+                  and not self._poorly_sourced(s, c["source_sha256"])}          # Tier 4 never settles a fact
         items = {cid: f for cid, f in items.items() if cid in claims}
         where = self._independent([c["source_sha256"] for c in claims.values()])
         for cid, fact in items.items():
@@ -1667,6 +1687,7 @@ class Runner:
         sites: dict[int, set] = {}
         primary: set[int] = set()
         good = {c: self.store.get_claim(int(c)) for c, v in verdicts.items() if v == "supported" and relevant.get(c) and c in items}
+        good = {c: claim for c, claim in good.items() if not self._poorly_sourced(s, claim["source_sha256"])}   # Tier 4 never settles
         where = self._independent([claim["source_sha256"] for claim in good.values()])
         for c, claim in good.items():
             sites.setdefault(items[c], set()).add(where[claim["source_sha256"]])
@@ -1779,9 +1800,13 @@ class Runner:
         """Coverage is computed by code: a needed fact is covered once a supported claim is filed under it.
         The model is only asked what to search for next."""
         rid, b = s["run_id"], s["budgets"]
-        covered = set(s["covered"]) | {
-            s["claim_items"][c] for c, v in s["verdicts"].items()
-            if v == "supported" and s["relevant"].get(c) and c in s["claim_items"]}
+        if s.get("enumerate"):           # a list question: each event found is covered by its own supported claims (Tier 4 aside)
+            covered = set(s["covered"]) | {
+                s["claim_items"][c] for c, v in s["verdicts"].items()
+                if v == "supported" and s["relevant"].get(c) and c in s["claim_items"]
+                and not self._poorly_sourced(s, self.store.get_claim(int(c))["source_sha256"])}
+        else:                            # the tier rule (settling.py): one Tier 1 or 2 claim, or Tier 3 claims from two sites
+            covered = set(s["covered"]) | self._settled_facts(s, s["verdicts"], s["relevant"], s["claim_items"], s.get("settle_sites", 2))
         gaps = [s["checklist"][i] for i in range(len(s["checklist"])) if i not in covered]
         queries: list[str] = []
         if gaps:
@@ -1868,7 +1893,9 @@ class Runner:
             mine = sorted([r for r in rows if r.get("fact") == i], key=lambda r: ((r.get("strength") or {}).get("tier", 3), newest(r)))
             if not mine:
                 continue
-            lines = [f"{fact}:"] + [f"- {self._cite(r)}" for r in mine[:self.QUOTES_PER_FACT]]
+            heading = f"{fact}:" if fact not in gaps else (
+                f"{fact} (not established: a Tier 3 source needs a second, independent one, and none was found):")
+            lines = [heading] + [f"- {self._cite(r)}" for r in mine[:self.QUOTES_PER_FACT]]
             if (more := len(mine) - self.QUOTES_PER_FACT) > 0:
                 lines.append(f"- {more} more quote{'s' if more != 1 else ''} establish{'' if more != 1 else 'es'} this; listed below.")
             parts.append("\n".join(lines))
@@ -1876,6 +1903,9 @@ class Runner:
             parts.append("\n".join(["Context:"] + [f"- {self._cite(r)}" for r in context_rows[:self.QUOTES_PER_FACT * 2]]))
         if gaps:
             parts.append("Not established from what was read: " + "; ".join(gaps) + ".")
+        if poor := (s.get("_poorly_sourced_rows") or []):
+            parts.append("\n".join(["Poorly sourced (Tier 4: blogs that are not a major brand's), not part of the answer; verify before any "
+                                    "use:"] + [f"- {self._cite(r)}" for r in poor[:self.QUOTES_PER_FACT * 2]]))
         return "\n\n".join(parts)
 
     def _roundup(self, s: State, rows: list[dict], context_rows: list[dict], facts: list, gaps: list[str]) -> str:
@@ -1952,7 +1982,8 @@ class Runner:
 
     def n_report(self, s: State) -> dict:
         rid = s["run_id"]
-        rows = {"supported": [], "partially_supported": [], "not_supported": [], "unchecked": [], "off_topic": [], "context": [], "reference_only": []}
+        rows = {"supported": [], "partially_supported": [], "not_supported": [], "unchecked": [], "off_topic": [], "context": [], "reference_only": [],
+                "poorly_sourced": []}
         development = source_class.is_development(s["question"], s.get("time_scope"))
         for cid in s["all_claim_ids"]:
             claim = self.store.get_claim(cid)
@@ -1977,7 +2008,9 @@ class Runner:
             row["source"] = {k: cls[k] for k in ("issuer", "issuer_basis", "document_type", "document_label", "venue", "venue_label", "publisher", "filed_as")}
             row["source_tier"] = self._tier(s, claim)      # a filing or a company release on a wire is primary wherever it is hosted
             verdict = s["verdicts"].get(str(cid), "unchecked")
-            if verdict == "supported" and not source_class.allowed(cls["id"], development):
+            if verdict in ("supported", "partially_supported") and settling.tier4(row.get("blog")):
+                verdict = "poorly_sourced"   # Tier 4: shown, flagged, never part of the answer's established facts
+            elif verdict == "supported" and not source_class.allowed(cls["id"], development):
                 verdict = "reference_only"  # a reference work is not a source for a company's news: kept on record, not used in the answer
             elif verdict == "supported" and not s["relevant"].get(str(cid)):
                 verdict = "context" if (s.get("context") or {}).get(str(cid)) else "off_topic"  # context: true, and material, but not the fact itself
@@ -2005,7 +2038,7 @@ class Runner:
         for r in shown:
             r["corroboration"] = corroboration.label(r, sites.get(r["fact"], set()), r["claim_id"] in disputed)
             r["as_of"] = next((t["value"] for t in r["times"] if t["kind"] == "as_of"), None)
-        for r in rows["context"]:
+        for r in rows["context"] + rows["poorly_sourced"]:
             r["corroboration"] = corroboration.label(r, {corroboration.site(r["source_url"])}, False)
             r["as_of"] = next((t["value"] for t in r["times"] if t["kind"] == "as_of"), None)
 
@@ -2022,7 +2055,8 @@ class Runner:
         summary, dropped, quality = "", [], {}
         allowed = {r["claim_id"] for r in rows["supported"] if not r["premise"]}
         if allowed and not premise_failed:
-            summary, dropped, quality = self._write(s, [r for r in rows["supported"] if not r["premise"]], rows["context"], gaps, rid)
+            summary, dropped, quality = self._write({**s, "_poorly_sourced_rows": rows["poorly_sourced"]},
+                                                    [r for r in rows["supported"] if not r["premise"]], rows["context"], gaps, rid)
         if premise_failed:
             outcome = "premise_unverified"
         elif not gaps:
@@ -2039,7 +2073,10 @@ class Runner:
             "off_topic": len(rows["off_topic"]), "context": rows["context"], "reference_only": rows["reference_only"], "conflicts": conflicts,
             "gaps": gaps, "rejected_quotes": s["rejected"], "warnings": s.get("warnings", []) + ([time_warning] if time_warning else []) + ([figure_warning] if figure_warning else [])
                         + (["Stopped by you before the run finished: this report covers only what was gathered up to the stop."]
-                           if s.get("stopping") else []),
+                           if s.get("stopping") else [])
+                        + ([f"{len(rows['poorly_sourced'])} claim(s) come only from Tier 4 sources (blogs that are not a major brand's): "
+                            "poorly sourced, not used as established facts; verify them before any use"] if rows["poorly_sourced"] else []),
+            "poorly_sourced": rows["poorly_sourced"],
             "stopped_early": bool(s.get("stopping")),
             "time": timing, "quality": quality,
             "budget_used": {"searches": s["searches_used"], "fetches": s["fetches_used"], "iterations": s["iteration"]},

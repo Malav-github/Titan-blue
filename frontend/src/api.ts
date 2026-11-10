@@ -143,6 +143,7 @@ export interface Report {
   partial: ReportClaim[]
   context?: ReportClaim[]
   reference_only?: ReportClaim[]
+  poorly_sourced?: ReportClaim[]
   not_supported: number
   unchecked: number
   off_topic: number

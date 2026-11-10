@@ -144,6 +144,37 @@ def brand_of_domain(host: str, min_wikipedias: int = 10, limit: int = 5) -> dict
     return {"official": False, "brand": None, "why": f"no Wikidata organisation lists {registrable(host)} as its official website"}
 
 
+def major_brand(name: str, min_wikipedias: int = 10, limit: int = 5) -> dict:
+    """Is `name` (a publication's handle on a blogging platform, 'netflix') a major brand? A Wikidata item named exactly so,
+    with articles in at least `min_wikipedias` Wikipedias. It says nothing about who runs the account. Never raises."""
+    want = re.sub(r"[^a-z0-9]", "", (name or "").lower())
+    if len(want) < 3:
+        return {"major": False, "brand": None, "why": f"'{name}' is too short to be a brand's name"}
+    try:
+        found = _wikidata({"action": "wbsearchentities", "search": name, "language": "en", "type": "item", "limit": limit}).get("search", [])
+        exact = [f for f in found if re.sub(r"[^a-z0-9]", "", f.get("label", "").lower()) == want]
+        entities = _wikidata({"action": "wbgetentities", "ids": "|".join(f["id"] for f in exact), "props": "sitelinks|labels|claims",
+                              "languages": "en"}).get("entities", {}) if exact else {}
+    except Exception as exc:
+        return {"major": False, "brand": None, "why": f"'{name}' could not be looked up ({type(exc).__name__})"}
+    not_brands = {"Q202444", "Q101352", "Q4167410", "Q12308941", "Q11879590", "Q3409032"}   # given names, family names, disambiguations
+    best = None
+    for f in exact:
+        claims = entities.get(f["id"], {}).get("claims", {})
+        kinds = {c["mainsnak"]["datavalue"]["value"]["id"] for c in claims.get("P31", []) if c.get("mainsnak", {}).get("datavalue")}
+        if kinds & not_brands or not claims.get("P856"):
+            continue                       # a person's name or a word, not an organisation with its own website
+        wikis = sum(1 for k in entities.get(f["id"], {}).get("sitelinks", {}) if k.endswith("wiki") and k not in (
+            "commonswiki", "specieswiki", "metawiki", "wikidatawiki", "mediawikiwiki"))
+        if best is None or wikis > best[1]:
+            best = (f, wikis)
+    if best and best[1] >= min_wikipedias:
+        f, wikis = best
+        return {"major": True, "brand": f["label"], "id": f["id"], "wikipedias": wikis,
+                "why": f"Wikidata {f['id']} '{f['label']}' has articles in {wikis} Wikipedias"}
+    return {"major": False, "brand": None, "why": f"no major brand named '{name}' on Wikidata"}
+
+
 def resolve_domain(company: str, limit: int = 5) -> dict:
     """Candidate official domains from Wikidata's 'official website' property, each with its evidence.
 

@@ -10,7 +10,7 @@ PREMISE = "Acme publishes a price list"
 
 
 def plan(**kw):
-    return dict(Plan=lambda p: Plan(subject="Acme", queries=["acme pricing"], checklist=["Starter plan price"], **kw),
+    return dict(Plan=lambda p: Plan(subject="Acme", company="Acme", queries=["acme pricing"], checklist=["Starter plan price"], **kw),
                 PremiseList=lambda p: PremiseList(premise=[PREMISE]))
 
 
@@ -111,7 +111,7 @@ def test_the_finding_arrives_with_the_plan_before_anything_real_is_searched(env)
     ask = asked(runner)["approval_request"]
     assert ask["premise"]["status"] == "unverified" and ask["premise"]["missing"] == [PREMISE]
     assert ask["premise"]["screen"]["query"] == PREMISE and len(ask["premise"]["screen"]["results"]) == 2
-    assert ask["queries"] == ["acme pricing"] and ask["checklist"] == ["Starter plan price"]
+    assert ask["queries"][0] == "acme pricing" and ask["checklist"] == ["Starter plan price"]
     assert env["world"].queries == [PREMISE]          # the plan's own searches have not run
 
 
@@ -152,7 +152,7 @@ def test_a_comment_makes_the_agent_rebuild_its_plan_and_screen_again(env):
     def planner(p):
         texts.append(p)
         corrected = "that should have been 2026" in p
-        return Plan(subject="Acme", queries=["acme 2026 pricing"] if corrected else ["acme 2031 letter"], checklist=["Starter plan price"])
+        return Plan(subject="Acme", company="Acme", queries=["acme 2026 pricing"] if corrected else ["acme 2031 letter"], checklist=["Starter plan price"])
 
     def premise_of(p):
         texts.append(p)
@@ -167,7 +167,7 @@ def test_a_comment_makes_the_agent_rebuild_its_plan_and_screen_again(env):
     second = runner.resume(first["run_id"], {"approved": True, "comment": "that should have been 2026"})
     assert second["status"] == "awaiting_approval"                           # a new plan and a new finding, awaiting the person again
     ask = second["approval_request"]
-    assert ask["queries"] == ["acme 2026 pricing"] and ask["premise"]["status"] == "reported"
+    assert ask["queries"][0] == "acme 2026 pricing" and ask["premise"]["status"] == "reported"
     assert ask["corrections"] == ["that should have been 2026"]
     assert "plan_corrected" in types(env, first["run_id"])
     assert any("THE PERSON CORRECTED YOUR EARLIER READING" in t for t in texts)

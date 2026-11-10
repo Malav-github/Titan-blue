@@ -182,4 +182,77 @@ def test_a_blog_post_is_checked_in_the_run_and_its_label_says_why(env, monkeypat
     rows = result["report"]["established"] + result["report"]["partial"]
     events = [e["payload"] for e in env["runs"].events(result["run_id"]) if e["type"] == "blog_checked"]
     assert events and events[0]["kind"] == "own_domain" and not events[0]["official"]
-    assert not rows or "no Wikidata organisation lists" in rows[0]["corroboration"]
+    assert not rows                                                # Tier 4: never an established fact
+    [poor] = result["report"]["poorly_sourced"]
+    assert poor["corroboration"].startswith("Tier 4: poorly sourced (no Wikidata organisation lists")
+    assert any("Tier 4" in w and "verify them before any use" in w for w in result["report"]["warnings"])
+    assert "Starter plan price" in result["report"]["gaps"]
+
+
+
+@pytest.mark.parametrize("url, handle", [
+    ("https://medium.com/netflix-techblog/a-post-123", "netflix"), ("https://netflix.substack.com/p/news", "netflix"),
+    ("https://acme-engineering.medium.com/a-post", "acme"), ("https://medium.com/@jane/acme-is-great", None),
+    ("https://www.linkedin.com/pulse/acme-results-jane/", None), ("https://www.forbes.com/sites/jane/2026/acme/", None),
+])
+def test_a_platform_blogs_publication_is_read_from_its_address(url, handle):
+    assert settling.platform_handle(url) == handle
+
+
+def blog_runner(env, monkeypatch, final_url, brands=None, domains=None):
+    from runner import Runner
+    from tests.test_runner import make_runner
+    from tests.scripted import ExtractedClaim, Extraction
+    from tools.archive import archive_bytes, utc_now
+    monkeypatch.setattr(Runner, "brand_lookup", staticmethod(lambda host, n: (domains or {}).get(host) or
+                        {"official": False, "brand": None, "why": f"no Wikidata organisation lists {host} as its official website"}))
+    monkeypatch.setattr(Runner, "brand_name_lookup", staticmethod(lambda name, n: (brands or {}).get(name) or
+                        {"major": False, "brand": None, "why": f"no major brand named '{name}' on Wikidata"}))
+    page = "Acme pricing notes. " * 10 + "The Starter plan costs $29 per month, billed annually. " + "More notes. " * 10
+
+    def fetch(url, max_chars=2000):
+        sha, path = archive_bytes(f"<html><body><article><p>{page}</p></article></body></html>".encode(), ".html")
+        return {"url": url, "final_url": final_url, "status": 200, "content_type": "text/html", "encoding": "utf-8", "method": "http",
+                "fetched_at": utc_now(), "sha256": sha, "archive_path": path, "text": "", "truncated": False}
+
+    runner = make_runner(env, Extraction=lambda p: Extraction(claims=[ExtractedClaim(quote="The Starter plan costs $29 per month, billed annually.")]))
+    runner.fetch_fn = fetch
+    return runner
+
+
+def test_a_major_brands_blog_on_a_third_party_platform_is_tier3_and_needs_a_second_reference(env, monkeypatch):
+    major = {"netflix": {"major": True, "brand": "Netflix", "id": "Q907311", "wikipedias": 90, "why": "Wikidata Q907311 'Netflix' has articles in 90 Wikipedias"}}
+    runner = blog_runner(env, monkeypatch, "https://medium.com/netflix-techblog/starter-plan", brands=major)
+    report = runner.start("What does Acme charge?", budgets={"max_iterations": 1})["report"]
+    assert report["poorly_sourced"] == []
+    rows = report["established"] + report["partial"]
+    assert rows and rows[0]["corroboration"].startswith("Tier 3: single source, unconfirmed (a Netflix blog on medium.com")
+    assert report["gaps"] == ["Starter plan price"]                 # one Tier 3 source: needs a second, independent one
+    assert "Starter plan price (not established: a Tier 3 source needs a second, independent one" in report["summary"]
+
+
+def test_a_personal_blog_on_a_platform_is_tier4(env, monkeypatch):
+    runner = blog_runner(env, monkeypatch, "https://medium.com/@jane/acme-prices")
+    report = runner.start("What does Acme charge?", budgets={"max_iterations": 1})["report"]
+    [poor] = report["poorly_sourced"]
+    assert "by an author, not a brand" in poor["corroboration"] and report["established"] == []
+
+
+def test_an_official_brand_blog_on_its_own_domain_is_unchanged(env, monkeypatch):
+    acme = {"blog.acme.example": {"official": True, "brand": "Acme", "id": "Q1", "official_website": "https://acme.example/", "wikipedias": 30,
+                                  "why": "Wikidata Q1 'Acme' lists https://acme.example/ as its official website, with articles in 30 Wikipedias"}}
+    runner = blog_runner(env, monkeypatch, "https://blog.acme.example/prices", domains=acme)
+    report = runner.start("What does Acme charge?", budgets={"max_iterations": 1})["report"]
+    [row] = report["established"]
+    assert row["corroboration"].startswith("Tier 1: official document") and report["poorly_sourced"] == []
+
+
+def test_a_handle_that_is_a_persons_name_is_not_a_brand(monkeypatch):
+    from tools import primary
+    wikis = {f"{c}wiki": {} for c in ["en", "de", "fr", "es", "it", "ja", "ko", "zh", "ru", "pt", "pl", "nl", "sv", "fi", "da"]}
+    def wikidata(params):
+        if params["action"] == "wbsearchentities":
+            return {"search": [{"id": "Q1682564", "label": "Jane"}]}
+        return {"entities": {"Q1682564": {"sitelinks": wikis, "claims": {"P31": [{"mainsnak": {"datavalue": {"value": {"id": "Q202444"}}}}]}}}}
+    monkeypatch.setattr(primary, "_wikidata", wikidata)
+    assert not primary.major_brand("jane", 10)["major"]               # a given name with many Wikipedias is still not a brand

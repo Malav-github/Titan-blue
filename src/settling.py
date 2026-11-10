@@ -116,8 +116,41 @@ def blog_kind(url: str) -> str | None:
     return None
 
 
-def platform_note(url: str) -> dict:
-    return {"official": False, "brand": None, "why": f"a post on {_host(url)}, a blogging platform where anyone can publish: not an official blog"}
+def platform_handle(url: str) -> str | None:
+    """The publication a platform blog is published under, read from its address: 'netflix' for medium.com/netflix-techblog
+    or netflix.substack.com. None for an author's own page (a Medium @handle, a LinkedIn article, a Forbes contributor)."""
+    b = rules()["blogs"]
+    u = urlparse(url or "")
+    host, path = _host(url), u.path or "/"
+    for site, pattern in b["personal_paths"].items():
+        if _on(host, [site]) and re.search(pattern, path):
+            return None
+    platform = _on(host, b["platform_hosts"])
+    if platform and host != platform:
+        handle = host[: -len(platform) - 1].split(".")[-1]            # acme.substack.com
+    elif platform:
+        first = [x for x in path.split("/") if x]
+        handle = first[0] if first else None                          # medium.com/netflix-techblog/...
+    else:
+        return None
+    if not handle:
+        return None
+    clean = re.sub(b["handle_suffixes"], "", handle.lower())
+    return clean or None
+
+
+def blog_tier(url: str, check: dict) -> dict:
+    """The tier a blog post gets from its check: a major brand's blog on a third-party platform is Tier 3, a blog that is not
+    a major brand's official blog is Tier 4; an official blog on the brand's own domain is left to `strength` (Tier 1 or 3)."""
+    if check.get("tier"):
+        return check
+    if check.get("official"):
+        return {**check, "tier": None}
+    return {**check, "tier": 4, "why": f"{check.get('why') or 'not a major brand official blog'}: poorly sourced, verify before use"}
+
+
+def tier4(blog: dict | None) -> bool:
+    return bool(blog) and blog.get("tier") == 4
 
 
 def min_wikipedias() -> int:

@@ -56,6 +56,8 @@ def copy_groups(prints: dict[str, set[int]]) -> dict[str, str]:
 def label(row: dict, sites_for_fact: set[str], disputed: bool) -> str:
     if disputed:
         return "sources disagree"
+    if (row.get("blog") or {}).get("tier") == 4:       # a blog that is not a major brand's: flagged, never established
+        return f"Tier 4: poorly sourced ({row['blog']['why']})"
     if strong := row.get("strength"):                 # Tier 1 or 2 (settling.py): settles on its own; say its tier and kind
         return f"{strong['tier_label']}, {strong['label']}"
     if row.get("source_tier") == "primary":           # a row built without the tier rule (older callers)

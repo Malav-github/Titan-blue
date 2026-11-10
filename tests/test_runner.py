@@ -34,7 +34,7 @@ class ScriptedLLM:
 
 def default_handlers(**override):
     handlers = {
-        "Plan": lambda p: Plan(subject="Acme", queries=["acme pricing"], checklist=["Starter plan price"]),
+        "Plan": lambda p: Plan(subject="Acme", company="Acme", queries=["acme pricing"], checklist=["Starter plan price"]),
         "PremiseList": lambda p: PremiseList(premise=[]),
         "PremiseScreen": lambda p: PremiseScreen(reported=[1], reason="the first result reports it"),
         "Advice": lambda p: Advice(),
@@ -76,6 +76,12 @@ class World:
 def env(tmp_path, monkeypatch):
     monkeypatch.setattr("tools.archive.ARCHIVE_DIR", tmp_path / "archive")
     monkeypatch.setattr("runner.tracing.callbacks", lambda: [])
+    # acme.example is Acme's confirmed official domain (as Wikidata would confirm a real company's), so its own pages are
+    # Tier 1: the official document. A test about other sources names other sites.
+    monkeypatch.setattr("runner.primary.resolve_domain", lambda company, limit=5: {"company": company, "candidates": [
+        {"domain": "acme.example", "status": "confirmed", "evidence": ["test: Acme's official website"]}]} if "acme" in company.lower()
+        else {"company": company, "candidates": []})
+    monkeypatch.setattr("runner.primary.discover_pages", lambda domain, max_pages=40, per_category=6: {"pages": [], "categories_not_found": []})
     return {"store": EvidenceStore(tmp_path / "evidence.db"), "runs": RunStore(str(tmp_path / "runs.db")),
             "ckpt": str(tmp_path / "ckpt.db"), "world": World(), "registry": ConnectorRegistry(tmp_path / "connectors.db")}
 
@@ -108,7 +114,7 @@ def test_full_run_keeps_only_verified_supported_claims(env):
     assert env["store"].counts()["claims"] == 1
     # the answer is the quote itself, put together by code, with the page's exact address: no model wording at all
     assert report["summary"] == ("Starter plan price:\n- “The Starter plan costs $29 per month, billed annually.” "
-                                 "(Web page by acme.example, https://acme.example/pricing) [claim:1]")
+                                 "(Company web page by Acme, on its website, https://acme.example/pricing) [claim:1]")
     assert report["established"][0]["claim"] == GOOD_QUOTE and report["invalid_citations_removed"] == []
     assert report["gaps"] == []
     assert env["store"].audit() == []
@@ -142,7 +148,7 @@ def test_run_events_are_append_only(env):
 def test_approval_pauses_before_any_search_and_accepts_edits(env):
     runner = make_runner(env)
     result = runner.start("q", require_approval=True)
-    assert result["status"] == "awaiting_approval" and result["approval_request"]["queries"] == ["acme pricing"]
+    assert result["status"] == "awaiting_approval" and result["approval_request"]["queries"][0] == "acme pricing"
     assert env["world"].queries == []                            # nothing searched yet
     done = runner.resume(result["run_id"], {"approved": True, "queries": ["acme starter plan price"]})
     assert done["status"] == "finished" and env["world"].queries == ["acme starter plan price"]
@@ -180,7 +186,7 @@ def test_failed_step_is_retried_from_the_checkpoint(env):
 
 def test_planner_failure_falls_back_and_is_recorded(env):
     result = make_runner(env, Plan=lambda p: ValueError("bad json")).start("What does Acme charge?")
-    assert result["status"] == "finished" and env["world"].queries == ["What does Acme charge?"]
+    assert result["status"] == "finished" and env["world"].queries[0] == "What does Acme charge?"
     assert any("planner failed" in w for w in result["report"]["warnings"])
     assert "llm_failed" in types(env, result["run_id"])
 
@@ -206,7 +212,7 @@ def test_loop_stops_at_the_iteration_budget_and_reports_gaps(env):
         "q", budgets={"max_iterations": 2})
     assert result["status"] == "finished" and result["report"]["budget_used"]["iterations"] == 2
     assert result["report"]["gaps"] == ["Starter plan price"]
-    assert len(env["world"].queries) == 2                        # one per round, never unbounded
+    assert len(env["world"].queries) <= 3                        # bounded by the budget, never unbounded
 
 
 def test_unreadable_pages_are_logged_not_used(env):

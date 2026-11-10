@@ -23,7 +23,7 @@ function ClaimCard({ claim, caution }: { claim: ReportClaim; caution?: boolean }
         <Badge tone={claim.source_date ? 'neutral' : 'warn'}>
           {claim.source_date ? `Dated ${claim.source_date.slice(0, 10)}${claim.source_date_kind ? ` (${claim.source_date_kind.replace('_', ' ')})` : ''}` : 'No date found'}
         </Badge>
-        {claim.corroboration && <Badge tone={claim.corroboration === 'sources disagree' ? 'bad' : claim.corroboration.includes('single source, unconfirmed') ? 'warn' : claim.corroboration.startsWith('Tier 2') ? 'info' : 'ok'}>{claim.corroboration}</Badge>}
+        {claim.corroboration && <Badge tone={claim.corroboration === 'sources disagree' || claim.corroboration.startsWith('Tier 4') ? 'bad' : claim.corroboration.includes('single source, unconfirmed') ? 'warn' : claim.corroboration.startsWith('Tier 2') ? 'info' : 'ok'}>{claim.corroboration}</Badge>}
         <ExternalLink href={claim.source_url}>{claim.source_url}</ExternalLink>
       </p>
       {(claim.copies ?? []).length > 0 && <p className="mt-1 text-xs text-muted">The same document is also on {(claim.copies ?? []).join(', ')}: counted as one source, not several.</p>}
@@ -165,6 +165,15 @@ function ReportView({ report }: { report: Report }) {
           <h3 className="mb-1 font-semibold">Context ({(report.context ?? []).length})</h3>
           <p className="mb-2 text-sm text-muted">Verified, and not the fact asked for, but material to it: terms, parties, reasons, circumstances. The answer may use them.</p>
           <ul className="flex flex-col gap-3">{(report.context ?? []).map((c) => <ClaimCard key={c.claim_id} claim={c} />)}</ul>
+        </div>
+      )}
+      {(report.poorly_sourced ?? []).length > 0 && (
+        <div>
+          <h3 className="mb-1 font-semibold text-bad">Poorly sourced, Tier 4 ({(report.poorly_sourced ?? []).length})</h3>
+          <p role="alert" className="mb-2 rounded-md border border-bad bg-bad-bg p-2 text-sm text-bad">
+            These come only from blogs that are not a major brand's. They are not part of the answer. Verify them before any use.
+          </p>
+          <ul className="flex flex-col gap-3">{(report.poorly_sourced ?? []).map((c) => <ClaimCard key={c.claim_id} claim={c} caution />)}</ul>
         </div>
       )}
       {(report.reference_only ?? []).length > 0 && (

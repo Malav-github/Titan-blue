@@ -1,7 +1,7 @@
 {
   "id": "answer_settling",
   "title": "Source tiers, and when one source is enough to answer",
-  "note": "Read by code (src/settling.py). Tiers as the user defined them on 2026-11-10. Tier 1 is the official note or document itself; Tier 2 is a reputed top-tier publisher's report (an exclusive, or a report of a possible announcement), not the official document; Tier 3 is everything else. A claim from a tier listed in `settles_alone` settles its fact on its own and the run answers at once (Tier 1 is read and checked before Tier 2); a Tier 3 claim needs claims from at least `tier3_need_sites` independent sites (copies of one document count once). Every claim still needs its word-for-word quote, exact address and the code checks; further checking (a second source, contradictions, newer documents) is a separate verification step the person asks for.",
+  "note": "Read by code (src/settling.py). Tiers as the user defined them on 2026-11-10. Tier 1 is the official note or document itself; Tier 2 is a reputed top-tier publisher's report (an exclusive, or a report of a possible announcement), not the official document; Tier 3 is everything else that is not a blog, and a major brand's blog on a third-party platform; Tier 4 is any other blog (poorly sourced: shown, flagged, never used to settle a fact). A claim from a tier listed in `settles_alone` settles its fact on its own and the run answers at once (Tier 1 is read and checked before Tier 2); a Tier 3 claim needs claims from at least `tier3_need_sites` independent sites (copies of one document count once). Every claim still needs its word-for-word quote, exact address and the code checks; further checking (a second source, contradictions, newer documents) is a separate verification step the person asks for.",
   "tiers": {
     "1": {
       "label": "Tier 1: official document",
@@ -14,6 +14,10 @@
     "3": {
       "label": "Tier 3: other source",
       "meaning": "any other publication or site; needs a second independent source"
+    },
+    "4": {
+      "label": "Tier 4: poorly sourced",
+      "meaning": "a blog that is not a major brand's official blog: never settles a fact or counts as an independent source; shown flagged, with a strong recommendation to verify before use"
     }
   },
   "settles_alone": [
@@ -94,7 +98,7 @@
     }
   ],
   "blogs": {
-    "note": "A blog post is checked before it is given a tier (settling.blog_check, tools.primary.brand_of_domain). An official blog of a major brand is that brand's own note: Tier 1 when the brand is the subject or a company the question names; Tier 3 otherwise. A blog that cannot be shown to be official is Tier 3 and says why.",
+    "note": "A blog post is checked before it is given a tier (user's rule, 2026-11-10). On the brand's own domain, an official blog of a major brand (Wikidata: its official website is the blog's domain; articles in many Wikipedias) is Tier 1 when the brand is the subject or a company the question names, Tier 3 otherwise. A brand's blog or product blog on a third-party platform (medium.com/netflix-techblog, acme.substack.com) is Tier 3 when the publication is named for a major brand: it needs a second, independent reference, since the platform cannot prove who runs the account. Every other blog is Tier 4.",
     "platform_hosts": [
       "medium.com",
       "substack.com",
@@ -117,6 +121,13 @@
     "host_cues": "^(?:blog|blogs|engineering|techblog|tech-blog)\\.",
     "path_cues": "(?:^|/)(?:blog|blogs|engineering-blog|techblog|tech-blog)(?:/|$)",
     "major_brand_min_wikipedias": 10,
-    "major_brand_note": "'major brand' is measured, not judged: a Wikidata organisation with articles in at least this many Wikipedias, whose 'official website' (P856) is the blog's own domain."
+    "major_brand_note": "'major brand' is measured, not judged: a Wikidata organisation with articles in at least this many Wikipedias, whose 'official website' (P856) is the blog's own domain.",
+    "handle_suffixes": "[-_.]?(?:tech[-_]?blog|engineering|blog|blogs|tech|news|official|hq|team|labs)$",
+    "personal_paths": {
+      "medium.com": "^/@",
+      "linkedin.com": "^/pulse/",
+      "forbes.com": "^/sites/"
+    },
+    "personal_note": "an author's own page on a platform (a Medium @handle, a LinkedIn article, a Forbes contributor) is a person's blog, not a brand's: Tier 4"
   }
 }
