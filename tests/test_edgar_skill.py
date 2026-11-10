@@ -239,6 +239,7 @@ def test_a_statement_row_claim_is_established_by_code_when_the_model_cannot_read
     assert "'Revenue' for the 3 months ended 2026-09-30 is 1,200" in report["summary"]
     checked = [e["payload"] for e in env["runs"].events(report.get("run_id") or env["runs"].runs(1)[0]["run_id"]) if e["type"] == "relevance_checked"]
     assert any(c.get("checker") == "code:statement_row" for c in checked)
+    assert not any("| Revenue |" in p for p in asked)                 # the row was settled by code: no model was asked about it
 
 
 def test_another_companys_filing_does_not_index_the_subjects_figures(env):

@@ -1,0 +1,34 @@
+{
+  "id": "answer_settling",
+  "title": "When one source is enough to answer",
+  "note": "Read by code (src/settling.py) to decide when a needed fact is established and the run can answer at once. A claim from a strong source settles its fact on its own; a claim from any other source needs claims from at least `others_need_sites` independent sites (copies of one document count once). Every claim still needs its word-for-word quote, exact address and the code checks; further checking (a second source, contradictions, newer documents) is a separate verification step the person asks for. Decided with the user on 2026-11-10.",
+  "strong": [
+    {
+      "id": "company_document",
+      "label": "the company's own filing or release",
+      "rule": "an issuer document whose issuer is the subject: its website (a confirmed official domain), its own filings, its own releases (also when carried by a wire service)"
+    },
+    {
+      "id": "deal_party_document",
+      "label": "the other party's own filing or release",
+      "rule": "for a question about an acquisition, merger or investment: an issuer document by the target, the buyer or the investor named in the question, on its own website or a wire service",
+      "deal_cues": "acquir\\w*|acquisition|merger|merge[sd]?|takeover|take over|buyout|buy(?:s|ing)? out|stake|invest\\w*|funding|backed|raises?|deal|purchase[sd]?|divest\\w*|spin[- ]?off"
+    },
+    {
+      "id": "regulatory_filing",
+      "label": "a regulatory filing",
+      "rule": "a document on a regulator's own system, whoever filed it (an 8-K by the buyer about the subject counts)",
+      "hosts": ["sec.gov", "sebi.gov.in", "mca.gov.in", "rbi.org.in", "sec.gov.ph", "bsp.gov.ph"],
+      "hosts_note": "US SEC (EDGAR); India: SEBI, Ministry of Corporate Affairs, Reserve Bank of India; Philippines: SEC, Bangko Sentral. Stock exchanges' portals (NSE, BSE, PSE EDGE) are not read: their terms forbid automated use (definitions/skills/statements.json)."
+    },
+    {
+      "id": "tier1_news",
+      "label": "a Tier 1 news publication",
+      "rule": "a report by one of these publications",
+      "hosts": {"bloomberg.com": "Bloomberg", "wsj.com": "The Wall Street Journal", "reuters.com": "Reuters", "ft.com": "Financial Times",
+                "apnews.com": "AP"},
+      "hosts_note": "Tier 1 as named by the user (Bloomberg, WSJ, Reuters, etc.). Other major publications (CNBC, Forbes, Fortune, ...) are Tier 2: they need a second independent source."
+    }
+  ],
+  "others_need_sites": 2
+}

@@ -56,6 +56,8 @@ def copy_groups(prints: dict[str, set[int]]) -> dict[str, str]:
 def label(row: dict, sites_for_fact: set[str], disputed: bool) -> str:
     if disputed:
         return "sources disagree"
+    if strong := row.get("strength"):                 # settles on its own (settling.py): say which kind of strong source
+        return f"strong source: {strong['label']}"
     if row.get("source_tier") == "primary":
         return "primary source"
     if len(sites_for_fact) >= 2:

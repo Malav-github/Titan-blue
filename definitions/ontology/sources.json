@@ -84,6 +84,8 @@
     "about": "How the issuer of a document is read from it, in order. The company's own site: the subject. EDGAR: the registrant named on the cover ('Apple Inc. (Exact name of registrant as specified in its charter)'), or the filer CIK in the URL when the subject's CIK is known. Wire services: the release's own source line ('SOURCE Apple Inc.', 'Source: Apple Inc.'), else the subject when its name is in the release's first lines. Publications, reference works and other sites: the publisher itself.",
     "registrant": "((?:[A-Z0-9&][\\w.,&'-]*\\s+){0,7}[A-Z0-9&][\\w.,&'-]*)\\s*\\(\\s*Exact name of (?:the )?[Rr]egistrant",
     "wire_source": "(?:^|\\n|\\s)SOURCE[:\\s]+([A-Z0-9][^\\n]{1,80}?)\\s*(?:$|\\n|Related Links|\\(?http|\\s{2,})",
+    "wire_dateline": "/(?:PRNewswire|PR Newswire|Business Wire|BUSINESS WIRE|GLOBE NEWSWIRE|GlobeNewswire|ACCESSWIRE|Newsfile)[^/]{0,40}/\\s*[-\\u2013\\u2014]+\\s*([A-Z][A-Za-z0-9&.,' -]{1,80}?)(?:\\s*\\([^)]{1,40}\\))?,?\\s+(?:today\\s+|has\\s+|will\\s+)?(?:announced|reported|said|completed|agreed|entered|signed|launched|named|appointed|declared|priced|closed)\\b",
+    "wire_dateline_note": "who announces, from the release's opening ('... /PRNewswire/ -- Fabrikam Inc. today announced ...'): used when the release has no SOURCE line, before guessing from the headline",
     "edgar_cik": "/edgar/data/0*(\\d{1,10})/",
     "edgar_cover": "SECURITIES AND EXCHANGE COMMISSION",
     "edgar_cover_within": 60000,

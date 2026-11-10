@@ -125,6 +125,8 @@ def _issuer(venue: dict, url: str, title: str, text: str, head: str, names: list
         found = re.findall(rules["wire_source"], text)
         if found:
             return found[-1].strip(" ,:"), "the release's SOURCE line"
+        if rules.get("wire_dateline") and (m := re.search(rules["wire_dateline"], text[:3000])):
+            return m.group(1).strip(" ,:"), "the company announcing in the release's opening"
         if names_subject(f"{title} {head} {url}", names):
             return subject, "the subject is named in the release's headline or opening"
         return "", ""

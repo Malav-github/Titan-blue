@@ -34,6 +34,7 @@ from skills.temporal.extract import DateFact, best_date, parse_date
 import corroboration
 import diagnosis
 import sentences
+import settling
 import source_class
 import sources
 from config import DATA_DIR, LLM_MODE
@@ -412,7 +413,7 @@ class Runner:
             "new_claim_ids": [], "candidates": [], "selected": [], "approved": False,
             "allow_capabilities": allow_capabilities, "capability_checked": False, "capability_id": None,
             "fetch_failures": 0, "api_calls_used": 0, "data_need": None,
-            "ask_sources": ask_sources, "backlog": [], "settle_sites": 2, "premise": [], "premise_status": "none", "premise_missing": [], "premise_claim_ids": [],
+            "ask_sources": ask_sources, "backlog": [], "settle_sites": settling.others_need_sites(), "premise": [], "premise_status": "none", "premise_missing": [], "premise_claim_ids": [],
             "premise_url": None, "corrections": [], "sources_asked": 0, "outcome": None, "route": "discover",
         }
         if subject:
@@ -795,7 +796,7 @@ class Runner:
                 # the real research starts clean: its own budget, no pages marked as already read, no fact marked as covered
                 "claim_items": {}, "covered": [], "new_sources": [], "new_claim_ids": [], "fetched_keys": [], "selected": [],
                 "candidates": [], "searches_used": 0, "fetches_used": 0, "fetch_failures": 0, "iteration": 0,
-                "backlog": [], "settle_sites": 2}
+                "backlog": [], "settle_sites": settling.others_need_sites()}
 
     @staticmethod
     def _sense_text(concerns: list[dict]) -> str:
@@ -1258,6 +1259,22 @@ class Runner:
             self._profiles[key] = source_class.classify(src["final_url"], list(domains), text=text, names=list(names), title=title, ciks=ciks)
         return self._profiles[key]
 
+    def _strong(self, s: State, sha: str, claim=None) -> dict | None:
+        """Why a source settles a fact on its own (settling.py: the company's own document, the other party's in a deal, a
+        regulatory filing, a Tier 1 publication), or None when its claims need a second independent site."""
+        if claim is not None and claim["source_tier"] == "primary":   # recorded on the company's confirmed domain
+            return {"id": "company_document", "label": settling.rules()["_by_id"]["company_document"]["label"],
+                    "why": "a page on the company's confirmed official domain"}
+        src = self.store.get_source(sha)
+        profile = dict(self._profile(s, sha))
+        if src["final_url"].startswith(("upload:",)):
+            return None                                 # your own file: shown, never counted as independent evidence
+        cache = self.__dict__.setdefault("_strength", {})
+        key = (sha, s.get("question", ""), tuple(self._names(s)))
+        if key not in cache:
+            cache[key] = settling.strength(profile, src["final_url"], s.get("question", ""), self._names(s))
+        return cache[key]
+
     def _tier(self, s: State, claim: dict) -> str:
         if claim["source_tier"] != "secondary":     # on the company's confirmed domain, or a connector's or an upload's own tier
             return claim["source_tier"]
@@ -1451,6 +1468,8 @@ class Runner:
         items = dict(s["claim_items"])
         needed = "\n".join(f"{i}. {t}" for i, t in enumerate(s["checklist"], 1))
         todo, backlog = list(left.get("sources") or s["new_sources"]), []
+        if not left:          # strong sources first: one of them can settle a fact, and the rest need not be read
+            todo.sort(key=lambda sha: not self._strong(s, sha))
         if left:
             self.runs.emit(rid, "extract", "extract_resumed", {"sources_left": len(todo), "from_chunk": left.get("chunk", 0)})
 
@@ -1591,7 +1610,7 @@ class Runner:
         for cid, fact in items.items():
             claim = claims[cid]
             sites.setdefault(fact, set()).add(where[claim["source_sha256"]])
-            if self._tier(s, claim) == "primary":
+            if self._strong(s, claim["source_sha256"], claim):        # one strong source is enough (settling.py)
                 primary.add(fact)
         return all(i in primary or len(sites.get(i, ())) >= need_sites for i in range(facts))
 
@@ -1631,19 +1650,23 @@ class Runner:
         where = self._independent([claim["source_sha256"] for claim in good.values()])
         for c, claim in good.items():
             sites.setdefault(items[c], set()).add(where[claim["source_sha256"]])
-            if self._tier(s, claim) == "primary":
+            if self._strong(s, claim["source_sha256"], claim):        # one strong source is enough (settling.py)
                 primary.add(items[c])
         return primary | {f for f, found in sites.items() if len(found) >= need_sites}
 
     def _check_order(self, s: State, ids: list[int]) -> list[int]:
-        """Primary-source claims first, then one claim per site before a second from the same site, so the first wave can settle."""
+        """Strong-source claims first (settling.py), then one claim per site before a second from the same site, so the first
+        wave can settle."""
         seen: dict[str, int] = {}
         keyed = []
         for cid in ids:
             claim = self.store.get_claim(cid)
             where = corroboration.site(self.store.get_source(claim["source_sha256"])["final_url"])
             seen[where] = seen.get(where, 0) + 1
-            keyed.append((self._tier(s, claim) != "primary", seen[where], len(keyed), cid))
+            fact = s.get("claim_items", {}).get(str(cid))
+            # a statement row that is the fact asked for is settled by code, with no model call: check it before the rest
+            row = fact is not None and "|" in claim["quote"] and self._statement_row(s, claim, s["checklist"][fact]) is not None
+            keyed.append((not row, not self._strong(s, claim["source_sha256"], claim), seen[where], len(keyed), cid))
         return [cid for *_, cid in sorted(keyed)]
 
     def n_check(self, s: State) -> dict:
@@ -1816,13 +1839,13 @@ class Runner:
         return f"“{r.get('quote') or r['claim']}” ({self._where(r)}) [claim:{r['claim_id']}]{label}"
 
     def _quoted_answer(self, s: State, rows: list[dict], context_rows: list[dict], gaps: list[str]) -> str:
-        """Under each fact asked for, the quotes that establish it: primary sources first, then the newest. The rest stay
+        """Under each fact asked for, the quotes that establish it: strong sources first (settling.py), then the newest. The rest stay
         listed with the claims below the answer."""
         def newest(r):
             return -int(re.sub(r"\D", "", str(r.get("source_date") or ""))[:8] or 0)
         parts = []
         for i, fact in enumerate(s["checklist"]):
-            mine = sorted([r for r in rows if r.get("fact") == i], key=lambda r: (r.get("source_tier") != "primary", newest(r)))
+            mine = sorted([r for r in rows if r.get("fact") == i], key=lambda r: (not r.get("strength"), newest(r)))
             if not mine:
                 continue
             lines = [f"{fact}:"] + [f"- {self._cite(r)}" for r in mine[:self.QUOTES_PER_FACT]]
@@ -1920,7 +1943,8 @@ class Runner:
                    "source_tier": claim["source_tier"], "fact": s["claim_items"].get(str(cid)),
                    "times": self.store.claim_times(cid), "premise": cid in set(s.get("premise_claim_ids") or []),
                    "source_date": best.value if best else None, "source_date_kind": best.kind if best else None,
-                   "page": self.store.page_of(claim["source_sha256"], claim["quote_start"], claim["quote_end"])}
+                   "page": self.store.page_of(claim["source_sha256"], claim["quote_start"], claim["quote_end"]),
+                   "strength": self._strong(s, claim["source_sha256"], claim)}
             fact_i = s["claim_items"].get(str(cid))
             if fact_i is not None and "|" in claim["quote"] and (st_row := self._statement_row(s, claim, s["checklist"][fact_i])):
                 row["statement_row"] = {k: st_row[k] for k in ("label", "statement", "title", "figure", "why")}
