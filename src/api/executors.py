@@ -159,8 +159,9 @@ def extract_claims(ctx: Context, inputs: dict, settings: dict) -> dict:
                 rejected += 1
                 ctx.emit("claim_rejected", {"quote": quote, "reason": "not a statement of the needed fact"})
                 continue
-            value = c.value if normalize(c.value) and normalize(c.value) in key else ""
-            r = ctx.store.add_claim(entity_id, c.predicate, value, key, sha, quote, created_by=f"block:{ctx.run_id[:8]}")
+            from runner import _value_of
+            value = c.value if normalize(c.value) and normalize(c.value) in key else _value_of(quote)
+            r = ctx.store.add_claim(entity_id, c.predicate or f"fact.{c.needed_fact}", value, key, sha, quote, created_by=f"block:{ctx.run_id[:8]}")
             if r["ok"]:
                 ids.append(r["claim_id"])
                 ctx.emit("claim_recorded", {"claim_id": r["claim_id"], "claim": key, "quote": key, "page": r.get("page"),

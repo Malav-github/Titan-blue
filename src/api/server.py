@@ -449,7 +449,7 @@ def create_app(registry: Registry | None = None, token: str | None = None,
         if t.kind == "research":
             budgets = {k: values[k] for k in ("max_searches", "max_fetches") if k in values}
             run_id = jobs.start_research(values["question"], values["subject"], budgets, bool(values.get("allow_capabilities")),
-                                          ask_sources=body.ask_sources)
+                                          ask_sources=body.ask_sources, report_type=values.get("report_type"))
             return {"kind": "research", "run_id": run_id}
         known = {"name": values["api_name"], "docs_url": values["docs_url"]} if values.get("api_name") else None
         return {"kind": "capability", "request_id": jobs.start_capability(values["need"], known)}

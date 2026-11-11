@@ -63,16 +63,17 @@ class Jobs:
     # -- research ---------------------------------------------------------------------------------------
 
     def start_research(self, question: str, subject: str, budgets: dict | None, allow_capabilities: bool,
-                       require_approval: bool = True, ask_sources: bool = True) -> str:
+                       require_approval: bool = True, ask_sources: bool = True, report_type: str | None = None) -> str:
         run_id = uuid.uuid4().hex
-        self.runs.emit(run_id, "api", "queued", {"kind": "research", "question": question, "subject": subject})
-        self._submit(self._start_research, run_id, question, subject, budgets, allow_capabilities, require_approval, ask_sources)
+        self.runs.emit(run_id, "api", "queued", {"kind": "research", "question": question, "subject": subject, "report_type": report_type})
+        self._submit(self._start_research, run_id, question, subject, budgets, allow_capabilities, require_approval, ask_sources, report_type)
         return run_id
 
-    def _start_research(self, run_id, question, subject, budgets, allow_capabilities, require_approval, ask_sources=True) -> None:
+    def _start_research(self, run_id, question, subject, budgets, allow_capabilities, require_approval, ask_sources=True,
+                        report_type=None) -> None:
         try:
             self.runner.start(question, subject=subject, require_approval=require_approval, budgets=budgets,
-                              allow_capabilities=allow_capabilities, run_id=run_id, ask_sources=ask_sources)
+                              allow_capabilities=allow_capabilities, run_id=run_id, ask_sources=ask_sources, report_type=report_type)
         except Exception as exc:                      # e.g. the models could not be reached
             self.runs.emit(run_id, "api", "run_failed", {"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
 

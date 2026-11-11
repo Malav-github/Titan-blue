@@ -1,22 +1,79 @@
 {
-  "id": "research-company",
-  "version": 1,
-  "order": 1,
-  "title": "Research a company",
-  "summary": "Finds the company's own pages and other sources, extracts facts, and keeps only those whose quote appears word for word in the archived page. You approve the plan first. Every claim is shown with its quote, source and a support verdict.",
-  "kind": "research",
-  "inputs": {
-    "type": "object",
-    "required": ["subject", "question"],
-    "properties": {
-      "subject": {"type": "string", "title": "Company or subject", "description": "For example: LyondellBasell", "minLength": 2},
-      "question": {"type": "string", "x-multiline": true, "title": "What do you want to know?", "description": "For example: Which patent families cover the MoReTec chemical recycling technology?", "minLength": 8},
-      "allow_capabilities": {"type": "boolean", "title": "Pause and ask me for a data source if the web pages are not enough", "default": true},
-      "max_searches": {"type": "integer", "title": "Most web searches", "minimum": 0, "maximum": 20, "default": 6},
-      "max_fetches": {"type": "integer", "title": "Most pages to read", "minimum": 1, "maximum": 30, "default": 8}
-    }
-  },
-  "result": ["plan_approval", "timeline", "report"],
-  "owner": "system",
-  "permissions": {"roles": ["user", "admin"]}
+ "id": "research-company",
+ "version": 1,
+ "order": 1,
+ "title": "Research a company",
+ "summary": "Finds the company's own pages and other sources, extracts facts, and keeps only those whose quote appears word for word in the archived page. You approve the plan first. Every claim is shown with its quote, source and a support verdict.",
+ "kind": "research",
+ "inputs": {
+  "type": "object",
+  "required": [
+   "subject",
+   "question"
+  ],
+  "properties": {
+   "subject": {
+    "type": "string",
+    "title": "Company or subject",
+    "description": "For example: LyondellBasell",
+    "minLength": 2
+   },
+   "question": {
+    "type": "string",
+    "x-multiline": true,
+    "title": "What do you want to know?",
+    "description": "For example: Which patent families cover the MoReTec chemical recycling technology?",
+    "minLength": 8
+   },
+   "report_type": {
+    "type": "string",
+    "title": "Type of report",
+    "enum": [
+     "brief",
+     "general_report",
+     "deep_report",
+     "white_paper"
+    ],
+    "x-enum-labels": [
+     "Brief: a quick answer (about 2 minutes)",
+     "General report: several sections (about 5–7 minutes)",
+     "Deep research report: many documents in depth (under 10 minutes)",
+     "White paper: an argued paper (under 10 minutes)"
+    ],
+    "default": "brief",
+    "description": "Decides how widely Titan searches, how much of each document it reads, and how the result is written."
+   },
+   "allow_capabilities": {
+    "type": "boolean",
+    "title": "Pause and ask me for a data source if the web pages are not enough",
+    "default": true
+   },
+   "max_searches": {
+    "type": "integer",
+    "title": "Most web searches",
+    "minimum": 0,
+    "maximum": 20,
+    "default": 6
+   },
+   "max_fetches": {
+    "type": "integer",
+    "title": "Most pages to read",
+    "minimum": 1,
+    "maximum": 30,
+    "default": 8
+   }
+  }
+ },
+ "result": [
+  "plan_approval",
+  "timeline",
+  "report"
+ ],
+ "owner": "system",
+ "permissions": {
+  "roles": [
+   "user",
+   "admin"
+  ]
+ }
 }

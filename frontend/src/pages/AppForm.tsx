@@ -40,7 +40,12 @@ function Field({ name, prop, required, value, onChange }: {
         {label}{required ? <span aria-hidden="true"> *</span> : <span className="font-normal text-muted"> (optional)</span>}
       </label>
       {hint}
-      {prop['x-multiline'] ? (
+      {prop.enum ? (
+        <select id={name} className={base} aria-describedby={hint ? `${name}-hint` : undefined} required={required}
+          value={String(value)} onChange={(e) => onChange(e.target.value)}>
+          {prop.enum.map((v, i) => <option key={v} value={v}>{prop['x-enum-labels']?.[i] ?? v}</option>)}
+        </select>
+      ) : prop['x-multiline'] ? (
         <textarea id={name} rows={3} className={base} aria-describedby={hint ? `${name}-hint` : undefined} required={required}
           value={String(value)} onChange={(e) => onChange(e.target.value)} />
       ) : prop.type === 'integer' ? (

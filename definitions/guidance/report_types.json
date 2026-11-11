@@ -1,0 +1,127 @@
+{
+  "id": "report_types",
+  "title": "Report types: what the person asked for decides how the research is planned, read, stopped and written",
+  "note": "Read by code (src/report_types.py). Chosen by the person in the app; when they do not choose, the question's wording decides (route_when, tried in order), else a brief. Every type has a deadline (time spent working; waiting for approval or paused does not count): each step watches it and the run moves on to writing while there is still time to write. Decided with the user on 2026-11-11: a deep report must finish within 10 minutes on this laptop. Measured here: qwen3:8b reads about 2,300 tokens a second and writes about 43, so reading is planned generously and writing sparingly.",
+  "default": "brief",
+  "types": [
+    {
+      "id": "brief",
+      "label": "Brief",
+      "about": "A short answer to the question: stops as soon as a Tier 1 or Tier 2 source states each fact.",
+      "form": "answer",
+      "sections": null,
+      "settle_alone": true,
+      "min_sites": 2,
+      "relevance": "checked",
+      "budgets": {},
+      "deadline_seconds": 240,
+      "writing_reserve_seconds": 30,
+      "round_seconds": 60,
+      "premise_check": true
+    },
+    {
+      "id": "general_report",
+      "label": "General report",
+      "about": "A report of several sections on the question: each section is backed by more than one independent source.",
+      "form": "report",
+      "route_when": "\\b(?:write|prepare|give me|create|draft|produce|compile|need)\\b[^.?!]{0,40}\\b(?:report|overview|briefing)\\b|\\b(?:a|an)\\s+(?:\\w+\\s+){0,2}(?:report|overview|briefing)\\s+(?:on|about|of|covering)\\b",
+      "sections": {
+        "min": 4,
+        "max": 5,
+        "angles": [
+          "the direct answer to the question",
+          "the key events and their dates",
+          "the figures: amounts, scale, growth",
+          "who is involved: partners, customers, competitors",
+          "what the company says comes next, and what is not known"
+        ]
+      },
+      "settle_alone": false,
+      "min_sites": 2,
+      "relevance": "at_extraction",
+      "budgets": {
+        "max_iterations": 2,
+        "max_searches": 12,
+        "max_fetches": 18,
+        "max_fetches_per_iter": 12,
+        "max_queries_per_iter": 8,
+        "max_chunks_per_source": 2
+      },
+      "deadline_seconds": 420,
+      "writing_reserve_seconds": 120,
+      "round_seconds": 90,
+      "premise_check": false
+    },
+    {
+      "id": "deep_report",
+      "label": "Deep research report",
+      "about": "A long report from many documents read in depth: the company's own documents, independent reporting, figures, risks and open questions.",
+      "form": "report",
+      "route_when": "\\b(?:deep[- ]dive|deep research|in-depth|in depth|exhaustive)\\b|\\b(?:comprehensive|thorough|detailed|full)\\s+(?:report|analysis|review|study|overview)\\b",
+      "sections": {
+        "min": 6,
+        "max": 8,
+        "angles": [
+          "the direct answer to the question",
+          "what the company itself says: its filings, releases and statements",
+          "the key events and their dates",
+          "the figures: amounts, scale, growth, by period",
+          "who is involved: partners, customers, competitors",
+          "independent reporting and analysis",
+          "risks, criticism and open questions",
+          "what comes next: stated plans and outlook"
+        ]
+      },
+      "settle_alone": false,
+      "min_sites": 3,
+      "relevance": "at_extraction",
+      "budgets": {
+        "max_iterations": 2,
+        "max_searches": 18,
+        "max_fetches": 30,
+        "max_fetches_per_iter": 20,
+        "max_queries_per_iter": 12,
+        "max_chunks_per_source": 4
+      },
+      "deadline_seconds": 570,
+      "writing_reserve_seconds": 170,
+      "round_seconds": 110,
+      "premise_check": false
+    },
+    {
+      "id": "white_paper",
+      "label": "White paper",
+      "about": "An argued paper: the problem, what the evidence shows, the options, a recommendation and its risks.",
+      "form": "white_paper",
+      "route_when": "\\bwhite ?paper\\b",
+      "sections": {
+        "min": 5,
+        "max": 6,
+        "angles": [
+          "the problem and who bears it",
+          "what the evidence shows, with figures and dates",
+          "how the main players are responding",
+          "the options and their trade-offs",
+          "risks and open questions",
+          "what would settle the open questions"
+        ]
+      },
+      "settle_alone": false,
+      "min_sites": 3,
+      "relevance": "at_extraction",
+      "budgets": {
+        "max_iterations": 2,
+        "max_searches": 16,
+        "max_fetches": 26,
+        "max_fetches_per_iter": 18,
+        "max_queries_per_iter": 10,
+        "max_chunks_per_source": 3
+      },
+      "deadline_seconds": 570,
+      "writing_reserve_seconds": 170,
+      "round_seconds": 110,
+      "premise_check": false
+    }
+  ],
+  "route_note": "Wording that asks for a report as a document ('write a report on', 'a deep dive into'), never the verb ('what did Acme report'): a real question was planned as a general report because it said 'report'."
+}

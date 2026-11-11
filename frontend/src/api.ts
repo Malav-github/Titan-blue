@@ -43,6 +43,8 @@ export interface SchemaProp {
   maximum?: number
   minLength?: number
   'x-multiline'?: boolean
+  enum?: string[]
+  'x-enum-labels'?: string[]
 }
 export interface Template {
   id: string

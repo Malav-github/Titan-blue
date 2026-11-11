@@ -89,7 +89,7 @@ def test_nothing_is_repaired_or_invented_when_dropping():
 
 def test_the_prompt_and_schema_are_unchanged_for_the_model():
     from runner import Extraction
-    assert set(Extraction.model_json_schema()["properties"]) == {"claims"}       # no extra field is shown to the model
+    assert set(Extraction.model_json_schema()["properties"]) == {"picks"}        # only numbers are asked of the model
 
 
 def test_a_table_heavy_page_that_defeats_article_extraction_is_read_line_by_line():

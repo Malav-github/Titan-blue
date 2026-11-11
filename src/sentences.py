@@ -58,7 +58,16 @@ def _cut(s: str) -> list[str]:
         if all(len(p) <= MAX_UNIT for p in parts):
             break
         parts = [q for p in parts for q in (_pack([x.strip() for x in regex.split(p) if x.strip()]) if len(p) > MAX_UNIT else [p])]
-    return parts
+    out = []
+    for p in parts:              # nothing left to cut at (a data file on one line): by length, at a space, so no unit outgrows a call
+        while len(p) > MAX_UNIT:
+            at = p.rfind(" ", 0, MAX_UNIT)
+            at = at if at > MAX_UNIT // 2 else MAX_UNIT
+            out.append(p[:at].strip())
+            p = p[at:].strip()
+        if p:
+            out.append(p)
+    return out
 
 
 def _pack(atoms: list[str]) -> list[str]:
@@ -148,7 +157,7 @@ def candidates(units: list[str], terms: set[str], names: set[str] | None = None,
     want = {t[:5] for t in terms} - names              # word stems: 'reported' meets 'report', 'revenues' meets 'revenue'
     scored: dict[int, float] = {}
     for i, u in enumerate(units):
-        words = {w[:5] for w in re.findall(r"[a-z0-9]{4,}", u.lower())}
+        words = {w[:5] for w in re.findall(r"[a-z0-9]{2,}", u.lower())}      # short terms count too ('AI')
         hits = len(words & want)
         if hits:
             scored[i] = hits + (0.5 if NUMBER.search(u) else 0)

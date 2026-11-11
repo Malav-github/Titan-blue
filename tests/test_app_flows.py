@@ -28,7 +28,7 @@ class FakeRunner:
         self.decisions = []
 
     def start(self, question, subject=None, require_approval=False, pause_after=None, budgets=None,
-              allow_capabilities=False, run_id=None, ask_sources=False):
+              allow_capabilities=False, run_id=None, ask_sources=False, report_type=None):
         self.runs.emit(run_id, "runner", "run_started", {"question": question, "subject": subject, "budgets": budgets or {},
                                                           "require_approval": require_approval})
         self.runs.emit(run_id, "plan", "plan_ready", {"queries": ["acme pricing"]})

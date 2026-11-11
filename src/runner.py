@@ -11,17 +11,19 @@ and Langfuse traces are tagged with the run id.
 
 import json
 import re
+import time
 import sqlite3
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 import uuid
 from pathlib import Path
-from typing import ClassVar, Literal, TypedDict
+from typing import Annotated, ClassVar, Literal, TypedDict
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 import tracing
 from skills.temporal import clock as tclock, freshness, intent as tintent, setting as temporal_setting
@@ -34,6 +36,7 @@ from skills.temporal.extract import DateFact, best_date, parse_date
 import corroboration
 import diagnosis
 import sentences
+import report_types
 import selection
 import settling
 import source_class
@@ -116,17 +119,29 @@ class Selection(BaseModel):
     numbers: list[int] = Field(description="Numbers of the most useful pages, best first")
 
 
+MAX_PICKS = 15                 # facts the model may give for one passage
+MAX_SENTENCES_PER_PICK = 3     # sentences one fact may rest on (sentences.MAX_SENTENCES)
+
+
 class ChosenClaim(BaseModel):
-    """A fact the model found, given as the numbers of the passage's sentences that state it: code copies those sentences,
-    so the claim is the source's own words (sentences.py). The model types no quote and no paraphrase."""
-    predicate: str = Field(description="Short dotted name for the fact, e.g. financials.revenue")
-    sentences: list[int] = Field(description="Numbers of the sentence(s) that state the fact: one, or up to 3 next to each other")
-    value: str = Field(description="The specific value (a figure, a date, a name), copied exactly from those sentences")
-    needed_fact: int = Field(description="Number of the NEEDED FACT this claim helps establish (1-based)")
+    """A fact the model found, as the numbers of the passage's sentences that state it: code copies those sentences, so the
+    claim is the source's own words (sentences.py). Built by code from the model's `picks`; the model types no words at all."""
+    predicate: str = ""
+    sentences: list[int]
+    value: str = ""
+    needed_fact: int
 
 
 class Extraction(BaseModel):
-    claims: list[ChosenClaim] = Field(default_factory=list)
+    """What the model returns: only numbers. Measured here, writing costs about 43 tokens a second, and a model asked for a
+    label and a value per fact wrote 1,138 tokens (44 s) for one passage; a list of numbers is a few tokens per fact."""
+    # The caps are part of the format Ollama makes the model follow: told only to give numbers, an 8B model marked 170
+    # sentences of one passage (and numbers it was never shown); a cap keeps it choosing, and the answer short.
+    picks: Annotated[list[Annotated[list[int], Field(min_length=2, max_length=MAX_SENTENCES_PER_PICK + 1)]],
+                     Field(max_length=MAX_PICKS)] = Field(default_factory=list, description=(
+        f"At most {MAX_PICKS} facts, the best first. One list per fact: first the number of the NEEDED FACT, then the number(s) "
+        "of the sentence(s) that state it (one, or up to 3 next to each other), e.g. [[1, 11, 12], [2, 39]]"))
+    claims: SkipJsonSchema[list[ChosenClaim]] = Field(default_factory=list)      # built from picks by code; never shown to the model
     _dropped: ClassVar[int] = 0      # malformed claims dropped since the last take_dropped() (telemetry only)
     _examples: ClassVar[list] = []   # what was dropped, so a dropped claim is never invisible
 
@@ -135,18 +150,35 @@ class Extraction(BaseModel):
     def _keep_well_formed(cls, data):
         """One malformed claim (say, a missing field) must not cost the whole batch, as it did on a real patent page.
         The malformed claim is dropped, never repaired or guessed; the rest still face every later check."""
-        if isinstance(data, dict) and isinstance(data.get("claims"), list):
-            good = []
-            for item in data["claims"]:
-                try:
-                    good.append(ChosenClaim.model_validate(item))
-                except ValidationError as exc:
-                    cls._dropped += 1
-                    if len(cls._examples) < 3:
-                        cls._examples.append({"claim": str(item)[:300], "problem": "; ".join(
-                            f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}" for e in exc.errors()[:2])})
-            data = {**data, "claims": good}
-        return data
+        if not isinstance(data, dict):
+            return data
+        if not isinstance(data.get("claims", []), list) or not isinstance(data.get("picks", []), list):
+            return data                                   # a malformed whole is still an error
+        good, picks = [], []
+        for item in data.get("claims") or []:
+            try:
+                good.append(item if isinstance(item, ChosenClaim) else ChosenClaim.model_validate(item))
+            except ValidationError as exc:
+                cls._dropped += 1
+                if len(cls._examples) < 3:
+                    cls._examples.append({"claim": str(item)[:300], "problem": "; ".join(
+                        f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}" for e in exc.errors()[:2])})
+        for item in data.get("picks") or []:
+            try:
+                nums = [int(x) for x in item] if isinstance(item, (list, tuple)) else []
+            except (TypeError, ValueError):
+                nums = []
+            if len(nums) < 2:
+                cls._dropped += 1
+                if len(cls._examples) < 3:
+                    cls._examples.append({"claim": str(item)[:300], "problem": "a pick is [needed fact, sentence number, ...]"})
+                continue
+            if len(picks) >= MAX_PICKS:
+                continue                                  # beyond the cap: not a choice any more
+            nums = nums[:MAX_SENTENCES_PER_PICK + 1]
+            picks.append(nums)
+            good.append(ChosenClaim(needed_fact=nums[0], sentences=nums[1:]))
+        return {"picks": picks, "claims": good}
 
     @classmethod
     def take_dropped(cls) -> int:
@@ -237,6 +269,9 @@ class State(TypedDict, total=False):
     fetched_keys: list[str]
     backlog: list[str]         # sources fetched but not read yet because the needed facts were already backed
     settle_sites: int          # independent sites that settle a fact (2 for research, 1 when only checking a premise)
+    report_type: str           # report_types.json: brief | general_report | deep_report | white_paper
+    time_budget: float         # the deadline, in seconds of working time (waiting for approval or paused does not count)
+    time_used: float           # working time so far, added up by every step
     stopping: bool             # the person stopped the run: skip what is left and write the report from what was gathered
     extract_left: dict | None  # extraction paused part-way: {"sources": [...], "sha": ..., "chunk": n} to carry on from
     check_left: bool           # checking paused part-way: the claims not checked yet are still in new_claim_ids
@@ -259,9 +294,11 @@ def extraction_prompt(question: str, needed: str, page_url: str, chunk: str, num
         f"QUESTION: {question}\nNEEDED FACTS:\n{needed}\nPAGE: {page_url}\n\n"
         f"PASSAGE (numbered sentences):\n{numbered or sentences.numbered(sentences.split(chunk))}\n\n"
         "Find up to 15 facts in the passage, mostly facts that establish one of the NEEDED FACTS (give its number in "
-        "`needed_fact`). For each fact give in `sentences` the number of the sentence that states it; if the fact needs the "
-        "sentence before or after to be complete, give up to 3 numbers next to each other. In `value` copy the specific value "
-        "(the figure, date or name) exactly as those sentences write it. Choose sentences that state the "
+        "the needed fact's number). Answer ONLY with numbers, in `picks`: at most 15 facts, the most important first, and only "
+        "sentences that themselves state a needed fact (not every sentence that mentions the subject); one list per fact, first "
+        "the needed fact's number, then "
+        "the number of the sentence that states it; if the fact needs the sentence before or after to be complete, give up to 3 "
+        "sentence numbers next to each other, e.g. [[1, 11, 12], [2, 39]]. Write no words. Choose sentences that state the "
         "fact themselves: skip headings, menus, marketing language and anything off-topic. Besides those, you may add up to 3 "
         "CONTEXT facts: material information about the same event that a reader of the answer would want (the terms, price "
         "or size of a deal, the parties, the reason or circumstances, the financial impact); give for `needed_fact` the "
@@ -340,7 +377,29 @@ def no_guessed_figures(query: str, question: str) -> str:
 
 
 def _terms(*texts: str) -> set[str]:
-    return {w for t in texts for w in re.findall(r"[a-z0-9]{4,}", t.lower())}
+    """Words of four letters or more, and short capitalised terms that are often the whole topic (AI, ESG, EV, IPO)."""
+    return ({w for t in texts for w in re.findall(r"[a-z0-9]{4,}", t.lower())}
+            | {w.lower() for t in texts for w in re.findall(r"\b[A-Z]{2,4}\b", t)})
+
+
+# words that say nothing about a section's topic: who asks, the kind of event, the period
+_GENERIC = {"each", "distinct", "every", "what", "which", "when", "with", "their", "about", "from", "this", "that", "latest", "recent",
+            "company", "date", "dates", "year", "years", "ytd", "announc", "updat", "news", "relea", "launc", "initi", "devel", "event",
+            "give", "list", "does", "have", "into", "more", "most", "were", "will", "they", "there"}
+
+
+def _topic_stems(text: str, names: set[str]) -> set[str]:
+    """The stems that say what a section or a needed fact is about ('ai' in 'Each distinct AI announcement ... in 2026')."""
+    stems = {w[:5] for w in _terms(text)} - {n[:5] for n in names}
+    generic = {g[:5] for g in _GENERIC}                 # compared as stems, like the words they are matched against
+    return {w for w in stems if w not in generic and not re.fullmatch(r"\d+", w)}
+
+
+def _on_topic(quote: str, topic: set[str]) -> bool:
+    if not topic:
+        return True
+    words = {w[:5] for w in re.findall(r"[a-z0-9]{2,}", quote.lower())}
+    return bool(words & topic)
 
 
 def top_chunks(text: str, terms: set[str], k: int) -> list[str]:
@@ -349,6 +408,20 @@ def top_chunks(text: str, terms: set[str], k: int) -> list[str]:
     chunks = [text[i:i + CHUNK_CHARS] for i in range(0, max(len(text), 1), step)]
     scored = sorted(enumerate(chunks), key=lambda ic: (-len(terms & _terms(ic[1])), ic[0]))
     return [c for _, c in sorted(scored[:k])]  # best k, kept in page order
+
+
+_DATE_IN = re.compile(r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sept?(?:ember)?|"
+                      r"Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2},?\s+\d{4}\b")
+
+
+def _value_of(quote: str) -> str:
+    """The value a quote states, read by code (how two sources' values are compared): its first reported amount, else its
+    first date, else nothing. Written exactly as the quote writes it."""
+    for m in figures.mentions(quote):
+        if m.raw and m.raw in quote:
+            return m.raw
+    d = _DATE_IN.search(quote)
+    return d.group(0) if d else ""
 
 
 def sentence_chunks(raw_text: str, terms: set[str], k: int) -> list[str]:
@@ -361,6 +434,9 @@ def sentence_chunks(raw_text: str, terms: set[str], k: int) -> list[str]:
     # first chunk is always read (its title and lead say what the page is about)
     keep = [(i, c) for i, c in scored[:k] if i == 0 or not terms or terms & _terms(c)]
     return [c for _, c in sorted(keep)]
+
+
+_STEP_STARTED: dict[str, float] = {}        # run id -> when the step under way started (time.monotonic)
 
 
 def _or_report(route):
@@ -400,12 +476,21 @@ class Runner:
 
     def start(self, question: str, subject: str | None = None, require_approval: bool = False,
               pause_after: list[str] | None = None, budgets: dict | None = None,
-              allow_capabilities: bool = False, run_id: str | None = None, ask_sources: bool = False) -> dict:
-        """`allow_capabilities`: let the run pause and ask for a new data source (API) when ordinary pages are not enough."""
+              allow_capabilities: bool = False, run_id: str | None = None, ask_sources: bool = False,
+              report_type: str | None = None) -> dict:
+        """`allow_capabilities`: let the run pause and ask for a new data source (API) when ordinary pages are not enough.
+        `report_type` (report_types.json: brief, general_report, deep_report, white_paper; else read from the question) decides
+        the plan's sections, the budgets, when a fact is settled, and the deadline the run keeps to."""
         run_id = run_id or uuid.uuid4().hex     # a caller (the API) may pick the id so it can hand it back at once
-        merged = {**DEFAULT_BUDGETS, **(budgets or {})}
+        rt = report_types.choose(report_type, question)
+        if rt["sections"]:      # a report: its own budgets, raised (never lowered) by a larger number the person set
+            merged = {**DEFAULT_BUDGETS, **{k: max(v, (budgets or {}).get(k, 0)) for k, v in rt["budgets"].items()},
+                      **{k: v for k, v in (budgets or {}).items() if k not in rt["budgets"]}}
+        else:
+            merged = {**DEFAULT_BUDGETS, **rt["budgets"], **(budgets or {})}
         self.runs.emit(run_id, "runner", "run_started", {
-            "question": question, "subject": subject, "require_approval": require_approval,
+            "question": question, "subject": subject, "require_approval": require_approval, "report_type": rt["id"],
+            "deadline_seconds": rt["deadline_seconds"],
             "budgets": merged, "llm_mode": LLM_MODE, "pause_after": pause_after or [],
         })
         state: State = {
@@ -415,7 +500,8 @@ class Runner:
             "new_claim_ids": [], "candidates": [], "selected": [], "approved": False,
             "allow_capabilities": allow_capabilities, "capability_checked": False, "capability_id": None,
             "fetch_failures": 0, "api_calls_used": 0, "data_need": None,
-            "ask_sources": ask_sources, "backlog": [], "settle_sites": settling.others_need_sites(), "premise": [], "premise_status": "none", "premise_missing": [], "premise_claim_ids": [],
+            "ask_sources": ask_sources, "backlog": [], "settle_sites": rt["min_sites"],
+            "report_type": rt["id"], "time_budget": rt["deadline_seconds"], "time_used": 0.0, "premise": [], "premise_status": "none", "premise_missing": [], "premise_claim_ids": [],
             "premise_url": None, "corrections": [], "sources_asked": 0, "outcome": None, "route": "discover",
         }
         if subject:
@@ -565,7 +651,7 @@ class Runner:
                                 {"extract": "extract", "check": "check", "report": "report"})
         g.add_conditional_edges("check", _or_report(lambda s: "check" if s.get("check_left") else "assess"),
                                 {"check": "check", "assess": "assess", "report": "report"})
-        g.add_conditional_edges("assess", _or_report(self._more_or_report), {"capability": "capability", "discover": "discover", "gate": "gate", "report": "report"})
+        g.add_conditional_edges("assess", _or_report(self._route_after_assess), {"capability": "capability", "discover": "discover", "gate": "gate", "report": "report"})
         g.add_conditional_edges("gate", _or_report(lambda s: "fetch" if s.get("gate") == "read" else "report"), {"fetch": "fetch", "report": "report"})
         g.add_conditional_edges("capability", _or_report(lambda s: "discover" if s.get("capability_id") else "report"), {"discover": "discover", "report": "report"})
         g.add_edge("report", END)
@@ -578,9 +664,30 @@ class Runner:
         def step(s: State) -> dict:
             if s.get("stopping") and name != "report":
                 return {}
-            return fn(s)
+            started = time.monotonic()
+            _STEP_STARTED[s.get("run_id", "")] = started
+            out = fn(s)
+            # the run's working time: waiting for approval or a pause does not count, so the deadline is about work
+            return {**(out or {}), "time_used": round(s.get("time_used", 0.0) + time.monotonic() - started, 1)}
         step.__name__ = f"n_{name}"
         return step
+
+    @staticmethod
+    def _time_left(s: State) -> float:
+        """Seconds of the run's deadline left (report_types.json), counting the step under way."""
+        budget = s.get("time_budget")
+        if not budget:
+            return float("inf")
+        running = time.monotonic() - _STEP_STARTED.get(s.get("run_id", ""), time.monotonic())
+        return budget - s.get("time_used", 0.0) - running
+
+    @staticmethod
+    def _rtype(s: State) -> dict:
+        return report_types.get(s.get("report_type") or report_types.data()["default"])
+
+    def _writing_due(self, s: State, extra: float = 0.0) -> bool:
+        """Is it time to stop gathering and write? When what is left of the deadline is the writing reserve (plus `extra`)."""
+        return self._time_left(s) <= self._rtype(s)["writing_reserve_seconds"] + extra
 
     def _wanted(self, run_id: str) -> str | None:
         """'pause' or 'stop' when the person asked for it (RunStore.requested): checked between steps and model calls."""
@@ -588,6 +695,16 @@ class Runner:
             return self.runs.requested(run_id)
         except Exception:
             return None
+
+    def _route_after_assess(self, s: State) -> str:
+        """Another round only if the deadline leaves time for one and for writing; else the report, with what was found."""
+        route = self._more_or_report(s)
+        if route in ("discover", "gate", "capability") and self._writing_due(s, extra=self._rtype(s)["round_seconds"]):
+            self.runs.emit(s["run_id"], "assess", "deadline_reached", {
+                "stage": "assess", "time_used": round(s.get("time_used", 0.0)), "deadline": s.get("time_budget"),
+                "would_have": route, "reason": "no time for another round and the writing: the report is written from what was found"})
+            return "report"
+        return route
 
     @staticmethod
     def _more_or_report(s: State) -> str:
@@ -688,6 +805,7 @@ class Runner:
     def n_plan(self, s: State) -> dict:
         rid, b = s["run_id"], s["budgets"]
         now = tclock.now(self.now_fn)
+        rt = self._rtype(s)
         scope = tintent.classify(s["question"], now)
         brief = planning.build(s["question"], None, scope, now)
         concerns = common_sense.check(s["question"], scope, now)
@@ -701,20 +819,22 @@ class Runner:
             f"{self._scout_context(s)}"
             + (f"THE PERSON CORRECTED YOUR EARLIER READING: {'; '.join(s['corrections'])}. The correction overrides the original "
                f"wording: plan for the corrected question.\n" if s.get("corrections") else "")
-            + f"QUESTION: {s['question']}\n\n"
+            + f"QUESTION: {s['question']}\nREPORT REQUESTED: {rt['label']} ({rt['about']})\n\n"
             f"Return: subject (what the question is about); company (the official company name only if the "
             f"company's own website matters, else null); page_categories (company pages worth reading, from "
             f"{list(CATEGORY_NAMES)}; empty if no company); queries (up to {b['max_queries_per_iter']} web search queries, "
             f"each naming the company or subject and each taking a DIFFERENT angle (for example the company's own investor-relations "
             f"or annual report, its filings, and the concrete events the question may mean, such as acquisitions, spin-offs or "
             f"layoffs), never three phrasings of one search; use exact names and distinguishing terms; search operators work, e.g. "
-            f"site:patents.google.com, site:sec.gov, or a company's own domain); checklist: ONE item for each distinct fact "
+            f"site:patents.google.com, site:sec.gov, or a company's own domain); "
+            + (report_types.outline_instruction(rt, s.get("subject") or "") if rt["sections"] else
+            f"checklist: ONE item for each distinct fact "
             f"the question itself asks for, and nothing more. A question that asks one thing gets exactly ONE item; a question "
             f"that asks for a name, a ticker and a date gets THREE. Never add related facts the question did not ask for "
             f"(headquarters, funding, history, sources). Write each item as a short label for the fact (for example 'Year "
             f"Dropbox was founded'), never the answer or any value, even if you think you know it: your guess may be wrong and "
             f"would mislead the search. Never add steps such as verifying, cross-checking or confirming sources; the system "
-            f"does that itself."
+            f"does that itself.")
         )
         plan = self._ask("plan", Plan, prompt, rid, "plan")
         warnings = list(s.get("warnings", []))
@@ -733,10 +853,14 @@ class Runner:
         queries = _dedupe([c for c in cleaned if c])[:b["max_queries_per_iter"]] or [s["question"]]
         queries = _dedupe(tintent.apply_year_terms(queries, scope, now))[:b["max_queries_per_iter"]]
         queries = _dedupe(planning.diversify(queries, s["question"], subject, plan.company, brief, scope, now, b["max_queries_per_iter"]))
-        checklist = _dedupe(plan.checklist)[:6] or [s["question"]]
+        checklist = _dedupe(plan.checklist)[:(rt["sections"] or {}).get("max", 6)] or [s["question"]]
         # A question asking for a list of events is planned by code: a small model plans it as one fact and stops at the first event.
         listing = planning.enumeration(s["question"], planning.the_subject(subject, plan.company, s["question"]), scope.as_dict())
         listing_state: dict = {"enumerate": None}
+        if listing and rt["sections"]:
+            # a report about a list of events: its outline stays, and the list's own searches (releases, wires) join the plan
+            queries = _dedupe(queries + listing["queries"])[:b["max_queries_per_iter"]]
+            listing = None
         if listing:
             raised = {k: max(b.get(k, 0), v) for k, v in listing["budgets"].items()}
             checklist = [listing["item"]]
@@ -748,10 +872,11 @@ class Runner:
         categories = [c for c in plan.page_categories if plan.company]
         entity_id = self.store.add_entity(entity_name, kind="subject")
         advice = self._advice_of(s)
-        listed = self._premise_of(s, subject)
-        screen = self._screen_premise(s, listed)           # one quick search, top 10 results: is it reported anywhere?
+        # a report does not screen the premise first: that is part of verification, on request, and keeps within the deadline
+        listed = self._premise_of(s, subject) if rt["premise_check"] else []
+        screen = self._screen_premise(s, listed) if rt["premise_check"] else {}   # one quick search: is it reported anywhere?
         warnings = warnings + screen.pop("warnings", [])
-        self.runs.emit(rid, "plan", "plan_ready", {"sense": concerns, "subject": subject, "company": plan.company,
+        self.runs.emit(rid, "plan", "plan_ready", {"sense": concerns, "subject": subject, "company": plan.company, "report_type": rt["id"],
                        "page_categories": categories, "queries": queries, "checklist": checklist,
                        "today": now.as_dict(), "time_scope": scope.as_dict(),
                        "advice": advice, "brief": brief.as_dict()})
@@ -1560,14 +1685,27 @@ class Runner:
                     continue                       # read before the pause
                 if (pos or k > first) and self._wanted(rid):
                     return paused_at(pos, k)
+                if self._writing_due(s):
+                    self.runs.emit(rid, "extract", "deadline_reached", {
+                        "stage": "extract", "sources_left": len(todo) - pos, "time_used": round(s.get("time_used", 0.0)),
+                        "reason": "time to write: the pages not read yet are kept on record, unread"})
+                    return {"new_claim_ids": prior + new_ids, "all_claim_ids": s["all_claim_ids"] + new_ids, "rejected": rejected,
+                            "new_sources": [], "claim_items": items, "backlog": todo[pos:], "extract_left": None}
                 prompt = extraction_prompt(s["question"], needed, source["final_url"], "", numbered=sentences.numbered_at(units, pack))
                 Extraction.take_dropped(), Extraction.take_dropped_examples()
                 extraction = self._ask("extract", Extraction, prompt, rid, "extract")
                 if dropped := Extraction.take_dropped():
                     self.runs.emit(rid, "extract", "claims_malformed", {
                         "count": dropped, "source_url": source["final_url"], "examples": Extraction.take_dropped_examples()})
-                picked = [(c, quote, why) for c in (extraction.claims if extraction else [])[:15]
-                          for quote, why in sentences.pick_all(units, c.sentences)]
+                shown = {i + 1 for i in pack}             # the model may only point at sentences it was shown
+
+                def quotes_for(numbers: list[int]) -> list[tuple[str | None, str]]:
+                    unseen = sorted(n for n in numbers if n not in shown and 1 <= n <= len(units))
+                    if unseen:
+                        return [(None, f"sentence(s) {unseen} were not in the passage shown")]
+                    return sentences.pick_all(units, numbers)
+                picked = [(c, quote, why) for c in (extraction.claims if extraction else [])[:MAX_PICKS]
+                          for quote, why in quotes_for(c.sentences)]
                 for c, quote, why in picked:
                     if quote is None:
                         rejected += 1
@@ -1588,14 +1726,23 @@ class Runner:
                         continue
                     if len(s["checklist"]) == 1:
                         c.needed_fact = 1          # one fact asked: a small model numbers it wrongly at times; the relevance check still judges it
+                    if self._rtype(s)["relevance"] == "at_extraction" and 1 <= c.needed_fact <= len(s["checklist"]) and not _on_topic(
+                            quote, _topic_stems(s["checklist"][c.needed_fact - 1] + " " + (s["question"] if len(s["checklist"]) == 1 else ""),
+                                                name_words)):
+                        # told to give numbers only, a small model fills its slots with whatever is near: a sentence that
+                        # shares no word of the topic it was chosen for (the dividend, a phone number) is refused by code
+                        self.runs.emit(rid, "extract", "claim_rejected", {
+                            "quote": quote, "reason": "shares no word with the topic it was chosen for", "source_url": source["final_url"]})
+                        continue
                     if not 1 <= c.needed_fact <= len(s["checklist"]):
                         self.runs.emit(rid, "extract", "claim_rejected", {
                             "quote": quote, "reason": "does not address any needed fact", "source_url": source["final_url"]})
                         continue
                     # the claim IS the quote: the source's own sentence, copied by code, never reworded; the value is kept
                     # only as the quote writes it (it is how two sources' values are compared)
-                    value = c.value if normalize(c.value) and normalize(c.value) in normalize(quote) else ""
-                    r = self.store.add_claim(s["entity_id"], c.predicate, value, normalize(quote), sha, quote,
+                    value = c.value if normalize(c.value) and normalize(c.value) in normalize(quote) else _value_of(quote)
+                    predicate = c.predicate or f"fact.{c.needed_fact}"
+                    r = self.store.add_claim(s["entity_id"], predicate, value, normalize(quote), sha, quote,
                                              created_by=f"runner:{rid[:8]}")
                     if r["ok"]:
                         new_ids.append(r["claim_id"])
@@ -1681,7 +1828,7 @@ class Runner:
         for cid, fact in items.items():
             claim = claims[cid]
             sites.setdefault(fact, set()).add(where[claim["source_sha256"]])
-            if self._strong(s, claim["source_sha256"], claim):        # one strong source is enough (settling.py)
+            if self._rtype(s)["settle_alone"] and self._strong(s, claim["source_sha256"], claim):   # one strong source is enough
                 primary.add(fact)
         return all(i in primary or len(sites.get(i, ())) >= need_sites for i in range(facts))
 
@@ -1721,7 +1868,7 @@ class Runner:
         where = self._independent([claim["source_sha256"] for claim in good.values()])
         for c, claim in good.items():
             sites.setdefault(items[c], set()).add(where[claim["source_sha256"]])
-            if self._strong(s, claim["source_sha256"], claim):        # one strong source is enough (settling.py)
+            if self._rtype(s)["settle_alone"] and self._strong(s, claim["source_sha256"], claim):   # one strong source is enough
                 primary.add(items[c])
         return primary | {f for f, found in sites.items() if len(found) >= need_sites}
 
@@ -1809,6 +1956,14 @@ class Runner:
                 # judged here and logged with the run, not stored on the claim.
                 fact = s["checklist"][s["claim_items"][str(cid)]]
                 claim = self.store.get_claim(cid)
+                if self._rtype(s)["relevance"] == "at_extraction":
+                    # a report: the model chose this sentence for this section when it read the page; asking again would cost a
+                    # model call per claim, and the person can verify any claim afterwards
+                    relevant[str(cid)], context[str(cid)] = True, False
+                    self.runs.emit(rid, "check", "relevance_checked", {
+                        "claim_id": cid, "needed_fact": fact, "addresses": True, "context": False, "checker": "code:extraction",
+                        "reason": "chosen for this section of the report when the page was read"})
+                    continue
                 if row := self._statement_row(s, claim, fact):
                     # the quote is a row of a statement read by code: which line item and period each figure is for is
                     # known, so code decides (a small model cannot see a table row's column headings and said no)
