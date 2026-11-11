@@ -147,6 +147,27 @@ with what Titan already does about it and what could be done next (`definitions/
   first); a Tier 3 fact needs two independent sites. Each claim's label names its tier ("Tier 1: official document, a
   regulatory filing"). The code checks (word-for-word quote, exact address and page, period, figures against the
   statements) always run; corroboration beyond this is a separate verification step.
+- **Report types, in under ten minutes** (`definitions/guidance/report_types.json`, `src/report_types.py`,
+  `src/skills/writing/report.py`). Chosen in the app (Brief, General report, Deep research report, White paper) or read from
+  the wording ("write a report on", "a deep dive", never the verb "report"). The type decides the plan (a report's checklist
+  is its outline: one section question per angle the type lists), the budgets, when a section is settled (several
+  independent sources), how relevance is judged (when the model puts a sentence under its section), and a deadline in
+  working time that every step watches; reading stops and the run writes while there is still time to write. A report is
+  written one section per call from that section's claims, paraphrasing allowed, each sentence locked by code (it must cite
+  a claim given to it, and every figure must be in those claims; a sequencing word the dates contradict is removed), then a
+  summary, then appendices by code: sources (tier, page, exact address, the claims each backs), how much of each document was
+  read, what is not established. A live deep report on S&P Global's AI initiatives: 422 s, 17 documents read (two 10-Qs of
+  about 280,000 characters each), 38 claims from 13 documents on 7 sites, about 1,900 words.
+- **Reading fast and whole.** Measured here: qwen3:8b reads about 2,300 tokens a second and writes about 43. So code scans every
+  sentence of a document and gives the model packs of about 18,000 characters of the relevant ones (a document that fits is
+  given whole), and the model answers only with sentence numbers, at most 15 facts a pass in the format Ollama enforces
+  (asked for a label and a value per fact, it wrote 1,138 tokens, 44 s, for one passage; capped numbers take 10 s). Code reads
+  each fact's value from its quote, refuses sentences it was not shown, and in a report refuses a sentence that shares no
+  topic word with its section.
+- **One document is one source** (`definitions/guidance/source_selection.json`, `src/selection.py`). Search results with the
+  same headline are one article, fetched once from its best copy (the company's own page, a filing, its wire release, then
+  others); no site takes more than two places a round (the company's own site and regulators aside); headlines that differ
+  in a period or number stay apart; a fetched page holding a document already read is not read again.
 - **Verification, on request** (`src/verification.py`). An answer comes as soon as the tier rule is met; checking further is
   the person's choice, per claim on the run page. *Verify it yourself*: open the source at the quote, then mark the claim
   Confirmed, Wrong or Not what I asked, with a note (kept with the claim, append-only, `claim_reviews`; shown on the claim).

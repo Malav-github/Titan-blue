@@ -2101,12 +2101,14 @@ class Runner:
         """Built by code: every source cited (its tier, what it is, its date, page and exact address), how much of each document
         was read, and what the report does not establish."""
         out = ["## Sources"]
-        seen = []
+        claims_of: dict[str, list[int]] = {}
+        first: dict[str, dict] = {}
         for r in rows:
-            if r["source_url"] in seen:
-                continue
-            seen.append(r["source_url"])
-            out.append(f"{len(seen)}. {r.get('corroboration') or ''}: {self._where(r)}")
+            claims_of.setdefault(r["source_url"], []).append(r["claim_id"])
+            first.setdefault(r["source_url"], r)
+        for n, (url, r) in enumerate(first.items(), 1):     # each source with the claims it backs, so a [claim:N] leads to it
+            ids = ", ".join(str(i) for i in sorted(claims_of[url]))
+            out.append(f"{n}. {r.get('corroboration') or ''}: {self._where(r)} (claims {ids})")
         events = self.runs.events(s["run_id"])
         read = [e["payload"] for e in events if e["type"] == "source_read"]
         copies = sum(e["type"] == "copy_skipped" for e in events)
@@ -2121,7 +2123,12 @@ class Runner:
         out.append("- Every claim above is the source's exact sentence, copied by code; the text of each section paraphrases them. "
                    "To check the wording against the sources, run the verification agent.")
         if gaps:
-            out.append("\n## Not established\n" + "\n".join(f"- {g}" for g in gaps))
+            need = s.get("settle_sites", 2)
+            has = {r.get("fact") for r in rows}
+            out.append("\n## Not established\n" + "\n".join(
+                f"- {g}: " + (f"written from fewer than {need} independent sources, which this report type needs" if i in has
+                              else "nothing was found in what was read")
+                for i, g in enumerate(s["checklist"]) if g in gaps))
         return "\n".join(out)
 
     QUOTES_PER_FACT = 3

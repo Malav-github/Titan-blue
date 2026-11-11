@@ -54,6 +54,29 @@ def lock(text: str, facts: list) -> tuple[str, list[str]]:
     return " ".join(kept), removed
 
 
+_SEQUENCE = re.compile(r"^(Earlier|Later|Previously|Subsequently|Afterwards|Then),\s+", re.I)
+
+
+def fix_sequence(text: str, facts: list) -> tuple[str, int]:
+    """A small model writes 'Earlier, on 28 October ...' after an event of 22 October. A sequencing word that the cited claims'
+    dates contradict is removed (the date in the sentence still says when). Returns (text, how many were removed)."""
+    by_id = {f.claim_id: f for f in facts}
+    out, last, fixed = [], None, 0
+    for sent in _sentences(text):
+        dates = [by_id[int(i)].date for i in CITE.findall(sent) if int(i) in by_id and by_id[int(i)].date]
+        when = max(dates) if dates else None
+        m = _SEQUENCE.match(sent)
+        if m and when and last:
+            earlier = m.group(1).lower() in ("earlier", "previously")
+            if (earlier and when > last) or (not earlier and when < last):
+                sent = sent[m.end():]
+                sent = sent[:1].upper() + sent[1:]
+                fixed += 1
+        out.append(sent)
+        last = when or last
+    return " ".join(out), fixed
+
+
 def _section_form(words: tuple[int, int]) -> dict:
     lo, hi = words
     return {"id": "report_section", "label": "Report section", "words": [lo, hi],
@@ -70,6 +93,7 @@ def write(ask, title: str, sections: list[str], rows_of, scope: dict | None, tod
     """`ask(prompt) -> text | None` calls the model; `rows_of(i)` gives section i's claim rows; `time_left()` the seconds left;
     `quote_line(row)` how a quote is cited when a section falls back to its quotes."""
     parts, removed, fallback, empty = [], [], [], []
+    sequence = 0
     written: list[tuple[str, str]] = []
     form = _section_form(words)
     for i, heading in enumerate(sections):
@@ -85,6 +109,8 @@ def write(ask, title: str, sections: list[str], rows_of, scope: dict | None, tod
             if draft:
                 text, gone = lock(draft, facts)
                 removed += gone
+                text, n = fix_sequence(text, facts)
+                sequence += n
         if not text:                                     # no time, or nothing survived the lock: the section's own quotes
             fallback.append(heading)
             text = "\n".join(f"- {quote_line(r)}" for r in rows[:6]) if quote_line else "Not written in time."
@@ -102,4 +128,4 @@ def write(ask, title: str, sections: list[str], rows_of, scope: dict | None, tod
             removed += gone
     body = (f"## Summary\n\n{summary}\n\n" if summary else "") + "\n\n".join(parts)
     return body, {"sections": len(sections), "sections_empty": empty, "sections_from_quotes": fallback,
-                  "sentences_removed": removed, "summary": bool(summary)}
+                  "sentences_removed": removed, "summary": bool(summary), "sequence_words_removed": sequence}

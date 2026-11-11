@@ -58,4 +58,19 @@ def test_a_general_report_run_has_its_outline_summary_sources_and_method(env):
     for part in ("## Summary", "## What does the Starter plan cost?", "## Sources", "## How the research was done", "## Not established"):
         assert part in text
     assert "characters scanned in full by code" in text and "https://acme.example/pricing" in text
+    assert "(claims 1" in text                                                 # a [claim:N] in the text leads to its source
+    assert "written from fewer than 2 independent sources" in text or "nothing was found" in text
     assert result["report"]["quality"]["writer"] == "model:sections"
+
+
+def test_a_sequencing_word_the_dates_contradict_is_removed():
+    from datetime import date as d
+    from skills.writing.facts import Fact
+    facts = [Fact(claim_id=1, text="a", date=d(2026, 10, 22), precision="day", basis="event"),
+             Fact(claim_id=2, text="b", date=d(2026, 10, 28), precision="day", basis="event"),
+             Fact(claim_id=3, text="c", date=d(2026, 3, 18), precision="day", basis="event")]
+    text = ("On 22 October 2026, S&P Global expanded its AI tools [claim:1]. Earlier, on 28 October 2026, it began a review [claim:2]. "
+            "Earlier, on 18 March 2026, it bought Enertel AI [claim:3].")
+    fixed, n = report.fix_sequence(text, facts)
+    assert n == 1 and "On 28 October 2026, it began a review [claim:2]." in fixed
+    assert "Earlier, on 18 March 2026, it bought Enertel AI [claim:3]." in fixed      # a true 'earlier' is kept
