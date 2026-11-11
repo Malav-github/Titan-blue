@@ -107,9 +107,8 @@ def test_a_claim_that_gives_material_context_is_kept_for_the_answer_not_dropped_
     report = result["report"]
     assert [r["claim_id"] for r in report["established"]] == [1] and [r["claim_id"] for r in report["context"]] == [2]
     assert report["off_topic"] == 0
-    assert seen == []                                            # no model writes the answer
-    assert "Context:\n- “The Team plan costs $99 per month with priority support.”" in report["summary"]
-    assert "[claim:2]" in report["summary"]
+    assert "CONTEXT CLAIMS" in seen[0] and "[claim:2]" in seen[0]                 # the writer is given the context claim
+    assert "[claim:2]" in report["summary"] and "- [claim:2]" in report["summary"]   # cited, and listed with its source
 
 
 def test_a_claim_that_is_neither_the_fact_nor_context_is_off_topic(env):

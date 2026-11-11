@@ -31,6 +31,7 @@ from skills.temporal.display import short_date
 from skills.temporal import periods as tperiods
 from skills.statements import figures
 from skills import edgar, planning, statements, writing
+from skills.writing import report as report_writer
 from skills.planning import sense as common_sense
 from skills.temporal.extract import DateFact, best_date, parse_date
 import corroboration
@@ -2034,13 +2035,94 @@ class Runner:
             self.runs.emit(rid, "report", "summary_scored", {"form": form["id"], "score": result["score"], "grade": result["grade"],
                                                              "blockers": [b["id"] for b in result["blockers"]], "revisions": 0, "writer": "code"})
             return text, [], {**result, "revisions": 0, "uncited_removed": [], "requested_form": form["id"], "writer": "code"}
-        # the answer is the sources' own words: their quotes, put together by code under the facts asked for, each with
-        # where it is (the exact address, and the page of a PDF). No model writes it, so nothing in it is paraphrased.
-        text = self._quoted_answer(s, rows, context_rows, gaps)
+        rt = self._rtype(s)
+        if rt["sections"]:                # a report: written section by section, then its summary and appendices
+            return self._write_report(s, rows, context_rows, gaps, rid, scope, today, rate)
+        # a brief: a short answer in words (paraphrase is allowed; the exact wording is for verification), every sentence
+        # locked to the claims it cites; when the model fails or nothing survives the lock, the quotes themselves
+        draft = self._ask("synthesis", Summary, prompt, rid, "report") if self._time_left(s) > 15 else None
+        text, dropped, removed = "", [], []
+        if draft:
+            text, dropped = clean(draft.text)
+            text, removed = report_writer.lock(text, facts)
+            if removed:
+                self.runs.emit(rid, "report", "uncited_removed", {"sentences": removed})
+        writer = "model"
+        if not text.strip():
+            text, writer = self._quoted_answer(s, rows, context_rows, gaps), "code:quotes"
+        else:
+            text += "\n\n" + self._brief_sources(s, rows + context_rows, gaps)
         result = rate(text)
-        self.runs.emit(rid, "report", "summary_scored", {"form": "quotes", "score": result["score"], "grade": result["grade"],
-                                                         "blockers": [b["id"] for b in result["blockers"]], "revisions": 0, "writer": "code"})
-        return text, [], {**result, "revisions": 0, "uncited_removed": [], "requested_form": form["id"], "writer": "code:quotes"}
+        self.runs.emit(rid, "report", "summary_scored", {"form": form["id"], "score": result["score"], "grade": result["grade"],
+                                                         "blockers": [b["id"] for b in result["blockers"]], "revisions": 0, "writer": writer})
+        return text, dropped, {**result, "revisions": 0, "uncited_removed": removed, "requested_form": form["id"], "writer": writer}
+
+    def _write_report(self, s: State, rows: list[dict], context_rows: list[dict], gaps: list[str], rid: str, scope, today, rate):
+        """A report in the form its type asks for: one call per section from that section's claims (each sentence locked to its
+        claims), a summary written last, and appendices built by code (sources with tier, page and exact address; how much of
+        each document was read; what is not established)."""
+        rt = self._rtype(s)
+        every = rows + context_rows
+
+        def ask(prompt: str):
+            d = self._ask("synthesis", Summary, prompt, rid, "report")
+            return d.text if d else None
+
+        words = tuple(rt.get("section_words") or (150, 300))
+        title = f"{rt['label']}: {s['question'].strip()}"
+        body, info = report_writer.write(ask, title, s["checklist"], lambda i: [r for r in every if r.get("fact") == i], scope, today,
+                                         lambda: self._time_left(s), words=words, quote_line=self._cite)
+        text = f"# {title}\n\n{body}\n\n{self._appendices(s, every, gaps)}"
+        if info["sentences_removed"]:
+            self.runs.emit(rid, "report", "uncited_removed", {"sentences": info["sentences_removed"][:20]})
+        result = rate(text)
+        self.runs.emit(rid, "report", "report_written", {**{k: v for k, v in info.items() if k != "sentences_removed"},
+                                                         "removed": len(info["sentences_removed"]), "words": len(text.split())})
+        return text, [], {**result, "revisions": 0, "uncited_removed": info["sentences_removed"], "requested_form": rt["form"],
+                          "writer": "model:sections", "report": info}
+
+    def _brief_sources(self, s: State, rows: list[dict], gaps: list[str]) -> str:
+        """Under a brief, by code: each claim it rests on with its tier, the page of a PDF and the exact address, the loud warning
+        for a Tier 4 source, and why a fact is not established."""
+        lines = ["Sources:"]
+        for r in rows:
+            label = r.get("corroboration") or ""
+            warn = " TIER 4: POORLY SOURCED, verify before any use." if settling.tier4(r.get("blog")) else ""
+            lines.append(f"- [claim:{r['claim_id']}] {label}: {self._where(r)}.{warn}")
+        for i, fact in enumerate(s["checklist"]):
+            if fact in gaps:
+                has = [r for r in rows if r.get("fact") == i]
+                why = ("not established: a Tier 3 source needs a second, independent one, and none was found" if has
+                       else "not established from what was read")
+                lines.append(f"{fact} ({why}).")
+        return "\n".join(lines)
+
+    def _appendices(self, s: State, rows: list[dict], gaps: list[str]) -> str:
+        """Built by code: every source cited (its tier, what it is, its date, page and exact address), how much of each document
+        was read, and what the report does not establish."""
+        out = ["## Sources"]
+        seen = []
+        for r in rows:
+            if r["source_url"] in seen:
+                continue
+            seen.append(r["source_url"])
+            out.append(f"{len(seen)}. {r.get('corroboration') or ''}: {self._where(r)}")
+        events = self.runs.events(s["run_id"])
+        read = [e["payload"] for e in events if e["type"] == "source_read"]
+        copies = sum(e["type"] == "copy_skipped" for e in events)
+        merged = sum(len(e["payload"].get("copies", [])) for e in events if e["type"] == "candidates_merged")
+        out.append("\n## How the research was done")
+        out.append(f"- Report type: {self._rtype(s)['label']}. Working time {round(s.get('time_used', 0))} s of "
+                   f"{round(s.get('time_budget') or 0)} s. Searches: {s.get('searches_used', 0)}. Documents read: {len(read)}; "
+                   f"copies of a document already read, not read again: {copies + merged}.")
+        for p in read:
+            out.append(f"- {p['url']}: {p['chars']:,} characters scanned in full by code, {p['sent_to_model_chars']:,} given to the model "
+                       f"in {p['packs']} pass{'es' if p['packs'] != 1 else ''}")
+        out.append("- Every claim above is the source's exact sentence, copied by code; the text of each section paraphrases them. "
+                   "To check the wording against the sources, run the verification agent.")
+        if gaps:
+            out.append("\n## Not established\n" + "\n".join(f"- {g}" for g in gaps))
+        return "\n".join(out)
 
     QUOTES_PER_FACT = 3
 

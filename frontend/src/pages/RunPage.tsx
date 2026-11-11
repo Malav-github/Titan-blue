@@ -121,9 +121,18 @@ function Figures({ checks, label }: { checks: FigureCheck[]; label?: string }) {
 /** The written answer, with each [claim:N] marker turned into a link to that claim. */
 function Answer({ text }: { text: string }) {
   const links = useLinks()
-  return <>{text.split(/(\[claim:\d+\])/g).map((part, i) => {
+  const inline = (line: string, key: number) => line.split(/(\[claim:\d+\])/g).map((part, i) => {
     const m = /^\[claim:(\d+)\]$/.exec(part)
-    return m ? <Link key={i} className="text-accent underline" to={links.claim(m[1])}>[claim {m[1]}]</Link> : part
+    return m ? <Link key={`${key}-${i}`} className="text-accent underline" to={links.claim(m[1])}>[claim {m[1]}]</Link> : part
+  })
+  // a report's headings ('# Title', '## Section') are shown as headings; everything else keeps its line breaks
+  return <>{text.split('\n').map((line, i) => {
+    const h = /^(#{1,3})\s+(.*)$/.exec(line)
+    if (h) {
+      const size = h[1].length === 1 ? 'text-xl' : h[1].length === 2 ? 'text-lg' : 'text-base'
+      return <span key={i} className={`mt-3 block font-semibold ${size}`}>{inline(h[2], i)}</span>
+    }
+    return <span key={i}>{inline(line, i)}{'\n'}</span>
   })}</>
 }
 

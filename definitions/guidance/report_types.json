@@ -50,7 +50,11 @@
       "deadline_seconds": 420,
       "writing_reserve_seconds": 120,
       "round_seconds": 90,
-      "premise_check": false
+      "premise_check": false,
+      "section_words": [
+        120,
+        220
+      ]
     },
     {
       "id": "deep_report",
@@ -86,7 +90,11 @@
       "deadline_seconds": 570,
       "writing_reserve_seconds": 170,
       "round_seconds": 110,
-      "premise_check": false
+      "premise_check": false,
+      "section_words": [
+        150,
+        300
+      ]
     },
     {
       "id": "white_paper",
@@ -120,8 +128,13 @@
       "deadline_seconds": 570,
       "writing_reserve_seconds": 170,
       "round_seconds": 110,
-      "premise_check": false
+      "premise_check": false,
+      "section_words": [
+        180,
+        320
+      ]
     }
   ],
-  "route_note": "Wording that asks for a report as a document ('write a report on', 'a deep dive into'), never the verb ('what did Acme report'): a real question was planned as a general report because it said 'report'."
+  "route_note": "Wording that asks for a report as a document ('write a report on', 'a deep dive into'), never the verb ('what did Acme report'): a real question was planned as a general report because it said 'report'.",
+  "section_words_note": "Words per section, written one call each: about 400 tokens, 10 s here; eight sections and a summary fit the writing reserve."
 }

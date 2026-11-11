@@ -112,10 +112,12 @@ def test_full_run_keeps_only_verified_supported_claims(env):
     assert report["established"][0]["quote"] == GOOD_QUOTE
     assert report["rejected_quotes"] == 1                       # the invented $89 quote never became a claim
     assert env["store"].counts()["claims"] == 1
-    # the answer is the quote itself, put together by code, with the page's exact address: no model wording at all
-    assert report["summary"] == ("Starter plan price:\n- “The Starter plan costs $29 per month, billed annually.” "
-                                 "(Company web page by Acme, on its website, https://acme.example/pricing) [claim:1]")
-    assert report["established"][0]["claim"] == GOOD_QUOTE and report["invalid_citations_removed"] == []
+    # the answer is written in words (paraphrase allowed), each sentence locked to its claims; under it, by code, each source
+    # with its tier and exact address. The sentence citing the made-up claim 999 is removed.
+    assert report["summary"].startswith("Starter costs $29 [claim:1].") and "Another" not in report["summary"]
+    assert ("Sources:\n- [claim:1] Tier 1: official document, the company's own filing or release: "
+            "Company web page by Acme, on its website, https://acme.example/pricing.") in report["summary"]
+    assert report["established"][0]["claim"] == GOOD_QUOTE and report["invalid_citations_removed"] == [999]
     assert report["gaps"] == []
     assert env["store"].audit() == []
     assert env["world"].fetched == ["https://acme.example/pricing"]  # model's bogus choice #99 was ignored
