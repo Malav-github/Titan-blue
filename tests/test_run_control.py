@@ -180,3 +180,52 @@ def test_the_api_resumes_a_paused_run_and_a_pause_can_be_taken_back(env, tmp_pat
     assert client.get(f"/api/runs/{rid2}", headers=H).json()["status"] == "paused"
     assert client.post(f"/api/runs/{rid2}/resume", headers=H).status_code == 202
     assert client.get(f"/api/runs/{rid2}", headers=H).json()["status"] == "finished" and len(asked) == 2
+
+
+def test_a_finished_run_can_be_run_again_with_the_same_request(env, tmp_path):
+    client, jobs, runner = api(env, tmp_path)
+    rid = jobs.start_research("What does Acme charge?", "Acme", {"max_iterations": 1}, False, require_approval=False, ask_sources=False,
+                              report_type="brief")
+    assert client.get(f"/api/runs/{rid}", headers=H).json()["status"] == "finished"
+    r = client.post(f"/api/runs/{rid}/rerun", headers=H)
+    assert r.status_code == 202
+    new = r.json()["run_id"]
+    assert new != rid
+    run = client.get(f"/api/runs/{new}", headers=H).json()
+    assert run["status"] == "finished" and run["title"] == "What does Acme charge?" and run["rerun_of"] == rid
+    asked = next(e["payload"] for e in env["runs"].events(new) if e["type"] == "queued")
+    assert asked["budgets"] == {"max_iterations": 1} and asked["report_type"] == "brief" and asked["require_approval"] is False
+    assert client.get(f"/api/runs/{rid}", headers=H).json()["status"] == "finished"      # the old run is kept as it was
+
+
+def test_a_run_that_is_not_done_cannot_be_rerun_and_an_old_run_reruns_from_its_start(env, tmp_path):
+    client, jobs, _ = api(env, tmp_path)
+    waiting = jobs.start_research("What does Acme charge?", "Acme", {"max_iterations": 1}, False, require_approval=True)
+    assert client.post(f"/api/runs/{waiting}/rerun", headers=H).status_code == 409       # waiting for approval: stop it first
+    assert client.post("/api/runs/nope/rerun", headers=H).status_code == 404
+    old = "r-old"                                                                         # from before the request was kept
+    env["runs"].emit(old, "api", "queued", {"kind": "research", "question": "What does Acme charge?", "subject": "Acme"})
+    env["runs"].emit(old, "runner", "run_started", {"question": "What does Acme charge?", "subject": "Acme", "require_approval": False,
+                                                    "report_type": "brief", "budgets": {"max_iterations": 1}})
+    env["runs"].emit(old, "runner", "run_failed", {"error": "x"})
+    new = client.post(f"/api/runs/{old}/rerun", headers=H).json()["run_id"]
+    asked = next(e["payload"] for e in env["runs"].events(new) if e["type"] == "queued")
+    assert asked["budgets"] == {"max_iterations": 1} and asked["require_approval"] is False and asked["rerun_of"] == old
+
+
+def test_the_server_restarts_itself_only_when_started_by_serve_and_nothing_is_working(env, tmp_path):
+    client, jobs, _ = api(env, tmp_path)
+    info = client.get("/api/server", headers=H).json()
+    assert info["can_restart"] is False and info["busy"] == 0 and info["started_at"]
+    assert client.post("/api/server/restart", headers=H).status_code == 501
+    calls = []
+    client.app.state.request_restart = lambda: calls.append(1)
+    jobs._pending = 1                                                                     # a run working in this process
+    r = client.post("/api/server/restart", headers=H)
+    assert r.status_code == 409 and "Pause or stop" in r.json()["detail"]["problems"][0]
+    jobs._pending = 0
+    env["runs"].emit("r-left-running", "runner", "run_started", {"question": "q"})        # 'running' from a killed server: not work
+    assert client.post("/api/server/restart", headers=H).status_code == 202
+    import time
+    time.sleep(0.8)
+    assert calls == [1]

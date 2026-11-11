@@ -5,12 +5,15 @@ waiting its turn is shown as `queued`. Everything they do is already written to 
 runner and the manager, so the API only starts them and reads those logs.
 """
 
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from api.registry import Registry
 from connectors.registry import ConnectorRegistry
 from runs import RunStore
+
+_COUNT = threading.Lock()
 
 
 def run_kind(events: list[dict]) -> str | None:
@@ -54,20 +57,51 @@ class Jobs:
         """A connector became active: let the research run that was waiting for it carry on."""
         return self.runner.resume(run_id, {"capability": connector_id})
 
+    _pending = 0                                       # jobs submitted and not yet finished (a restart waits for none)
+
     def _submit(self, fn, *args, **kwargs) -> None:
         if self.pool is None:
             fn(*args, **kwargs)
-        else:
-            self.pool.submit(fn, *args, **kwargs)
+            return
+        with _COUNT:
+            self._pending += 1
+
+        def job():
+            try:
+                fn(*args, **kwargs)
+            finally:
+                with _COUNT:
+                    self._pending -= 1
+        self.pool.submit(job)
+
+    def busy(self) -> int:
+        """How many jobs are running or waiting their turn."""
+        return self._pending
 
     # -- research ---------------------------------------------------------------------------------------
 
     def start_research(self, question: str, subject: str, budgets: dict | None, allow_capabilities: bool,
-                       require_approval: bool = True, ask_sources: bool = True, report_type: str | None = None) -> str:
+                       require_approval: bool = True, ask_sources: bool = True, report_type: str | None = None,
+                       rerun_of: str | None = None) -> str:
         run_id = uuid.uuid4().hex
-        self.runs.emit(run_id, "api", "queued", {"kind": "research", "question": question, "subject": subject, "report_type": report_type})
+        # The whole request is kept, so the run can be run again exactly as asked.
+        self.runs.emit(run_id, "api", "queued", {"kind": "research", "question": question, "subject": subject, "report_type": report_type,
+                                                 "budgets": budgets, "allow_capabilities": allow_capabilities,
+                                                 "require_approval": require_approval, "ask_sources": ask_sources, "rerun_of": rerun_of})
         self._submit(self._start_research, run_id, question, subject, budgets, allow_capabilities, require_approval, ask_sources, report_type)
         return run_id
+
+    def rerun_research(self, run_id: str) -> str:
+        """A new run of the same request (question, subject, report type, budgets, options). The old run is kept as it is."""
+        events = self.runs.events(run_id)
+        asked = next((e["payload"] for e in events if e["type"] == "queued" and "question" in e["payload"]), {})
+        started = next((e["payload"] for e in events if e["type"] == "run_started"), {})
+        req = {**started, **{k: v for k, v in asked.items() if v is not None}}       # runs from before the request was kept: what the start recorded
+        if not req.get("question"):
+            raise ValueError("this run has no question to run again")
+        return self.start_research(req["question"], req.get("subject") or "", req.get("budgets"), bool(req.get("allow_capabilities")),
+                                   require_approval=req.get("require_approval", True), ask_sources=req.get("ask_sources", True),
+                                   report_type=asked.get("report_type") or started.get("report_type"), rerun_of=run_id)
 
     def _start_research(self, run_id, question, subject, budgets, allow_capabilities, require_approval, ask_sources=True,
                         report_type=None) -> None:

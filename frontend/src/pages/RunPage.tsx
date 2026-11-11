@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, pageText, type Approval, type ClaimReview, type ClaimVerification, type FigureCheck, type Verification, type Report, type ReportClaim, type RunDetail, type RunEvent } from '../api'
 import { ACTIVE, describeEvent, lines, time } from '../format'
 import { Flow } from '../Flow'
@@ -552,6 +552,28 @@ function RunControls({ runId, status }: { runId: string; status: string }) {
   )
 }
 
+const RERUNNABLE = new Set(['finished', 'stopped', 'failed'])
+
+/** Run the same request again as a new run: fresh searches and sources. This run and its report stay as they are. */
+function RerunButton({ runId, status }: { runId: string; status: string }) {
+  const navigate = useNavigate()
+  const qc = useQueryClient()
+  const again = useMutation({
+    mutationFn: () => api.rerun(runId),
+    onSuccess: (r) => { void qc.invalidateQueries({ queryKey: ['runs'] }); navigate(`/runs/${r.run_id}`) },
+  })
+  if (!RERUNNABLE.has(status)) return null
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      <Button variant="secondary" disabled={again.isPending} title="Run the same question again with the same settings, as a new run"
+        onClick={() => again.mutate()}>
+        <span aria-hidden="true">↻ </span>{again.isPending ? 'Starting…' : 'Rerun'}
+      </Button>
+      {again.error && <ErrorNote error={again.error} />}
+    </span>
+  )
+}
+
 export function RunPage() {
   const { id = '' } = useParams()
   const archive = useArchive()
@@ -572,9 +594,11 @@ export function RunPage() {
     <>
       <PageHeader
         title={data.title ?? 'Run'}
-        subtitle={<>{data.subject ? <>About <strong>{data.subject}</strong> · </> : null}started {events[0] ? time(events[0].ts) : '…'} · run <Mono>{id.slice(0, 8)}</Mono></>}
+        subtitle={<>{data.subject ? <>About <strong>{data.subject}</strong> · </> : null}started {events[0] ? time(events[0].ts) : '…'} · run <Mono>{id.slice(0, 8)}</Mono>
+          {data.rerun_of && <> · rerun of <Link className="text-accent underline" to={`/runs/${data.rerun_of}`}><Mono>{data.rerun_of.slice(0, 8)}</Mono></Link></>}</>}
         actions={<span className="flex flex-wrap items-center gap-3">
           {!archive && data.kind === 'research' && <RunControls runId={id} status={data.status ?? ''} />}
+          {!archive && data.kind === 'research' && <RerunButton runId={id} status={data.status ?? ''} />}
           <span aria-live="polite"><StatusBadge status={data.status} /></span></span>}
       />
       <div className="flex flex-col gap-6">

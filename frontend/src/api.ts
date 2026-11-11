@@ -193,6 +193,7 @@ export interface RunDetail {
   status: string | null
   title: string | null
   subject?: string | null
+  rerun_of?: string | null
   approval?: Approval | null
   capability?: { request_id: string; need: string; reason: string } | null
   source_request?: { stage: 'premise' | 'answer'; missing: string[]; sources_asked: number } | null
@@ -328,6 +329,8 @@ export interface Models {
   tasks: { task: string; model: string; installed: boolean }[]
 }
 
+export interface ServerInfo { started_at: string; pid: number; can_restart: boolean; busy: number }
+
 export interface HarnessNode { id: string; label: string; col: number; row: number; does: string }
 export interface HarnessEdge { from: string; to: string; label?: string; bend?: number; via?: [number, number][]; control?: boolean }
 export interface Harness { id: string; title: string; nodes: HarnessNode[]; edges: HarnessEdge[]; control_note?: string; problems?: string[] }
@@ -349,6 +352,9 @@ export const api = {
   pauseRun: (id: string) => post(`/api/runs/${id}/pause`, {}),
   resumeRun: (id: string) => post(`/api/runs/${id}/resume`, {}),
   stopRun: (id: string) => post(`/api/runs/${id}/stop`, {}),
+  rerun: (id: string) => post<{ run_id: string }>(`/api/runs/${id}/rerun`, {}),
+  server: () => request<ServerInfo>('/api/server'),
+  restartServer: () => post<{ ok: boolean; started_at: string }>('/api/server/restart', {}),
   verifyRun: (id: string, claimIds: number[] = []) => post<{ verify_run_id: string }>(`/api/runs/${id}/verify`, { claim_ids: claimIds }),
   verification: (id: string) => request<Verification>(`/api/runs/${id}/verification`),
   reviewClaim: (id: number, body: { verdict: ClaimReview['verdict']; note?: string; run_id?: string }) => post(`/api/evidence/claims/${id}/review`, body),

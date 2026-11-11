@@ -11,6 +11,8 @@ import os
 import re
 import secrets
 import sqlite3
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -245,7 +247,8 @@ def create_app(registry: Registry | None = None, token: str | None = None,
         def last(kind):
             return next((e["payload"] for e in reversed(events) if e["type"] == kind), None)
 
-        return {"run_id": run_id, "kind": "research", "status": status, "title": started.get("question"),
+        asked = next((e["payload"] for e in events if e["type"] == "queued" and "question" in e["payload"]), {})
+        return {"run_id": run_id, "kind": "research", "status": status, "title": started.get("question"), "rerun_of": asked.get("rerun_of"),
                 "subject": started.get("subject"), "budgets": started.get("budgets"),
                 "approval": last("awaiting_approval") if status == "awaiting_approval" else None,
                 "capability": last("capability_needed") if status == "needs_capability" else None,
@@ -383,6 +386,19 @@ def create_app(registry: Registry | None = None, token: str | None = None,
         if status in WAITING:
             (jobs.stop_verification(run_id) if is_verify(run_id) else jobs.stop_research(run_id))   # not working now: end it now
         return {"ok": True, "status": "stopping"}
+
+    @app.post("/api/runs/{run_id}/rerun", status_code=202)
+    def rerun(run_id: str):
+        """Run the same request again as a new run (fresh searches and sources); the old run and its report are kept."""
+        if run_kind(engine.runs.events(run_id)) != "research":
+            raise HTTPException(404, "No such research run")
+        status = engine.runs.status(run_id)
+        if status not in TERMINAL:
+            raise HTTPException(409, {"problems": [f"this run is {status}; stop it first, or let it finish, then run it again"]})
+        try:
+            return {"run_id": jobs.rerun_research(run_id)}
+        except ValueError as exc:
+            raise HTTPException(409, {"problems": [str(exc)]})
 
     class VerifyRequest(BaseModel):
         claim_ids: list[int] = []                      # empty: every claim of the answer
@@ -595,6 +611,33 @@ def create_app(registry: Registry | None = None, token: str | None = None,
     def reload_definitions():
         """Forget what Titan read into memory (definition files, health checks, source descriptions); nothing stored is touched."""
         return {"cleared": forget_in_memory()}
+
+    started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    def busy() -> int:
+        """Work this process is doing now. Run statuses are not used: a run left 'running' by a server that was killed is
+        not working, and must not block a restart for ever."""
+        return jobs.busy() + engine.busy()
+
+    @app.get("/api/server")
+    def server_info():
+        """This server process: when it started, and whether it can restart itself (only when started by serve.py)."""
+        return {"started_at": started_at, "pid": os.getpid(), "can_restart": callable(getattr(app.state, "request_restart", None)),
+                "busy": busy()}
+
+    @app.post("/api/server/restart", status_code=202)
+    def restart_server():
+        """Start a fresh server process with the current code. Refused while anything is working: pause or stop it first.
+        Runs that are paused or waiting for you are kept (their state is on disk) and carry on after the restart."""
+        restart = getattr(app.state, "request_restart", None)
+        if not callable(restart):
+            raise HTTPException(501, {"problems": ["this server was not started by serve.py, so it cannot restart itself"]})
+        if busy():
+            n = busy()
+            raise HTTPException(409, {"problems": [f"{n} {'run is' if n == 1 else 'runs are'} in progress. Pause or stop "
+                                                   f"{'it' if n == 1 else 'them'}, then restart."]})
+        threading.Timer(0.5, restart).start()          # answer first, then shut down
+        return {"ok": True, "started_at": started_at}
 
     def archived(aid: str) -> stores.ArchivedStore:
         try:

@@ -49,6 +49,7 @@ class Engine:
         self.executors = ex.EXECUTORS if executors is None else executors
         self.pool = ThreadPoolExecutor(max_workers=4) if background else None
         self._lock = threading.Lock()
+        self._working: set[str] = set()
 
     # -- value checks: references must point at real evidence --------------------------------------------
 
@@ -215,7 +216,12 @@ class Engine:
         if self.pool is None:
             self._execute(run_id)
         else:
-            self.pool.submit(self._execute, run_id)
+            self._working.add(run_id)
+            self.pool.submit(self._execute, run_id).add_done_callback(lambda f: self._working.discard(run_id))
+
+    def busy(self) -> int:
+        """How many block runs this process is working on (a restart waits for none)."""
+        return len(self._working)
 
     def _execute(self, run_id: str) -> None:
         def emit_for(node: str):
