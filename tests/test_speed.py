@@ -96,19 +96,26 @@ def test_one_claim_per_site_is_checked_before_a_second_from_the_same_site(env):
     assert sites[:2] == ["a.example", "b.example"]
 
 
-def test_extraction_stops_when_every_fact_is_backed_and_keeps_the_rest_for_later(env):
+def test_unchecked_claims_never_stop_extraction_but_checked_ones_do_and_the_rest_is_kept_for_later(env):
     from tests.scripted import Extraction, ExtractedClaim
     one = Extraction(claims=[ExtractedClaim(predicate="pricing.starter", value="$29", claim="Acme's Starter plan costs $29 per month.",
                                             quote=QUOTE, needed_fact=1)])
     runner = make_runner(env, Extraction=lambda p: one)
     urls = ["https://a.example/p", "https://b.example/p", "https://c.example/p"]
     shas = [add_source(env, u, f"<p>{QUOTE} Page {i}.</p>") for i, u in enumerate(urls)]
-    out = runner.n_extract({**state({}, settle_sites=2), "budgets": {"max_chunks_per_source": 3}, "new_sources": shas, "rejected": 0,
-                            "entity_id": env["store"].add_entity("Acme"), "all_claim_ids": []})
-    assert out["backlog"] == [shas[2]] and any(e["type"] == "extract_stopped" for e in env["runs"].events("r1"))
+    base = {**state({}, settle_sites=2), "budgets": {"max_chunks_per_source": 3}, "rejected": 0,
+            "entity_id": env["store"].add_entity("Acme"), "all_claim_ids": []}
+    out = runner.n_extract({**base, "new_sources": shas})
+    assert out["backlog"] == [] and not any(e["type"] == "extract_stopped" for e in env["runs"].events("r1"))   # all three read
+    # claims that passed the checks from two independent sites settle the fact: what is left is kept for later, not read now
+    checked = {str(c): "supported" for c in out["new_claim_ids"][:2]}
+    more = [add_source(env, u, f"<p>{QUOTE} Again {i}.</p>") for i, u in enumerate(["https://d.example/p", "https://e.example/p"])]
+    out2 = runner.n_extract({**base, "run_id": "r1", "new_sources": more, "verdicts": checked, "relevant": {c: True for c in checked},
+                             "claim_items": {c: 0 for c in checked}})
+    assert out2["backlog"] == [more[1]] and any(e["type"] == "extract_stopped" for e in env["runs"].events("r1"))
     nxt = runner.n_fetch({"run_id": "r1", "selected": [], "fetches_used": 0, "fetched_keys": [], "fetch_failures": 0,
-                          "backlog": out["backlog"]})
-    assert nxt["new_sources"] == [shas[2]] and nxt["backlog"] == []             # read later if the gap remains
+                          "backlog": out2["backlog"]})
+    assert nxt["new_sources"] == [more[1]] and nxt["backlog"] == []             # read later if the gap remains
 
 
 def test_downloads_overlap_in_time_and_keep_their_order_and_failures_apart(env):

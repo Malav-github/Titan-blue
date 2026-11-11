@@ -41,6 +41,11 @@ def squash(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", _SUFFIX.sub(" ", (name or "").lower()))
 
 
+def _words(name: str) -> list[str]:
+    """'S&P Global Inc.' -> ['s&p', 'global']: the name's words, company suffixes aside."""
+    return [w for w in re.split(r"[^a-z0-9&]+", _SUFFIX.sub(" ", (name or "").lower())) if w]
+
+
 def parse_tickers(raw: bytes | str) -> list[dict]:
     """The SEC's company_tickers.json as [{cik, ticker, title}]."""
     data = json.loads(raw)
@@ -65,11 +70,19 @@ def resolve(names: list[str | None], tickers: list[dict], text: str = "") -> dic
         if len(key) < 2:
             continue
         found = {t["cik"]: t for t in tickers if squash(t["title"]) == key}
+        how = "is the SEC's registrant name"
         if not found and re.fullmatch(r"[A-Z][A-Z.\-]{0,5}", name.strip()):
             found = {t["cik"]: t for t in tickers if t["ticker"].upper() == name.strip().upper()}
+            how = "is the ticker of"
+        if not found and len(key) >= 5:
+            # 'LyondellBasell' is how people name 'LyondellBasell Industries N.V.': the name's words open the registrant's
+            # name. Only when exactly one registrant does ('Meta' opens several, and then nothing is chosen).
+            words = _words(name)
+            found = {t["cik"]: t for t in tickers if _words(t["title"])[:len(words)] == words}
+            how = "opens the SEC's registrant name"
         if len(found) == 1:
             t = next(iter(found.values()))
-            return {**t, "matched_on": f"'{name}' is the SEC's registrant name '{t['title']}'" if squash(t["title"]) == key else f"'{name}' is its ticker"}
+            return {**t, "matched_on": f"'{name}' {how} '{t['title']}'"}
         if len(found) > 1:
             return {"cik": None, "reason": f"'{name}' matches several SEC registrants: {', '.join(t['title'] for t in found.values())}"}
     shown = ", ".join(f"'{n}'" for n in names if n) or "no name"

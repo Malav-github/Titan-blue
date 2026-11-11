@@ -136,16 +136,13 @@ def test_a_list_question_is_planned_by_code_and_written_as_a_round_up(env):
     assert (result["report"].get("quality") or {}).get("form") in ("roundup", None)
 
 
-def test_only_a_claim_on_point_for_its_fact_counts_toward_stopping(env):
-    """The real case: four claims from SEC metadata were filed under 'S&P Global Q3 2026 revenue' and stopped the reading."""
+def test_claims_not_yet_checked_never_stop_the_reading(env):
+    """The real case (LyondellBasell): unchecked claims from an old earnings release looked like the answer and stopped the
+    reading after one document of five; the checks then rejected them and the other documents were never read."""
     runner = make_runner(env)
-    s = {"company": "S&P Global", "entity_name": "S&P Global", "subject": "S&P Global", "question": "What was S&P Global's Q3 2026 revenue?"}
-    fact = "S&P Global Q3 2026 revenue"
-    for metadata in ("The company's name is S&P Global Inc.", "The company's ticker symbol is SPGI.", "The company is listed on NYSE."):
-        assert not runner._on_point(s, fact, metadata)
-    assert runner._on_point(s, fact, "S&P Global reported revenue of $3.9 billion for the third quarter.")
-    assert not runner._on_point(s, fact, "S&P Global's revenue for the third quarter of 2010 was $1,956,000,000.")   # the XBRL history
-    assert runner._on_point(s, fact, "S&P Global's revenue for the third quarter of 2026 was $3,678,000,000.")
+    s = {"checklist": ["Names of the chemical recycling technologies"], "verdicts": {}, "relevant": {}, "report_type": "brief",
+         "question": "q", "subject": "Acme", "company": "Acme", "entity_name": "Acme"}
+    assert not runner._backed(s, {"1": 0}, 1, 2)                     # recorded, not checked: keep reading
 
 
 def test_the_round_up_is_written_by_code_one_dated_cited_paragraph_per_event(env):

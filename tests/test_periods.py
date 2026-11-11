@@ -258,7 +258,8 @@ def test_a_recorded_claim_gets_its_period_and_the_report_shows_it(env):
     row_ = result["report"]["established"][0]
     period = next(t for t in row_["times"] if t["kind"] == "period")
     assert period["value"] == "3 months ended 2026-09-26" and period["detail"]["change"] == "+8%"
-    assert row_["corroboration"] == "Tier 3: single source, unconfirmed"
+    # the page is on acme.example, Acme's confirmed website: the planner gave no company, but the subject is one
+    assert row_["corroboration"] == "Tier 1: official document, the company's own filing or release"
     assert result["report"]["conflicts"] == []
     assert "claim_time_recorded" in [e["type"] for e in env["runs"].events(result["run_id"])]
 

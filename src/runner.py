@@ -262,6 +262,7 @@ class State(TypedDict, total=False):
     capability_checked: bool
     capability_id: str | None
     fetch_failures: int
+    blocked_sites: list[str]   # sites that refused Titan (401, 403, 429) in this run: none of their pages is chosen again
     api_calls_used: int
     enumerate: dict | None     # a list question (skills.planning.enumerate): collect every distinct event, write a round-up
     edgar_done: bool           # the EDGAR skill has run for this run
@@ -321,6 +322,20 @@ def relevance_prompt(question: str, fact: str, claim_text: str) -> str:
         "a deal, the parties, the reason or circumstances, the financial impact), answer addresses=false and context=true; "
         "for anything else context=false."
     )
+
+
+class _NotACompany(Exception):
+    """The subject was looked up as a possible company and is not one (no confirmed official website)."""
+
+
+def _maybe_organisation(subject: str) -> str | None:
+    """The subject when it reads as a name (a few words, capitalised: 'LyondellBasell', 'S&P Global'), else None. Only a
+    reason to look it up; the lookup decides."""
+    subject = normalize(subject).strip(" .'\"")
+    words = subject.split()
+    if not 1 <= len(words) <= 5 or not any(w[:1].isupper() or any(ch.isupper() for ch in w[1:]) for w in words):
+        return None
+    return subject if subject[:1].isupper() or subject[:1].isdigit() else None
 
 
 def _dedupe(items: list[str]) -> list[str]:
@@ -500,7 +515,7 @@ class Runner:
             "all_claim_ids": [], "verdicts": {}, "relevant": {}, "context": {}, "claim_items": {}, "covered": [], "warnings": [], "new_sources": [],
             "new_claim_ids": [], "candidates": [], "selected": [], "approved": False,
             "allow_capabilities": allow_capabilities, "capability_checked": False, "capability_id": None,
-            "fetch_failures": 0, "api_calls_used": 0, "data_need": None,
+            "fetch_failures": 0, "blocked_sites": [], "api_calls_used": 0, "data_need": None,
             "ask_sources": ask_sources, "backlog": [], "settle_sites": rt["min_sites"],
             "report_type": rt["id"], "time_budget": rt["deadline_seconds"], "time_used": 0.0, "premise": [], "premise_status": "none", "premise_missing": [], "premise_claim_ids": [],
             "premise_url": None, "corrections": [], "sources_asked": 0, "outcome": None, "route": "discover",
@@ -1073,14 +1088,25 @@ class Runner:
         rid, b = s["run_id"], s["budgets"]
         found: dict[str, dict] = {}
         warnings = list(s.get("warnings", []))
-        domain, entity_id = s.get("domain"), s["entity_id"]
+        domain, entity_id, company = s.get("domain"), s["entity_id"], s.get("company")
+        # The planner (a small model) often leaves the company empty even when the subject is one ('LyondellBasell'). The
+        # subject is then looked up the same way: a domain is confirmed only by Wikidata's exact name and a homepage that
+        # names it, which a topic ('chemical recycling') does not pass. Without this the company's own pages count as an
+        # ordinary site, its MoReTec page is cut by the per-site cap, and its documents are not Tier 1.
+        maybe = None if company else _maybe_organisation(s.get("subject") or "")
 
-        if s["iteration"] == 0 and s.get("company") and not domain:      # the official domain labels the company's own pages
+        if s["iteration"] == 0 and (company or maybe) and not domain:      # the official domain labels the company's own pages
             try:
-                resolution = primary.resolve_domain(s["company"])
-                self.store.register_resolution(resolution)
+                resolution = primary.resolve_domain(company or maybe)
                 confirmed = [c for c in resolution["candidates"] if c["status"] == "confirmed"]
                 statuses = [f"{c['domain']}={c['status']}" for c in resolution["candidates"]]
+                if maybe and not confirmed:
+                    raise _NotACompany
+                self.store.register_resolution(resolution)
+                if maybe:
+                    company = maybe
+                    self.runs.emit(rid, "discover", "company_from_subject", {"company": maybe, "domain": confirmed[0]["domain"],
+                                   "why": "the planner gave no company; the subject has a confirmed official website"})
                 if confirmed:
                     domain = confirmed[0]["domain"]
                     entity_id = self.store.find_entity(s["entity_name"])["entity_id"]
@@ -1095,6 +1121,8 @@ class Runner:
                 else:
                     warnings.append(f"no confirmed official domain for {s['company']} ({', '.join(statuses) or 'none found'})")
                     self.runs.emit(rid, "discover", "domain_unconfirmed", {"candidates": statuses})
+            except _NotACompany:
+                pass                                       # the subject is a topic or an unknown name: nothing to label
             except Exception as exc:
                 warnings.append(f"primary-source discovery failed: {type(exc).__name__}: {exc}")
                 self.runs.emit(rid, "discover", "primary_failed", {"error": f"{type(exc).__name__}: {exc}"})
@@ -1138,7 +1166,7 @@ class Runner:
         ranked = sorted((c for k, c in found.items() if k not in fetched),
                         key=lambda c: (c["tier"] != "primary", -c["score"]))[:25]
         return {"candidates": ranked, "searches_used": searches, "domain": domain, "entity_id": entity_id,
-                "warnings": warnings}
+                "warnings": warnings, **({"company": company} if company != s.get("company") else {})}
 
     def n_select(self, s: State) -> dict:
         rid, b = s["run_id"], s["budgets"]
@@ -1154,6 +1182,15 @@ class Runner:
             cands = [c for c in cands if c not in front]
             if not cands:
                 self.runs.emit(rid, "select", "sources_selected", {"urls": [], "reason": "only homepages were found"})
+                return {"selected": []}
+        refused = set(s.get("blocked_sites") or [])
+        if gone := [c for c in cands if corroboration.site(c["url"]) in refused]:
+            # the site refused us earlier in this run: its other pages would be refused too, and would take fetches from others
+            self.runs.emit(rid, "select", "candidates_skipped", {"urls": [c["url"] for c in gone][:10],
+                                                                "reason": "the site refused Titan earlier in this run (HTTP 401, 403 or 429)"})
+            cands = [c for c in cands if c not in gone]
+            if not cands:
+                self.runs.emit(rid, "select", "sources_selected", {"urls": [], "reason": "only pages on sites that refused us were found"})
                 return {"selected": []}
         # coverage, not repetition (source_selection.json): one article is read once, from its best copy; no site fills the list
         cands, merged, capped = selection.diversify(cands)
@@ -1191,6 +1228,7 @@ class Runner:
         new_sources, fetches, keys = [], s["fetches_used"], list(s["fetched_keys"])
         warnings = list(s.get("warnings", []))
         blocked: list[dict] = []
+        refused = set(s.get("blocked_sites") or [])          # sites that refused us: no more of their pages are chosen
         downloads = self._side_by_side(lambda c: self.fetch_fn(c["url"], max_chars=2000), s["selected"])
         for cand, downloaded in zip(s["selected"], downloads):
             url = cand["url"]
@@ -1200,7 +1238,7 @@ class Runner:
                 if isinstance(downloaded, Exception):
                     raise downloaded
                 result = downloaded
-                if result["status"] != 200:  # blocked or missing: not retried with other tools
+                if result["status"] != 200:  # blocked or missing: a refusal is never worked around (see _other_copies)
                     raise RuntimeError(f"HTTP {result['status']}")
                 sha = self.store.ingest(result)
                 text = Path(self.store.get_source(sha)["text_path"]).read_text(encoding="utf-8")
@@ -1217,8 +1255,10 @@ class Runner:
             except Exception as exc:
                 warnings.append(f"could not use {url}: {exc}")
                 self.runs.emit(rid, "fetch", "source_failed", {"url": url, "error": f"{type(exc).__name__}: {exc}"})
-                if re.search(r"HTTP (?:401|403|429)\b", str(exc)) and cand.get("title"):
-                    blocked.append(cand)
+                if re.search(r"HTTP (?:401|403|429)\b", str(exc)):
+                    refused.add(corroboration.site(url))
+                    if cand.get("title"):
+                        blocked.append(cand)
                 continue
             new_sources.append(sha)
             self._fetched_event(s, url, sha, text, cand)
@@ -1229,7 +1269,7 @@ class Runner:
             fetches += 1
             self._fetched_event(s, cand["url"], sha, text, cand)
         return {"new_sources": list(s.get("backlog") or []) + new_sources, "backlog": [], "fetches_used": fetches,
-                "fetched_keys": keys, "warnings": warnings, "fetch_failures": s["fetch_failures"] + failed}
+                "fetched_keys": keys, "warnings": warnings, "fetch_failures": s["fetch_failures"] + failed, "blocked_sites": sorted(refused)}
 
     def _read_statements(self, s: State, sha: str, url: str, text: str = "", market: str | None = None, force: bool = False) -> None:
         """Financial statements in a document are read by code (skills/statements), never by the model, and recorded with
@@ -1789,24 +1829,6 @@ class Runner:
         groups = self._documents(shas)
         return {sha: corroboration.site(self.store.get_source(root)["final_url"]) for sha, root in groups.items()}
 
-    _GENERIC_WORDS = {"the", "and", "for", "with", "from", "that", "this", "its", "their", "what", "which", "who", "when", "how", "did",
-                      "does", "was", "were", "has", "have", "had", "about", "company", "companies", "announce", "announced", "announcement",
-                      "announcements", "latest", "recent", "new", "news", "year", "years", "inc", "corp"}
-
-    def _on_point(self, s: State, fact: str, claim_text: str) -> bool:
-        """Does the claim share a content word with the needed fact (the subject's name, years and filler aside)? A cheap test
-        used only to decide when to stop reading: the model files every claim under some needed fact, and a page of company
-        metadata ('its ticker is SPGI') must not stop the reading of the 10-Q that holds the revenue."""
-        names = {w for n in self._names(s) for w in re.findall(r"[a-z0-9&]+", n.lower())}
-        words = lambda t: {w.rstrip("s") for w in re.findall(r"[a-z0-9&]+", t.lower())                    # noqa: E731
-                           if len(w) > 2 and w not in self._GENERIC_WORDS and w not in names and not re.fullmatch(r"(?:19|20)\d\d", w)}
-        want = words(fact)
-        years_wanted = set(re.findall(r"\b(?:19|20)\d\d\b", fact)) | {str(y) for y in (s.get("time_scope") or {}).get("years") or []}
-        years_said = set(re.findall(r"\b(?:19|20)\d\d\b", claim_text))
-        if years_wanted and years_said and not years_wanted & years_said:
-            return False          # revenue for 2010 is not on point for a question about 2026
-        return not want or bool(want & words(claim_text))
-
     _EVENT_VERBS = re.compile(r"\b(?:announc|launch|introduc|unveil|acquir|agree|complet|partner|invest|nam|appoint|expand|releas|"
                               r"form|open|sign|select|separat|spin|sell|sold|buy|bought|merg|enter|start|establish|debut|roll)\w*", re.I)
 
@@ -1816,22 +1838,11 @@ class Runner:
         return bool(self._EVENT_VERBS.search(text)) and (not topic or any(t in text.lower() for t in topic))
 
     def _backed(self, s: State, items: dict, facts: int, need_sites: int) -> bool:
-        """Does every needed fact have recorded claims from at least `need_sites` independent sites (or one primary source)?
-        Only claims on point for their fact count (see `_on_point`). A list question is never backed early: every event counts."""
-        if s.get("enumerate"):
-            return False
-        sites: dict[int, set] = {}
-        primary: set[int] = set()
-        claims = {cid: self.store.get_claim(int(cid)) for cid in items}
-        claims = {cid: c for cid, c in claims.items() if self._on_point(s, s["checklist"][items[cid]], c["claim_text"])}
-        items = {cid: f for cid, f in items.items() if cid in claims}
-        where = self._independent([c["source_sha256"] for c in claims.values()])
-        for cid, fact in items.items():
-            claim = claims[cid]
-            sites.setdefault(fact, set()).add(where[claim["source_sha256"]])
-            if self._rtype(s)["settle_alone"] and self._strong(s, claim["source_sha256"], claim):   # one strong source is enough
-                primary.add(fact)
-        return all(i in primary or len(sites.get(i, ())) >= need_sites for i in range(facts))
+        """Is every needed fact already settled, by the same rule coverage uses (`_settled_facts`)? Only claims that passed
+        the support and relevance checks count. Claims just extracted are not checked yet, so they never stop the reading:
+        once, unchecked claims from an old earnings release looked like the answer, reading stopped after one document of
+        five, and then the checks rejected them and the gap stayed open with the other documents unread."""
+        return len(self._settled_facts(s, s.get("verdicts") or {}, s.get("relevant") or {}, items, need_sites)) >= facts
 
     def _record_times(self, rid: str, claim_id: int) -> None:
         """Attach period and event dates to a recorded claim, read by code from its quote and the text around it (never by a

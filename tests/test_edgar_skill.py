@@ -13,7 +13,9 @@ from tools.archive import archive_bytes, utc_now
 
 TICKERS = [{"cik": "0000064040", "ticker": "SPGI", "title": "S&P Global Inc."}, {"cik": "0000320193", "ticker": "AAPL", "title": "Apple Inc."},
            {"cik": "0001467623", "ticker": "DBX", "title": "DROPBOX, INC."}, {"cik": "0000000011", "ticker": "ABCA", "title": "ABC Corp"},
-           {"cik": "0000000012", "ticker": "ABCB", "title": "ABC Holdings"}]
+           {"cik": "0000000012", "ticker": "ABCB", "title": "ABC Holdings"},
+           {"cik": "0001489393", "ticker": "LYB", "title": "LyondellBasell Industries N.V."},
+           {"cik": "0001326801", "ticker": "META", "title": "Meta Platforms, Inc."}, {"cik": "0001431959", "ticker": "MMAT", "title": "Meta Materials Inc."}]
 
 
 @pytest.mark.parametrize("names,text,cik", [
@@ -24,6 +26,9 @@ TICKERS = [{"cik": "0000064040", "ticker": "SPGI", "title": "S&P Global Inc."}, 
     (["Google"], "", None),                                    # the registrant is Alphabet Inc.: no guess
     (["ABC"], "", None),                                       # two registrants: ambiguous, so none
     (["Whoever"], "the company with SEC CIK 320193", "0000320193"),
+    (["LyondellBasell"], "", "0001489393"),                    # the name opens one registrant's name: LyondellBasell Industries N.V.
+    (["Meta"], "", None),                                      # it opens two: no guess
+    (["Lyon"], "", None),                                      # part of a word is not a name
 ])
 def test_the_cik_comes_from_the_secs_list_or_the_question_never_from_a_guess(names, text, cik):
     assert edgar.resolve(names, TICKERS, text)["cik"] == cik

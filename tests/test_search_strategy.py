@@ -104,3 +104,38 @@ def test_a_page_that_refuses_titan_is_read_from_another_copy_of_the_same_documen
     assert found["blocked"] == BLOCKED and found["copy"] == COPY            # the blog with the same title is not a copy
     assert f'"{TITLE}"' in searched and world.fetched == [COPY]
     assert any(r["source_url"] == COPY for r in result["report"]["established"])
+
+
+def test_no_more_pages_are_chosen_from_a_site_that_refused_titan(env):
+    """The real case: PlasticsToday refused three pages of five chosen, one after another, in two rounds."""
+    runner = make_runner(env)
+    cands = [{"url": f"https://www.trade.example/{i}", "title": f"Acme story {i}", "snippet": "", "score": 1.0, "tier": "secondary"} for i in (1, 2)]
+    cands.append({"url": "https://news.example/acme", "title": "Acme news", "snippet": "", "score": 0.5, "tier": "secondary"})
+    s = {"run_id": "r1", "budgets": {"max_fetches_per_iter": 5, "max_fetches": 8}, "fetches_used": 0, "candidates": cands,
+         "blocked_sites": ["trade.example"], "question": "What does Acme charge?", "checklist": ["Acme prices"]}
+    picked = runner.n_select(s)["selected"]
+    assert [c["url"] for c in picked] == ["https://news.example/acme"]
+    skipped = next(e["payload"] for e in env["runs"].events("r1") if e["type"] == "candidates_skipped")
+    assert len(skipped["urls"]) == 2 and "refused" in skipped["reason"]
+
+
+def test_a_refusal_puts_the_site_on_the_runs_blocked_list(env):
+    runner = make_runner(env)
+    runner.fetch_fn = lambda url, max_chars=2000: {"url": url, "final_url": url, "status": 403}
+    s = {"run_id": "r2", "fetches_used": 0, "fetched_keys": [], "warnings": [], "fetch_failures": 0, "backlog": [],
+         "selected": [{"url": "https://www.trade.example/1", "title": "", "snippet": "", "score": 1.0, "tier": "secondary"}]}
+    assert runner.n_fetch(s)["blocked_sites"] == ["trade.example"]
+
+
+def test_when_the_planner_gives_no_company_a_subject_with_a_confirmed_website_is_one(env):
+    """The real case: 'LyondellBasell' came back with no company, so its own site was an ordinary one and its MoReTec page
+    was cut by the per-site cap. A topic is looked up too, and is not confirmed, so nothing changes for it."""
+    from runner import Plan, _maybe_organisation
+    runner = make_runner(env, Plan=lambda p: Plan(subject="Acme", company=None, queries=["acme pricing"], checklist=["What does Starter cost?"]))
+    result = runner.start("What does Acme charge?", budgets={"max_iterations": 1})
+    events = env["runs"].events(result["run_id"])
+    found = next(e["payload"] for e in events if e["type"] == "company_from_subject")
+    assert found["company"] == "Acme" and found["domain"] == "acme.example"
+    assert result["report"]["established"][0]["source_tier"] == "primary"           # the company's own page
+    assert _maybe_organisation("LyondellBasell") == "LyondellBasell" and _maybe_organisation("S&P Global") == "S&P Global"
+    assert _maybe_organisation("chemical recycling") is None and _maybe_organisation("a very long subject that is a whole sentence") is None
