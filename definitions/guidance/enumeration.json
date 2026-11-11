@@ -21,5 +21,28 @@
     "max_chunks_per_source": 2
   },
   "checks_per_document": 2,
-  "form": "roundup"
+  "form": "roundup",
+  "inventory": {
+    "about": "A question that asks for the items in a portfolio ('Provide LyondellBasell's portfolio of chemical recycling technologies', 'What products does Acme make?') wants every distinct item, not events. A real run planned it as one fact, and one page naming one technology closed the question. Code recognises it, follows every item name the sources mention (skills/planning/names.py), and writes one entry per item.",
+    "nouns": "technolog(?:y|ies)|products?|brands?|solutions?|offerings?|services?|platforms?|processes|plants?|facilities|assets|subsidiaries|businesses|segments|tools|models|projects|programs|programmes|patents|drugs|pipeline",
+    "cues": "\\b(?:portfolio|range|line-?up|list|all|every|each|which|what are|what (?:\\w+ ){0,3}does|types? of|kinds? of|provide|overview of|describe)\\b",
+    "portfolio_words": "\\b(?:portfolio|range|line-?up|types? of|kinds? of|suite of|family of)\\b",
+    "item": "Each distinct {what} in {subject}'s portfolio, with what it is and its status",
+    "queries": [
+      "{subject} {topic} {noun}",
+      "{subject} {topic} proprietary technology",
+      "{subject} {topic} brand",
+      "{subject} {topic} plant OR facility OR capacity",
+      "{subject} {topic} partnership OR acquisition OR joint venture"
+    ],
+    "budgets": {
+      "max_iterations": 3,
+      "max_searches": 10,
+      "max_fetches": 14,
+      "max_fetches_per_iter": 6,
+      "max_queries_per_iter": 5,
+      "max_chunks_per_source": 2
+    },
+    "form": "inventory"
+  }
 }

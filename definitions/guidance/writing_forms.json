@@ -47,6 +47,30 @@
       ]
     },
     {
+      "id": "inventory",
+      "label": "Inventory of items (a portfolio, a range, a line-up)",
+      "generated": true,
+      "route_when": null,
+      "purpose": "List every distinct item (technology, product, brand, plant) the evidence establishes, each with what the sources say about it.",
+      "reader": "A decision maker who wants the whole portfolio, not the first item found.",
+      "words": [
+        120,
+        650
+      ],
+      "structure": [
+        "One opening sentence: how many distinct items the evidence names, and that each follows with what the sources say.",
+        "One short entry per item, by name: what it is, its status, where and with whom, with citations.",
+        "Statements that name no single item last, as general context.",
+        "Last sentence: what the evidence does not cover."
+      ],
+      "rules": [
+        "One entry per item; never merge two items.",
+        "Never call the list complete: say it covers what was found.",
+        "A page's date is not the date of an item: give a date only when a source states it.",
+        "Attribute each statement: the company's own page, a filing, or a publication."
+      ]
+    },
+    {
       "id": "roundup",
       "label": "Round-up of events",
       "generated": true,

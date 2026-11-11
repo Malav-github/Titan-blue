@@ -1,0 +1,12 @@
+{
+  "about": "Names of things (technologies, products, brands, plants, partners) picked out of what was read, by code: 'MoReTec', 'CirculenRevive', 'APK'. They are searched for next, so a run follows what the sources name instead of rewording the question; and an inventory answer is grouped by them. A small model asked for follow-up searches wrote 'technologies list', 'technologies portfolio', 'technology names'. These words are never names: abbreviations of the trade, units, places and calendar words.",
+  "not_names": [
+    "AI", "ML", "IT", "IR", "PR", "ESG", "CEO", "CFO", "COO", "CTO", "EVP", "SVP", "VP", "USA", "US", "UK", "EU", "UAE", "LLC", "INC", "LTD", "PLC",
+    "NV", "SA", "AG", "SE", "GMBH", "NYSE", "NASDAQ", "SEC", "EDGAR", "GAAP", "IFRS", "EBITDA", "EPS", "ROI", "ROE", "ROIC", "CAGR", "YOY", "QOQ",
+    "FY", "Q1", "Q2", "Q3", "Q4", "H1", "H2", "YTD", "TTM", "KPI", "R&D", "PDF", "HTML", "FAQ", "LCA", "GHG", "CO2", "KT", "MT", "KTA", "MTA",
+    "TPA", "USD", "EUR", "GBP", "INR", "PHP", "JPY", "CNY", "API", "SAAS", "B2B", "B2C", "ISO", "OEM", "IPO", "M&A", "NEWS", "NOTE", "NOTES",
+    "TBD", "N/A", "PLUS", "ECO", "TEL", "FAX", "WWW", "COM", "CAPEX", "OPEX", "ISCC", "NEW", "THE", "AND", "FOR", "ALL", "OUR", "LinkedIn", "YouTube", "JavaScript", "PowerPoint", "iPhone", "WhatsApp", "PayPal", "eBay", "McKinsey", "McDonald", "MacBook"
+  ],
+  "min_mentions": 1,
+  "max_names": 8
+}

@@ -89,12 +89,16 @@ def resolve(names: list[str | None], tickers: list[dict], text: str = "") -> dic
     return {"cik": None, "reason": f"{shown} is not an SEC registrant's name or ticker (a private or non-US company, or another name)"}
 
 
+def named_groups(question: str, checklist: list[str] | None = None) -> list[dict]:
+    """The kinds of filing the question's own words point to (results, deals, leadership...); empty when none do."""
+    text = f"{question} {' '.join(checklist or [])}"
+    return [g for g in manifest()["item_groups"] if re.search(rf"\b(?:{g['cues']})\b", text, re.I)]
+
+
 def groups_for(question: str, checklist: list[str] | None = None) -> list[dict]:
     """The kinds of filing that fit the question, from its words; the default when nothing points anywhere."""
     m = manifest()
-    text = f"{question} {' '.join(checklist or [])}"
-    hit = [g for g in m["item_groups"] if re.search(rf"\b(?:{g['cues']})\b", text, re.I)]
-    return hit or [g for g in m["item_groups"] if g["id"] in m["default_groups"]]
+    return named_groups(question, checklist) or [g for g in m["item_groups"] if g["id"] in m["default_groups"]]
 
 
 def window(scope: dict | None, today: date) -> tuple[date, date]:

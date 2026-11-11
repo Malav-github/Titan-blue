@@ -142,6 +142,40 @@ def _lens_candidates(text: str, brief: PlanningBrief, subject: str, company: str
     return out
 
 
+_SITE = re.compile(r"\bsite:(\S+)", re.I)
+_WIRES = re.compile(r"(?:^|\.)(?:prnewswire|businesswire|globenewswire|accesswire|newswire)\.", re.I)
+_PATENT_SITES = re.compile(r"(?:^|\.)(?:patents\.google|patentscope|espacenet|worldwide\.espacenet|uspto|ppubs\.uspto|freepatentsonline)\.", re.I)
+_FILINGS_SITES = re.compile(r"(?:^|\.)sec\.gov$", re.I)
+
+
+def site_rules(queries: list[str], question: str, subject: str) -> tuple[list[str], list[dict]]:
+    """Keep a planner's `site:` only where it fits the question; otherwise search the same words everywhere. A small model copies
+    the examples in its prompt: a question about a technology portfolio was searched only on sec.gov, only on Google Patents
+    and only on one trade magazine, so most of the web was never looked at. Kept: the subject's own site, the press-release
+    wires (the company's own releases), sec.gov when the question is about what filings hold, patent sites when it is about
+    patents. Dropped: any other single site. Returns (queries, changes)."""
+    from skills.planning import catalog
+    routes = {t["id"]: t["route_when"] for t in catalog()}
+    asks = lambda kind: bool(re.search(routes.get(kind, r"(?!)"), question, re.I))          # noqa: E731
+    own = re.sub(r"[^a-z0-9]", "", subject.lower())
+    out, changes = [], []
+    for q in queries:
+        new = q
+        for m in _SITE.finditer(q):
+            host = m.group(1).lower().strip("/").split("/")[0]
+            mine = len(own) >= 3 and own[:12] in re.sub(r"[^a-z0-9]", "", host)
+            fits = (mine or bool(_WIRES.search(host))
+                    or (bool(_FILINGS_SITES.search(host)) and (asks("company_disclosure") or asks("earnings_materials") or asks("leadership")
+                                                               or asks("press_release")))
+                    or (bool(_PATENT_SITES.search(host)) and asks("patent")))
+            if not fits:
+                new = re.sub(r"\s{2,}", " ", new.replace(m.group(0), " ")).strip()
+                changes.append({"query": q, "dropped": m.group(0),
+                                "why": "one site that the question does not point to; the same words are searched on the whole web"})
+        out.append(new)
+    return out, changes
+
+
 def diversify(queries: list[str], question: str, subject: str, company: str | None, brief: PlanningBrief,
               scope: TimeScope, now: Now, limit: int) -> list[str]:
     name = the_subject(subject, company, question)

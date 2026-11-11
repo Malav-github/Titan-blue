@@ -9,6 +9,7 @@ event log, state is checkpointed to SQLite so a run can pause and resume (even f
 and Langfuse traces are tagged with the run id.
 """
 
+import difflib
 import json
 import re
 import time
@@ -33,6 +34,7 @@ from skills.statements import figures
 from skills import edgar, planning, statements, writing
 from skills.writing import report as report_writer
 from skills.planning import sense as common_sense
+from skills.planning import names as item_names
 from skills.temporal.extract import DateFact, best_date, parse_date
 import corroboration
 import diagnosis
@@ -263,6 +265,8 @@ class State(TypedDict, total=False):
     capability_id: str | None
     fetch_failures: int
     blocked_sites: list[str]   # sites that refused Titan (401, 403, 429) in this run: none of their pages is chosen again
+    names_searched: list[str]  # names of things the sources mention that were searched for (skills/planning/names.py)
+    leads: bool                # names found and not searched yet: another round is worth it even with no gap
     api_calls_used: int
     enumerate: dict | None     # a list question (skills.planning.enumerate): collect every distinct event, write a round-up
     edgar_done: bool           # the EDGAR skill has run for this run
@@ -336,6 +340,20 @@ def _maybe_organisation(subject: str) -> str | None:
     if not 1 <= len(words) <= 5 or not any(w[:1].isupper() or any(ch.isupper() for ch in w[1:]) for w in words):
         return None
     return subject if subject[:1].isupper() or subject[:1].isdigit() else None
+
+
+def _spelled_as(text: str, reference: str) -> str:
+    """Words of `text` (five letters or more) that `reference` spells differently, by a letter or two, take its spelling:
+    'recyclying' -> 'recycling' when the planner's queries say 'recycling'. Names and words it does not have are left alone."""
+    known = {w.lower() for w in re.findall(r"[A-Za-z]{5,}", reference)}
+
+    def fix(m: re.Match) -> str:
+        word = m.group(0)
+        if word.lower() in known or word[:1].isupper():
+            return word
+        close = difflib.get_close_matches(word.lower(), [k for k in known if k[:3] == word[:3].lower()], n=1, cutoff=0.85)
+        return close[0] if close else word
+    return re.sub(r"[A-Za-z]{5,}", fix, text)
 
 
 def _dedupe(items: list[str]) -> list[str]:
@@ -732,7 +750,7 @@ class Runner:
         blocked = attempts >= 3 and s["fetch_failures"] * 2 >= attempts  # most pages were unusable
         if gaps and s.get("allow_capabilities") and not s.get("capability_checked") and (s.get("data_need") or blocked):
             return "capability"
-        if gaps and s["queries"] and room:
+        if (gaps or s.get("leads")) and s["queries"] and room:      # a gap, or names the sources mention not searched yet
             return "discover"
         return "gate" if gaps and s.get("ask_sources") and s.get("sources_asked", 0) < 2 else "report"
 
@@ -841,8 +859,8 @@ class Runner:
             f"{list(CATEGORY_NAMES)}; empty if no company); queries (up to {b['max_queries_per_iter']} web search queries, "
             f"each naming the company or subject and each taking a DIFFERENT angle (for example the company's own investor-relations "
             f"or annual report, its filings, and the concrete events the question may mean, such as acquisitions, spin-offs or "
-            f"layoffs), never three phrasings of one search; use exact names and distinguishing terms; search operators work, e.g. "
-            f"site:patents.google.com, site:sec.gov, or a company's own domain); "
+            f"layoffs), never three phrasings of one search; use exact names and distinguishing terms; site: limits a search to "
+            f"one site, so use it only for the company's own domain, or for sec.gov when the facts are in filings); "
             + (report_types.outline_instruction(rt, s.get("subject") or "") if rt["sections"] else
             f"checklist: ONE item for each distinct fact "
             f"the question itself asks for, and nothing more. A question that asks one thing gets exactly ONE item; a question "
@@ -866,12 +884,18 @@ class Runner:
         cleaned = [no_guessed_figures(q, s["question"]) for q in plan.queries]
         if guessed := [q for q, c in zip(plan.queries, cleaned) if q != c]:
             self.runs.emit(rid, "plan", "queries_cleaned", {"queries": guessed, "why": "they carried figures the question never gave (a guessed answer)"})
+        cleaned, narrowed = planning.site_rules([c for c in cleaned if c], s["question"], planning.the_subject(subject, plan.company, s["question"]))
+        if narrowed:
+            self.runs.emit(rid, "plan", "queries_widened", {"changes": narrowed})
         queries = _dedupe([c for c in cleaned if c])[:b["max_queries_per_iter"]] or [s["question"]]
         queries = _dedupe(tintent.apply_year_terms(queries, scope, now))[:b["max_queries_per_iter"]]
         queries = _dedupe(planning.diversify(queries, s["question"], subject, plan.company, brief, scope, now, b["max_queries_per_iter"]))
         checklist = _dedupe(plan.checklist)[:(rt["sections"] or {}).get("max", 6)] or [s["question"]]
         # A question asking for a list of events is planned by code: a small model plans it as one fact and stops at the first event.
-        listing = planning.enumeration(s["question"], planning.the_subject(subject, plan.company, s["question"]), scope.as_dict())
+        # the list's item and searches are written from the question's words: a typo ('recyclying') is spelled as the planner
+        # spelled it in its own queries, so the searches and the answer do not carry it
+        asked = _spelled_as(s["question"], " ".join(plan.queries + plan.checklist))
+        listing = planning.enumeration(asked, planning.the_subject(subject, plan.company, s["question"]), scope.as_dict())
         listing_state: dict = {"enumerate": None}
         if listing and rt["sections"]:
             # a report about a list of events: its outline stays, and the list's own searches (releases, wires) join the plan
@@ -1605,6 +1629,12 @@ class Runner:
                 return [], 0, None
             cik = match["cik"]
             self.runs.emit(rid, "api_lookup", "edgar_cik", {**match, "source": edgar.manifest()["tickers_url"], "source_sha256": list_sha})
+            if not edgar.named_groups(s["question"], s["checklist"]) and not source_class.is_development(s["question"], s.get("time_scope")):
+                # Filings hold results, deals, leadership and other events. A question about something else (a technology
+                # portfolio) once read seven earnings releases by default: about 90 seconds, nothing on the question.
+                self.runs.emit(rid, "api_lookup", "edgar_skipped", {
+                    "cik": cik, "reason": "the question is not about results, deals, leadership or other events that filings report"})
+                return [], 0, cik
             result = self.call_api_fn(self.registry, "sec_edgar", "submissions", {"cik": cik}, run_id=rid)
             calls += 1
             if not result["ok"]:
@@ -1899,32 +1929,62 @@ class Runner:
             keyed.append((not row, (self._strong(s, claim["source_sha256"], claim) or {}).get("tier", 3), seen[where], len(keyed), cid))
         return [cid for *_, cid in sorted(keyed)]
 
+    def _per_document(self, s: State, rid: str, verdicts: dict, pending: list[int], per_doc: int) -> list[int]:
+        """At most `per_doc` claims checked per document (copies counted as one), the rest kept on record unchecked."""
+        docs = self._documents([self.store.get_claim(c)["source_sha256"] for c in list(map(int, verdicts)) + pending])
+        done: dict[str, int] = {}
+        for c in map(int, verdicts):
+            key = docs[self.store.get_claim(c)["source_sha256"]]
+            done[key] = done.get(key, 0) + 1
+        keep = []
+        # the claims that state an event (and the topic asked about) are checked first: a release's first claims are often
+        # its figures, and checking those two left the event itself unchecked
+        for cid in sorted(pending, key=lambda c: not self._event_like(s, self.store.get_claim(c)["claim_text"])):
+            key = docs[self.store.get_claim(cid)["source_sha256"]]
+            if done.get(key, 0) >= per_doc:
+                self.runs.emit(rid, "check", "check_skipped", {
+                    "claim_id": cid, "reason": f"{per_doc} claims from this document are already checked; a document is one event, "
+                                               "and the claim stays on record, unchecked"})
+                continue
+            done[key] = done.get(key, 0) + 1
+            keep.append(cid)
+        return keep
+
+    def _inventory_items(self, s: State) -> list[str] | None:
+        """For a portfolio question, the item names in the claims recorded so far (skills/planning/names.py); else None."""
+        if (s.get("enumerate") or {}).get("kind") != "inventory":
+            return None
+        quotes = [self.store.get_claim(int(c))["quote"] for c in s.get("all_claim_ids") or []]
+        return item_names.named_items(quotes, self._names(s) + ([self._ticker(s)] if self._ticker(s) else []))
+
+    def _names_an_item(self, s: State, items: list[str], text: str) -> bool:
+        """Does a claim name a portfolio item and speak to the topic ('MoReTec ... recycling plant')? Words compared by their
+        first five letters, so 'recycled' meets 'recycling'."""
+        if not any(item_names.mentions(text, n) for n in items):
+            return False
+        stem = lambda t: {w[:5] for w in re.findall(r"[a-z]{4,}", t.lower())}                     # noqa: E731
+        topic = stem((s.get("enumerate") or {}).get("topic") or "")
+        if topic:            # the topic's own words: 'process' alone let in a 1960s propylene oxide process from a history page
+            return bool(topic & stem(text))
+        return bool(re.search(r"\b(?:technolog|process|plant|polymer|product|brand|grade)", text, re.I))
+
     def n_check(self, s: State) -> dict:
         rid = s["run_id"]
         verdicts, relevant, context = dict(s["verdicts"]), dict(s["relevant"]), dict(s.get("context") or {})
         need = s.get("settle_sites", 2)
         pending = self._check_order(s, list(s["new_claim_ids"]))
         per_doc = (s.get("enumerate") or {}).get("checks_per_document")
-        if per_doc:          # a list question: each document is one candidate event; check its first claims, not all of them
-            docs = self._documents([self.store.get_claim(c)["source_sha256"] for c in list(map(int, verdicts)) + pending])
-            done: dict[str, int] = {}
-            for c in map(int, verdicts):
-                key = docs[self.store.get_claim(c)["source_sha256"]]
-                done[key] = done.get(key, 0) + 1
-            keep = []
-            # the claims that state an event (and the topic asked about) are checked first: a release's first claims are often
-            # its figures, and checking those two left the event itself unchecked
-            pending = sorted(pending, key=lambda c: not self._event_like(s, self.store.get_claim(c)["claim_text"]))
-            for cid in pending:
-                key = docs[self.store.get_claim(cid)["source_sha256"]]
-                if done.get(key, 0) >= per_doc:
-                    self.runs.emit(rid, "check", "check_skipped", {
-                        "claim_id": cid, "reason": f"{per_doc} claims from this document are already checked; a document is one event, "
-                                                   "and the claim stays on record, unchecked"})
-                    continue
-                done[key] = done.get(key, 0) + 1
-                keep.append(cid)
-            pending = keep
+        items = self._inventory_items(s)
+        if items is not None:
+            # a portfolio: every claim that names an item is checked (a document describes several items, so 'one document,
+            # one event' does not hold), those first; the claims that name none keep the per-document limit
+            naming = [c for c in pending if self._names_an_item(s, items, self.store.get_claim(c)["claim_text"])]
+            others = [c for c in pending if c not in naming]
+            pending = naming
+        if items is not None:
+            pending = pending + (self._per_document(s, rid, verdicts, others, per_doc) if per_doc else others)
+        elif per_doc:        # a list question: each document is one candidate event; check its first claims, not all of them
+            pending = self._per_document(s, rid, verdicts, pending, per_doc)
         waves = 0
         while pending:
             if waves and self._wanted(rid):
@@ -1976,6 +2036,15 @@ class Runner:
                         "claim_id": cid, "needed_fact": fact, "addresses": True, "context": False, "checker": "code:extraction",
                         "reason": "chosen for this section of the report when the page was read"})
                     continue
+                if items is not None and self._names_an_item(s, items, claim["claim_text"]):
+                    # a portfolio: a claim that names an item and speaks to the topic answers the list. The small model, asked
+                    # against 'Each distinct technology ..., with what it is and its status', said no to every claim, MoReTec's too.
+                    named = [n for n in items if item_names.mentions(claim["claim_text"], n)]
+                    relevant[str(cid)], context[str(cid)] = True, False
+                    self.runs.emit(rid, "check", "relevance_checked", {
+                        "claim_id": cid, "needed_fact": fact, "addresses": True, "context": False, "checker": "code:names_item",
+                        "reason": f"names {', '.join(named)}, an item of the portfolio"})
+                    continue
                 if row := self._statement_row(s, claim, fact):
                     # the quote is a row of a statement read by code: which line item and period each figure is for is
                     # known, so code decides (a small model cannot see a table row's column headings and said no)
@@ -2005,6 +2074,16 @@ class Runner:
             covered = set(s["covered"]) | self._settled_facts(s, s["verdicts"], s["relevant"], s["claim_items"], s.get("settle_sites", 2))
         gaps = [s["checklist"][i] for i in range(len(s["checklist"])) if i not in covered]
         queries: list[str] = []
+        # Follow what the sources name (a technology, a product, a partner) rather than rewording the question: a small model
+        # asked for follow-ups wrote 'technologies list', 'technologies portfolio', 'technology names'. For a portfolio the
+        # names are the list, so they are followed even when the single list item is covered.
+        inventory = (s.get("enumerate") or {}).get("kind") == "inventory"
+        searched = list(s.get("names_searched") or [])
+        leads = self._names_to_follow(s, searched) if (gaps or inventory) else []
+        lead_queries = [f"{s['subject']} {n}" for n in leads[:max(1, b["max_queries_per_iter"] - (1 if gaps else 0))]]
+        if lead_queries:
+            self.runs.emit(rid, "assess", "names_followed", {"names": leads[:len(lead_queries)], "queries": lead_queries,
+                                                             "why": "named in what was read and not searched yet"})
         if gaps:
             known = "\n".join(f"- {self.store.get_claim(int(c))['claim_text']}"
                               for c, v in list(s["verdicts"].items())[:20] if v == "supported") or "(none yet)"
@@ -2014,12 +2093,41 @@ class Runner:
                       "that could find evidence for the missing facts.")
             follow = self._ask("assess", FollowUps, prompt, rid, "assess")
             queries = _dedupe(follow.new_queries)[:b["max_queries_per_iter"]] if follow else []
-        if gaps and not queries:  # no usable follow-ups from the model: aim queries at the gaps themselves
+        if gaps and not queries and not lead_queries:  # no usable follow-ups from the model: aim queries at the gaps themselves
             queries = [f"{s['subject']} {g}"[:120] for g in gaps[:b["max_queries_per_iter"]]]
+        queries = _dedupe(lead_queries + queries)[:b["max_queries_per_iter"]]
         iteration = s["iteration"] + 1
         self.runs.emit(rid, "assess", "coverage_assessed", {
-            "iteration": iteration, "covered": sorted(covered), "gaps": gaps, "next_queries": queries if gaps else []})
-        return {"covered": sorted(covered), "queries": queries, "iteration": iteration}
+            "iteration": iteration, "covered": sorted(covered), "gaps": gaps, "next_queries": queries if (gaps or lead_queries) else []})
+        return {"covered": sorted(covered), "queries": queries, "iteration": iteration, "leads": bool(lead_queries),
+                "names_searched": searched + leads[:len(lead_queries)]}
+
+    def _names_to_follow(self, s: State, searched: list[str]) -> list[str]:
+        """Names of things (skills/planning/names.py) in the claims recorded so far and in the on-topic sentences of their
+        sources, most mentioned first, without the subject's own names and ticker and without those already searched."""
+        topic = _terms(*s["checklist"], (s.get("enumerate") or {}).get("topic") or "") - _terms(*self._names(s))
+        texts, seen = [], set()
+        for cid in s.get("all_claim_ids") or []:
+            claim = self.store.get_claim(int(cid))
+            if not claim:
+                continue
+            texts.append(claim["quote"])
+            sha = claim["source_sha256"]
+            if sha in seen:
+                continue
+            seen.add(sha)
+            body = Path(self.store.get_source(sha)["text_path"]).read_text(encoding="utf-8")
+            texts += [t for t in re.split(r"(?<=[.!?])\s+|\n+", body) if topic & _terms(t)][:200]
+        exclude = self._names(s) + ([self._ticker(s)] if self._ticker(s) else [])
+        done = {n.lower() for n in searched}
+        return [n for n in item_names.named_items(texts, exclude) if n.lower() not in done]
+
+    def _ticker(self, s: State) -> str | None:
+        """The subject's ticker, when its CIK was found in the SEC's list this run (a ticker is not the name of a product)."""
+        cached = getattr(self, "_tickers", None)
+        if not (s.get("cik") and cached):
+            return None
+        return next((t["ticker"] for t in cached[1] if int(t["cik"]) == int(s["cik"])), None)
 
     def _write(self, s: State, rows: list[dict], context_rows: list[dict], gaps: list[str], rid: str) -> tuple[str, list[int], dict]:
         """Put the established claims into words (writing skill): dated, grouped into moments, in the form the request asks for,
@@ -2041,7 +2149,8 @@ class Runner:
                                  checklist=s["checklist"], established_ids=allowed)
 
         if listing:      # a round-up is put together by code from the claims: every sentence cited and dated, none invented
-            text = self._roundup(s, rows, context_rows, facts, gaps)
+            text = (self._inventory(s, rows, context_rows, gaps) if listing.get("kind") == "inventory"
+                    else self._roundup(s, rows, context_rows, facts, gaps))
             result = rate(text)
             self.runs.emit(rid, "report", "summary_scored", {"form": form["id"], "score": result["score"], "grade": result["grade"],
                                                              "blockers": [b["id"] for b in result["blockers"]], "revisions": 0, "writer": "code"})
@@ -2220,6 +2329,55 @@ class Runner:
             group = sorted(group, key=lambda r: (r not in rows, r["claim_id"]))
             # the event's own sentences, quoted with where they are: nothing reworded
             parts.append("\n".join([lead.rstrip(", ") + ":"] + [f"- {self._cite(r)}" for r in group]))
+        if gaps:
+            parts.append("Not established from what was read: " + "; ".join(gaps) + ".")
+        return "\n\n".join(parts)
+
+    def _inventory(self, s: State, rows: list[dict], context_rows: list[dict], gaps: list[str]) -> str:
+        """The answer to a portfolio question, by code: one entry per item the claims name (skills/planning/names.py), with
+        every claim that names it, quoted with where it is; claims that name no single item come last, as general context.
+        Items are ordered by how many claims name them. No date is given unless a claim states one (a product page's date is
+        not when the product appeared)."""
+        every, seen = [], set()
+        for r in rows + context_rows:          # a page's 'description:' and 'og:description:' lines are one statement
+            key = normalize(re.sub(r"^(?:og:|twitter:)?description:\s*", "", r["quote"], flags=re.I)).lower()
+            if key not in seen:
+                seen.add(key)
+                every.append(r)
+        exclude = self._names(s) + ([self._ticker(s)] if self._ticker(s) else [])
+        names = item_names.named_items([r["quote"] for r in every], exclude)
+        entries: dict[str, list[dict]] = {n: [] for n in names}
+        general, overview = [], []
+        for r in every:
+            hit = [n for n in names if item_names.mentions(r["quote"], n)]
+            if len(hit) >= 3:                  # 'three groups: CirculenRecover, CirculenRevive and CirculenRenew': said once
+                overview.append(r)
+            for n in hit:
+                entries[n].append(r)
+            if not hit:
+                general.append(r)
+        only_named = {n: [r for r in g if r in overview] for n, g in entries.items() if g and all(r in overview for r in g)}
+        entries = {n: [r for r in g if r not in overview] for n, g in entries.items()}
+        entries = {n: g for n, g in entries.items() if g}
+        listing = s.get("enumerate") or {}
+        what = listing.get("what") or "item"
+        subject = self._names(s)[0] if self._names(s) else "the subject"
+        n = len(entries) + len(only_named)
+        plural = what if n == 1 else (what[:-1] + "ies" if re.search(r"[^aeiou]y$", what) else what + "s")
+        # the names are what the sources name: technologies, product lines and partners alike, so they are not all called the noun
+        parts = [f"The evidence read names {n} item{'' if n == 1 else 's'} in or around {subject}'s {plural}"
+                 f"{' (technologies, product lines and partners alike), most cited first' if n > 1 else ''}. "
+                 f"The list covers what could be read and checked, not necessarily the whole portfolio."]
+        if overview:
+            parts.append("\n".join(["Across the portfolio:"] + [f"- {self._cite(r)}" for r in overview]))
+        for name, group in sorted(entries.items(), key=lambda kv: -len(kv[1])):
+            group = sorted(group, key=lambda r: (r not in rows, r["claim_id"]))
+            parts.append("\n".join([f"{name}:"] + [f"- {self._cite(r)}" for r in group]))
+        for name, group in only_named.items():               # named only in a statement about the whole family
+            parts.append(f"{name}: named in the statement above, nothing more read about it "
+                         f"({', '.join(f'[claim:{r['claim_id']}]' for r in group)}).")
+        if general:
+            parts.append("\n".join(["Other statements on the portfolio:"] + [f"- {self._cite(r)}" for r in general]))
         if gaps:
             parts.append("Not established from what was read: " + "; ".join(gaps) + ".")
         return "\n\n".join(parts)

@@ -31,12 +31,39 @@ def _topic(question: str, noun: str | None, subject: str) -> str:
     return " ".join(keep[-2:])
 
 
+def inventory(question: str, subject: str) -> dict | None:
+    """{kind: inventory, ...} when the question asks for the items of a portfolio (technologies, products, brands), else None."""
+    cfg, q = config()["inventory"], question.strip()
+    noun_m = re.search(rf"\b({cfg['nouns']})\b", q, re.I)
+    if not noun_m:
+        return None
+    portfolio = re.search(cfg["portfolio_words"], q, re.I)
+    events = re.search(config()["announce_question"], q, re.I) or re.search(r"\b(?:19|20)\d{2}\b|\b(?:ytd|this year|recent|latest)\b", q, re.I)
+    if not (portfolio or (re.search(cfg["cues"], q, re.I) and not events)):
+        return None                                  # 'What products did Acme launch in 2026?' is a list of events
+    noun = noun_m.group(1).lower()
+    topic = _topic(q, noun, subject)
+    if portfolio and not topic:                      # 'portfolio of chemical recycling technologies': the words between
+        m = re.search(rf"{cfg['portfolio_words']}\s+((?:[\w&-]+\s+){{0,3}}?){re.escape(noun_m.group(1))}", q, re.I)
+        topic = " ".join(w for w in (m.group(1) if m else "").split() if w.lower() not in ("of", "the", "its", "their"))
+    single = re.sub(r"ies$", "y", noun) if noun.endswith("ies") else noun.rstrip("s")
+    what = f"{topic + ' ' if topic else ''}{single}"
+    queries = [re.sub(r"\s{2,}", " ", t.format(subject=subject, topic=topic, noun=noun if noun.endswith("s") else noun + "s")).strip()
+               for t in cfg["queries"]]
+    return {"kind": "inventory", "noun": noun, "topic": topic, "what": what, "item": cfg["item"].format(what=what, subject=subject),
+            "queries": list(dict.fromkeys(queries)), "budgets": cfg["budgets"], "checks_per_document": config()["checks_per_document"],
+            "form": cfg["form"]}
+
+
 def enumeration(question: str, subject: str, scope: dict | None) -> dict | None:
-    """{noun, topic, what, item, queries} when the question asks for a list of events, else None."""
+    """{noun, topic, what, item, queries} when the question asks for a list of events (or, `kind: inventory`, of a portfolio's
+    items), else None."""
     cfg = config()
     q = question.strip()
     if re.search(cfg["singular"], q, re.I):
         return None                                   # 'the latest move' asks for one thing
+    if found := inventory(q, subject):
+        return found
     noun_m = re.search(rf"\b({cfg['list_nouns']})\b", q, re.I)
     announce = re.search(cfg["announce_question"], q, re.I)
     if not ((noun_m and re.search(cfg["list_cues"], q, re.I)) or announce):
@@ -50,6 +77,6 @@ def enumeration(question: str, subject: str, scope: dict | None) -> dict | None:
     vague = {"announcements", "news", "updates", "developments", "events", "changes", "moves", "milestones", "releases", "initiatives"}
     keyword = topic or (noun.rstrip("s") if noun and noun not in vague else "")
     queries = [re.sub(r"\s{2,}", " ", t.format(subject=subject, topic=keyword, year=year)).strip() for t in cfg["queries"]]
-    return {"noun": noun, "topic": topic, "what": what, "item": cfg["item"].format(what=what, subject=subject, window=window),
+    return {"kind": "events", "noun": noun, "topic": topic, "what": what, "item": cfg["item"].format(what=what, subject=subject, window=window),
             "queries": list(dict.fromkeys(queries)), "budgets": cfg["budgets"], "checks_per_document": cfg["checks_per_document"],
             "form": cfg["form"]}

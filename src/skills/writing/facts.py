@@ -130,9 +130,26 @@ def _date_of(row: dict) -> tuple[Date | None, str, str, str]:
         return None, "", "reference", "reference page: its date is not the event's date"
     if row.get("source_date") and row.get("source_date_kind") in setting("page_date_kinds"):
         d, p = parse_date(row["source_date"])
+        if d and not _is_news(row):
+            # a product or information page ('our chemical recycling technologies') is dated when it was last published or
+            # seen by a search engine, not when anything on it happened: once written as 'On 30 July 2025, it announced'
+            return None, "", "reference", (f"an information page dated {row['source_date'][:10]}: that is when the page is dated, "
+                                           f"not when anything on it happened")
         if d:
             return d, p, "page", f"page dated {row['source_date'][:10]}"
     return None, "", "none", ""
+
+
+_NEWS_PATH = re.compile(r"/(?:news|newsroom|press|press-releases?|releases?|media|stories|articles?|blog|investors?|updates-events)(?:/|-|$)"
+                        r"|/(?:19|20)\d{2}/", re.I)
+
+
+def _is_news(row: dict) -> bool:
+    """Is the source a dated report of something (a release, an article, a filing), whose date stands in for when it happened?"""
+    url = urlparse(row.get("source_url") or "")
+    cls = row.get("source_class") or source_class.classify(row.get("source_url") or "")["id"]
+    news_host = bool(re.match(r"(?:news|newsroom|press|media|investors?|ir)\.", url.hostname or ""))
+    return cls in ("wire_release", "major_publication", "filing") or news_host or bool(_NEWS_PATH.search(url.path))
 
 
 def build_facts(rows: list[dict], role: str = "answer") -> list[Fact]:
