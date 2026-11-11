@@ -1,0 +1,42 @@
+{
+  "name": "question",
+  "version": 1,
+  "about": "Question analysis: what kind of answer a question wants, worked out once, by code, for every later step. The planner (an 8B model) was asked to decide the subject, the company, the facts needed and the searches in one call, and it left the company empty, gave a portfolio a one-line checklist and wrote three rewordings of one search. Here the kind of question decides the checklist, what an answering claim must contain (its shape), the searches that suit it and the words that mark an answering sentence. The model is left to supply what code cannot know: other phrasings, names it has seen. A kind is chosen only when its pattern matches; otherwise the question is 'open' and the planner's checklist stands.",
+  "kinds": [
+    {
+      "id": "person_role",
+      "label": "Who holds a role",
+      "route_when": "\\b(?:who(?:'s| is| was| are| were| became| leads| runs| heads)|name (?:of )?the|current)\\b.{0,60}?\\b(?P<role>ceo|cfo|coo|cto|cio|cmo|chief [a-z]+ officer|chair(?:man|woman|person)?|president|founders?|co-founders?|managing director|head of [a-z]+)\\b",
+      "shape": "person",
+      "checklist": "{Role} of {subject}{as_of}",
+      "queries": ["{subject} {role}", "{subject} names {role}", "{subject} leadership team"],
+      "cues": "\\b(?:appoint\\w*|nam(?:ed|es)|serv(?:es|ing) as|is the|became|succeed\\w*|step\\w* down|took over|join\\w*)\\b"
+    },
+    {
+      "id": "metric",
+      "label": "A figure for a period",
+      "route_when": "\\b(?:what (?:was|were|is|are)|how much|how many|report(?:ed)?)\\b.{0,80}?\\b(?P<metric>revenues?|net sales|sales|net income|net loss|profit|operating income|earnings per share|eps|ebitda|gross margin|operating margin|free cash flow|cash flow|guidance|employees|headcount|market share|valuation|subscribers|users|backlog|capex|capital expenditures?|dividend)\\b",
+      "shape": "amount",
+      "checklist": "{Subject}'s {metric}{period}",
+      "queries": ["{subject} {period_words} {metric}", "{subject} {period_words} results", "{subject} {period_words} earnings release"],
+      "cues": "\\b(?:revenues?|sales|income|earnings|margin|cash|guidance|employees|subscribers|totaled|was|were|increased|decreased|rose|fell)\\b"
+    },
+    {
+      "id": "date_of",
+      "label": "When something happened",
+      "route_when": "\\b(?:when (?:was|were|did|is|will)|on what (?:exact )?date|what (?:exact )?date|in (?:what|which) year|what year|since when)\\b",
+      "shape": "date",
+      "checklist": "Date {event}",
+      "queries": ["{event_words}", "{event_words} date"],
+      "cues": "\\b(?:on|in|since|dated|submitted|founded|launched|announced|published|released|signed|completed|filed)\\b"
+    }
+  ],
+  "shapes": {
+    "person": "a person's name together with the role",
+    "amount": "an amount (a figure with its unit or currency), for the period asked about",
+    "date": "a date (day, month or year) for the event asked about",
+    "items": "the names of the items in the portfolio, each with what it is",
+    "events": "distinct events, each with its date",
+    "open": "whatever the question asks; no shape is checked by code"
+  }
+}

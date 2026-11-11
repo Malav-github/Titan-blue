@@ -1,0 +1,68 @@
+{
+  "about": "The search benchmark: simple questions whose answers are known, each tailored to a kind of source, run end to end with the live models and the live web. A change to search or a skill is judged by these numbers, not by reading one run. Each expected item is found when one of its patterns appears in an established claim's quote (the source's own words), so a run is scored on evidence, not on what the writer says. 'partial' marks a list whose full answer is not known: what is listed must be found, more is welcome.",
+  "version": 1,
+  "cases": [
+    {
+      "id": "lyb_portfolio",
+      "kind": "inventory",
+      "question": "Provide LyondellBasell's portfolio of chemical recyclying technologies",
+      "subject": "LyondellBasell",
+      "report_type": "brief",
+      "partial": true,
+      "expected": [
+        {"item": "MoReTec", "patterns": ["MoReTec"]},
+        {"item": "CirculenRevive", "patterns": ["CirculenRevive"]},
+        {"item": "CirculenRecover", "patterns": ["CirculenRecover"]},
+        {"item": "CirculenRenew", "patterns": ["CirculenRenew"]},
+        {"item": "Ferrara pilot", "patterns": ["Ferrara"]},
+        {"item": "Wesseling plant", "patterns": ["Wesseling"]}
+      ]
+    },
+    {
+      "id": "spgi_ai_2026",
+      "kind": "events",
+      "question": "What AI initiatives did S&P Global announce in 2026?",
+      "subject": "S&P Global",
+      "report_type": "brief",
+      "partial": true,
+      "expected": [
+        {"item": "Enertel AI acquisition", "patterns": ["Enertel"]}
+      ]
+    },
+    {
+      "id": "spgi_q3_revenue",
+      "kind": "metric",
+      "question": "What was S&P Global's revenue for the third quarter of 2026?",
+      "subject": "S&P Global",
+      "report_type": "brief",
+      "partial": false,
+      "expected": [
+        {"item": "Q3 2026 revenue $3,678 million", "patterns": ["3,678", "3\\.68 billion", "3678"]}
+      ]
+    },
+    {
+      "id": "dropbox_ceo",
+      "kind": "latest",
+      "question": "Who is the current CEO of Dropbox?",
+      "subject": "Dropbox",
+      "report_type": "brief",
+      "partial": false,
+      "note": "Dropbox's own blog (blog.dropbox.com/topics/company/dropbox-leadership-update): Ashraf Alkarmi became co-CEO alongside Drew Houston; after a transition Ashraf becomes sole CEO and Drew executive chairman. The first expectation here, Drew Houston alone, was out of date.",
+      "expected": [
+        {"item": "Ashraf Alkarmi (co-CEO)", "patterns": ["Ashraf Alkarmi"]},
+        {"item": "Drew Houston", "patterns": ["Drew Houston"]}
+      ]
+    },
+    {
+      "id": "attention_submitted",
+      "kind": "research",
+      "question": "On what exact date was 'Attention Is All You Need' first submitted?",
+      "subject": "Attention Is All You Need",
+      "report_type": "brief",
+      "partial": false,
+      "expected": [
+        {"item": "12 June 2017", "patterns": ["12 June 2017", "June 12,? 2017", "2017-06-12", "12 Jun 2017"]}
+      ]
+    }
+  ]
+}

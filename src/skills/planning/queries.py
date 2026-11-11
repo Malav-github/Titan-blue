@@ -65,6 +65,9 @@ def the_subject(subject: str, company: str | None, question: str) -> str:
     """The name to put in every query. A planner that picked a generic word ('Strategy') or something the question never says
     is overruled by the name the question itself uses."""
     name = (company or subject or "").strip()
+    quoted = [t for t in re.findall(r"[\"“']([^\"”']{4,160})[\"”']", question) if len(t.split()) >= 2]
+    if not company and name and any(name.lower() == t.lower() for t in quoted):
+        return name                    # a title the question quotes ('Attention Is All You Need') is the subject as it stands
     generic = {g.lower() for g in lenses()["generic_subjects"]}
     q = question.lower()
     sentence = len(name.split()) >= 5 or "?" in name          # a whole question is not a name
@@ -146,6 +149,9 @@ _SITE = re.compile(r"\bsite:(\S+)", re.I)
 _WIRES = re.compile(r"(?:^|\.)(?:prnewswire|businesswire|globenewswire|accesswire|newswire)\.", re.I)
 _PATENT_SITES = re.compile(r"(?:^|\.)(?:patents\.google|patentscope|espacenet|worldwide\.espacenet|uspto|ppubs\.uspto|freepatentsonline)\.", re.I)
 _FILINGS_SITES = re.compile(r"(?:^|\.)sec\.gov$", re.I)
+# scholarly records are the original of a paper (its submission history, its DOI): always worth one search
+_RESEARCH_SITES = re.compile(r"(?:^|\.)(?:arxiv\.org|openalex\.org|doi\.org|semanticscholar\.org|pubmed\.ncbi\.nlm\.nih\.gov|ncbi\.nlm\.nih\.gov|"
+                             r"dl\.acm\.org|ieeexplore\.ieee\.org|aclanthology\.org|openreview\.net|papers\.nips\.cc|proceedings\.neurips\.cc)$", re.I)
 
 
 def site_rules(queries: list[str], question: str, subject: str) -> tuple[list[str], list[dict]]:
@@ -164,7 +170,7 @@ def site_rules(queries: list[str], question: str, subject: str) -> tuple[list[st
         for m in _SITE.finditer(q):
             host = m.group(1).lower().strip("/").split("/")[0]
             mine = len(own) >= 3 and own[:12] in re.sub(r"[^a-z0-9]", "", host)
-            fits = (mine or bool(_WIRES.search(host))
+            fits = (mine or bool(_WIRES.search(host)) or bool(_RESEARCH_SITES.search(host))
                     or (bool(_FILINGS_SITES.search(host)) and (asks("company_disclosure") or asks("earnings_materials") or asks("leadership")
                                                                or asks("press_release")))
                     or (bool(_PATENT_SITES.search(host)) and asks("patent")))

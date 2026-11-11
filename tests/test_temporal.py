@@ -184,7 +184,9 @@ def test_the_planner_is_told_todays_date_and_the_time_scope(env):
     plan = next(e for e in env["runs"].events(result["run_id"]) if e["type"] == "plan_ready")["payload"]
     assert plan["time_scope"]["intent"] == "latest" and plan["time_scope"]["recency"] == "year"
     assert plan["today"]["utc"] == "2026-11-04T03:51:00+00:00"
-    assert plan["queries"] == ["acme ceo 2026"]                      # today's year was added to the query
+    # today's year is added to every query; the question skill's searches for a role take turns with the planner's
+    assert plan["queries"][0].lower() == "acme ceo 2026" and all(q.endswith("2026") for q in plan["queries"])
+    assert "Acme leadership team 2026" in plan["queries"] or "Acme names CEO 2026" in plan["queries"]
 
 
 def test_searches_use_the_recency_window_and_record_their_exact_time(env):
@@ -200,7 +202,8 @@ def test_questions_about_fixed_facts_search_without_a_recency_window(env):
     runner, result = run_with(env, "In what year was Acme founded?", search_calls=calls)
     assert calls and all(extra == {} for _, extra in calls)          # no recency argument at all
     plan = next(e for e in env["runs"].events(result["run_id"]) if e["type"] == "plan_ready")["payload"]
-    assert plan["time_scope"]["intent"] == "historical" and plan["queries"] == ["acme ceo"]
+    assert plan["time_scope"]["intent"] == "historical" and "acme ceo" in plan["queries"]
+    assert "Acme founded" in plan["queries"] and not any("2026" in q for q in plan["queries"])     # no year for a fixed fact
 
 
 def test_the_page_chooser_sees_each_pages_date_and_today(env):

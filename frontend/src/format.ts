@@ -24,6 +24,7 @@ const DESCRIBE: Record<string, [string, Fmt]> = {
   company_from_sec: ['Recognised an SEC registrant', (p) => `${p.company} is ${p.registrant}`],
   candidates_skipped: ['Skipped some pages', (p) => `${(p.urls ?? []).length}: ${short(p.reason, 100)}`],
   candidates_merged: ['Kept one copy per document', (p) => `${(p.copies ?? []).length} copies merged · ${(p.over_site_limit ?? []).length} held back by the per-site limit`],
+  question_framed: ['Recognised the kind of question', (p) => `${String(p.kind).replace('_', ' ')}: the answer must contain ${p.shape === 'person' ? 'a person and the role' : p.shape === 'amount' ? 'an amount for the period' : p.shape === 'date' ? 'a date' : p.shape} · ${(p.checklist ?? []).join('; ')}`],
   names_followed: ['Following names the sources mention', (p) => (p.names ?? []).join(', ')],
   edgar_skipped: ['Did not read SEC filings', (p) => short(p.reason, 120)],
   queries_widened: ['Widened searches to the whole web', (p) => (p.changes ?? []).map((c: { dropped: string }) => c.dropped).join(', ')],

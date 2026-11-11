@@ -35,6 +35,7 @@ from skills import edgar, planning, statements, writing
 from skills.writing import report as report_writer
 from skills.planning import sense as common_sense
 from skills.planning import names as item_names
+from skills import question as question_skill
 from skills.temporal.extract import DateFact, best_date, parse_date
 import corroboration
 import diagnosis
@@ -265,6 +266,7 @@ class State(TypedDict, total=False):
     capability_id: str | None
     fetch_failures: int
     blocked_sites: list[str]   # sites that refused Titan (401, 403, 429) in this run: none of their pages is chosen again
+    frame: dict | None         # the question's kind and the shape of an answer (skills/question)
     names_searched: list[str]  # names of things the sources mention that were searched for (skills/planning/names.py)
     leads: bool                # names found and not searched yet: another round is worth it even with no gap
     api_calls_used: int
@@ -843,6 +845,7 @@ class Runner:
         scope = tintent.classify(s["question"], now)
         brief = planning.build(s["question"], None, scope, now)
         concerns = common_sense.check(s["question"], scope, now)
+        frame = question_skill.analyse(s["question"], s.get("subject"), scope.as_dict())     # what kind of answer, by code
         prompt = (
             "You plan web research that must be backed by quoted evidence.\n"
             f"TODAY: {now.describe()}. Your training data is older than today, so never assume what the current year is.\n"
@@ -853,6 +856,8 @@ class Runner:
             f"{self._scout_context(s)}"
             + (f"THE PERSON CORRECTED YOUR EARLIER READING: {'; '.join(s['corrections'])}. The correction overrides the original "
                f"wording: plan for the corrected question.\n" if s.get("corrections") else "")
+            + (f"QUESTION TYPE (worked out by code): {frame['label']}; an answer must contain {frame['shape_text']}.\n"
+               if frame["kind"] != "open" else "")
             + f"QUESTION: {s['question']}\nREPORT REQUESTED: {rt['label']} ({rt['about']})\n\n"
             f"Return: subject (what the question is about); company (the official company name only if the "
             f"company's own website matters, else null); page_categories (company pages worth reading, from "
@@ -891,6 +896,20 @@ class Runner:
         queries = _dedupe(tintent.apply_year_terms(queries, scope, now))[:b["max_queries_per_iter"]]
         queries = _dedupe(planning.diversify(queries, s["question"], subject, plan.company, brief, scope, now, b["max_queries_per_iter"]))
         checklist = _dedupe(plan.checklist)[:(rt["sections"] or {}).get("max", 6)] or [s["question"]]
+        if frame["kind"] in ("person_role", "metric", "date_of") and not rt["sections"]:
+            # the kind of question is known (skills/question): its checklist replaces the planner's, and its searches,
+            # written for the kind, are taken in turn with the planner's
+            replaced = checklist
+            checklist = frame["checklist"] or checklist
+            # a search aimed at one place (the brief's site:sec.gov for a figure) keeps its slot; the plain ones take turns
+            aimed = [q for q in queries if "site:" in q]
+            plain = [q for q in queries if q not in aimed]
+            mixed = [q for pair in zip(frame["queries"], plain) for q in pair] + frame["queries"][len(plain):] + plain[len(frame["queries"]):]
+            room = max(1, b["max_queries_per_iter"] - len(aimed))
+            queries = _dedupe(tintent.apply_year_terms(mixed, scope, now)[:room] + aimed)[:b["max_queries_per_iter"]]
+            self.runs.emit(rid, "plan", "question_framed", {
+                "kind": frame["kind"], "shape": frame["shape"], "checklist": checklist,
+                "replaced": replaced if frame["checklist"] and replaced != checklist else [], "queries": queries, "why": frame["why"]})
         # A question asking for a list of events is planned by code: a small model plans it as one fact and stops at the first event.
         # the list's item and searches are written from the question's words: a typo ('recyclying') is spelled as the planner
         # spelled it in its own queries, so the searches and the answer do not carry it
@@ -913,14 +932,21 @@ class Runner:
         entity_id = self.store.add_entity(entity_name, kind="subject")
         advice = self._advice_of(s)
         # a report does not screen the premise first: that is part of verification, on request, and keeps within the deadline
-        listed = self._premise_of(s, subject) if rt["premise_check"] else []
+        # A figure for a period or who holds a role takes nothing for granted but the subject: the model's 'premise' is the
+        # question restated ('S&P Global reported revenue for Q3 2026'), and on weak results its screen ended the run unread.
+        # Whether the period can have been reported yet is the time skill's check (planning/sense.py), by code.
+        restated = frame["kind"] in ("metric", "person_role")
+        if restated and rt["premise_check"]:
+            self.runs.emit(rid, "plan", "premise_skipped", {"kind": frame["kind"],
+                           "why": "a question about a figure or a role assumes only that the subject exists; the dates are checked by code"})
+        listed = self._premise_of(s, subject) if rt["premise_check"] and not restated else []
         screen = self._screen_premise(s, listed) if rt["premise_check"] else {}   # one quick search: is it reported anywhere?
         warnings = warnings + screen.pop("warnings", [])
         self.runs.emit(rid, "plan", "plan_ready", {"sense": concerns, "subject": subject, "company": plan.company, "report_type": rt["id"],
                        "page_categories": categories, "queries": queries, "checklist": checklist,
                        "today": now.as_dict(), "time_scope": scope.as_dict(),
                        "advice": advice, "brief": brief.as_dict()})
-        return {"subject": subject, "company": plan.company, "entity_name": entity_name, "entity_id": entity_id,
+        return {"frame": frame, "subject": subject, "company": plan.company, "entity_name": entity_name, "entity_id": entity_id,
                 "page_categories": categories, "queries": queries, "checklist": checklist, "warnings": warnings,
                 "data_need": plan.needs_data_source, "time_scope": scope.as_dict(), "brief": brief.as_dict(),
                 "premise": listed, "sense": concerns, "advice": advice, **screen, **listing_state,
@@ -986,6 +1012,20 @@ class Runner:
             self.runs.emit(rid, "plan", "premise_screen_failed", {"error": f"{type(exc).__name__}: {str(exc)[:160]}"})
             return {**none, "warnings": [f"premise screen could not search: {type(exc).__name__}"]}
         hits = found["results"][:10]
+        # A premise about something named in quotes ('A paper titled "Attention Is All You Need" ...') is checked by code: do the
+        # results name it? The small model, shown the paper's own arXiv page, said nothing reported it and the run ended.
+        titles = [t for t in re.findall(r"[\"“']([^\"”']{4,160})[\"”']", claim) if len(t.split()) >= 2]
+        named = [i for i, h in enumerate(hits, 1) for t in titles if t.lower() in f"{h['title']} {h.get('snippet') or ''}".lower()]
+        if named:
+            reported = sorted(set(named))
+            screen = {"query": claim, "reason": f"code: the results name '{titles[0]}'", "reported": reported, "checker": "code:names_it",
+                      "not_screened": premise[1:], "providers": [p["provider"] for p in found.get("providers", []) if p.get("ok")],
+                      "results": [{"n": i, "title": h["title"][:120], "url": h["url"], "site": corroboration.site(h["url"]),
+                                   "published": short_date(h.get("published")), "reports_it": i in reported} for i, h in enumerate(hits, 1)]}
+            self.runs.emit(rid, "plan", "premise_screened", {
+                "status": "reported", "query": claim, "results": len(hits), "reported": reported, "engines": screen["providers"],
+                "checker": "code:names_it", "searched_at": tclock.now(self.now_fn).as_dict()})
+            return {"premise_status": "reported", "premise_missing": [], "premise_screen": screen, "warnings": []}
         listing = "\n".join(f"{i}. {h['title'][:90]} | {corroboration.site(h['url'])} | {short_date(h.get('published')) or 'no date'} | "
                             f"{(h.get('snippet') or '')[:200]}" for i, h in enumerate(hits, 1))
         out = self._ask("premise_screen", PremiseScreen, (
@@ -1865,7 +1905,46 @@ class Runner:
     def _event_like(self, s: State, text: str) -> bool:
         """Does a claim state an event (and, for a list about a topic, mention the topic)? For ordering checks only."""
         topic = ((s.get("enumerate") or {}).get("topic") or "").lower().split()
-        return bool(self._EVENT_VERBS.search(text)) and (not topic or any(t in text.lower() for t in topic))
+        # the topic as a word: 'AI' must not be found inside 'said' or 'maintain'
+        return bool(self._EVENT_VERBS.search(text)) and (not topic or any(re.search(rf"(?<![a-z]){re.escape(t)}(?![a-z])", text.lower()) for t in topic))
+
+    _AMOUNT = re.compile(r"(?:[$€£¥₹]\s?\d[\d,.]*|\b\d[\d,.]*\s?(?:%|percent|million|billion|thousand|bn|mn|m\b|crore|lakh))", re.I)
+    _DATE_WORDS = re.compile(r"\b(?:\d{1,2}\s+)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:\d{1,2},?\s+)?(?:19|20)\d{2}\b"
+                             r"|\b(?:19|20)\d{2}-\d{2}-\d{2}\b|\b(?:in|since|on)\s+(?:19|20)\d{2}\b", re.I)
+    _PERSON = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z]\.)?\s+[A-Z][a-zA-Z'’-]+\b")
+
+    def _answer_shaped(self, s: State, claim: dict) -> str | None:
+        """Does the claim have the shape of an answer to this kind of question (skills/question)? Returns why, or None. Code
+        says yes only; a claim without the shape is still asked of the model, so nothing is rejected here."""
+        frame = s.get("frame") or {}
+        text = claim["claim_text"]
+        stem = lambda t: {w[:5] for w in re.findall(r"[a-z]{4,}", t.lower())}                       # noqa: E731
+        shape = frame.get("shape")
+        if shape == "events" and self._event_like(s, text):
+            years = {str(y) for y in (s.get("time_scope") or {}).get("years") or []}
+            said = set(re.findall(r"\b(?:19|20)\d{2}\b", text))
+            best = best_date(self._source_dates(claim["source_sha256"]))
+            dated = {best.value[:4]} if best and best.kind in ("published", "url_date", "search_result") else set()
+            if years and ((said and not said & years) or (not said and dated and not dated & years)):
+                return None            # an event of another year: the model decides, and it is dated in the answer either way
+            return "states an event about the topic asked for"
+        if shape == "person" and frame.get("role"):
+            role = frame["role"].lower()
+            words = {"ceo": r"ceo|chief executive", "cfo": r"cfo|chief financial", "coo": r"coo|chief operating", "cto": r"cto|chief technology"}
+            if re.search(rf"(?<![a-z])(?:co-?)?(?:{words.get(role, re.escape(role))})(?![a-z])", text.lower()) and self._PERSON.search(text):
+                return f"names a person together with the role ({frame['role']})"
+        if shape == "amount" and frame.get("metric") and self._AMOUNT.search(text):
+            metric_ok = bool(stem(frame["metric"]) & stem(text))
+            period = frame.get("period") or ""
+            years = set(re.findall(r"(?:19|20)\d{2}", period))
+            period_ok = not years or bool(years & set(re.findall(r"(?:19|20)\d{2}", text))) or not re.search(r"(?:19|20)\d{2}", text)
+            if metric_ok and period_ok:
+                return f"states an amount for {frame['metric']}{' ' + period if period else ''}"
+        if shape == "date" and self._DATE_WORDS.search(text):
+            event = stem(frame.get("event") or "") - stem(frame.get("subject") or "")
+            if not event or event & stem(text):
+                return "states a date for the event asked about"
+        return None
 
     def _backed(self, s: State, items: dict, facts: int, need_sites: int) -> bool:
         """Is every needed fact already settled, by the same rule coverage uses (`_settled_facts`)? Only claims that passed
@@ -2044,6 +2123,14 @@ class Runner:
                     self.runs.emit(rid, "check", "relevance_checked", {
                         "claim_id": cid, "needed_fact": fact, "addresses": True, "context": False, "checker": "code:names_item",
                         "reason": f"names {', '.join(named)}, an item of the portfolio"})
+                    continue
+                if why := self._answer_shaped(s, claim):
+                    # the claim has the shape the kind of question needs (skills/question); the small model, asked against a
+                    # list item such as 'Each distinct AI initiative ..., with its date', said no to all 21 claims it was shown
+                    relevant[str(cid)], context[str(cid)] = True, False
+                    self.runs.emit(rid, "check", "relevance_checked", {
+                        "claim_id": cid, "needed_fact": fact, "addresses": True, "context": False, "checker": "code:answer_shape",
+                        "reason": why})
                     continue
                 if row := self._statement_row(s, claim, fact):
                     # the quote is a row of a statement read by code: which line item and period each figure is for is
