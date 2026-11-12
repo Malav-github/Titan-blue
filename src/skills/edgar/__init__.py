@@ -116,8 +116,51 @@ def window(scope: dict | None, today: date) -> tuple[date, date]:
     return today - timedelta(days=days), today
 
 
-def select_filings(submissions: dict, groups: list[dict], start: date, end: date) -> list[dict]:
-    """Filings in the window whose form or 8-K items fit the groups, newest first, at most `max_filings`."""
+PERIODIC = ("10-Q", "10-K", "10-Q/A", "10-K/A", "20-F", "40-F")
+
+
+def statement_window(target: dict | None, today: date, fye: str | None = None) -> tuple[date, date]:
+    """The filing dates to scan for a statement question (skills/temporal/reporting.py): the announcement window when the
+    question names one; for a named period, from its end to the latest a 10-K is filed (about four months); else back from
+    today."""
+    from skills.temporal import reporting
+    t = reporting.Target(**{k: v for k, v in (target or {}).items() if k in reporting.Target.__dataclass_fields__})
+    lag = manifest()["statement_filing_lag_days"]
+    if t.announced_from:
+        return date.fromisoformat(t.announced_from), min(date.fromisoformat(t.announced_to or t.announced_from), today)
+    if not t.latest and (pe := reporting.period_end(t, fye)):
+        return pe[0] - timedelta(days=reporting.TOLERANCE_DAYS), min(pe[0] + timedelta(days=lag), today)
+    if not t.latest and t.fiscal_year:                    # a year with no computable end (a 'fiscal' year, year end unknown)
+        return date(t.fiscal_year, 1, 1), min(date(t.fiscal_year, 12, 31) + timedelta(days=lag), today)
+    return today - timedelta(days=manifest()["lookback_days"]["latest"]), today
+
+
+def results_for(filings: list[dict], target: dict | None = None, fye: str | None = None) -> tuple[list[dict], str]:
+    """For a statement question: the periodic report (10-Q or 10-K, which prints the full statements) and the earnings
+    release (8-K Item 2.02) for the asked period, and why. A named period picks the report whose period of report (the
+    SEC's reportDate) is that period's end, and the first release filed after it ends; 'latest' picks the newest of each
+    (a release may be newer: results are announced weeks before the 10-K). `filings` are newest first, already in the window."""
+    from skills.temporal import reporting
+    t = reporting.Target(**{k: v for k, v in (target or {}).items() if k in reporting.Target.__dataclass_fields__})
+    periodic = [f for f in filings if f["form"] in PERIODIC]
+    releases = [f for f in filings if f["form"].startswith(("8-K", "6-K")) and "2.02" in f["items"]]
+    pe = None if t.latest else reporting.period_end(t, fye)
+    if pe:
+        end = pe[0]
+        report = next((f for f in periodic if reporting.near(f.get("report_date"), end)), None)
+        after = [f for f in releases if end < date.fromisoformat(f["filed"]) <= reporting.filed_after(end)[1]]
+        release = after[-1] if after else None           # newest first: the last one is the first filed after the period ended
+        why = f"the period ended about {end} ({pe[2]}): the report whose period of report is that date, and the first earnings release filed after it"
+    else:
+        report, release = (periodic[0] if periodic else None), (releases[0] if releases else None)
+        why = ("the newest periodic report and the newest earnings release" if not t.announced_from else
+               f"the newest periodic report and earnings release filed between {t.announced_from} and {t.announced_to}")
+    return [f for f in filings if f is report or f is release], why
+
+
+def select_filings(submissions: dict, groups: list[dict], start: date, end: date, limit: int | None = None) -> list[dict]:
+    """Filings in the window whose form or 8-K items fit the groups, newest first, at most `limit` (`max_filings`)."""
+    limit = limit or manifest()["max_filings"]
     recent = (submissions.get("filings") or {}).get("recent") or {}
     forms = {f for g in groups for f in g.get("forms", [])}
     items = {i for g in groups for i in g["items"]}
@@ -139,7 +182,7 @@ def select_filings(submissions: dict, groups: list[dict], start: date, end: date
                     "items": its, "matched_items": matched, "accession": recent["accessionNumber"][i],
                     "primary": recent["primaryDocument"][i], "description": (recent.get("primaryDocDescription") or [""] * (i + 1))[i],
                     "why": why[0] if why else ""})
-        if len(out) >= manifest()["max_filings"]:
+        if len(out) >= limit:
             break
     return out
 

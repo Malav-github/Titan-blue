@@ -10,11 +10,13 @@ question no kind matches is 'open': the planner's checklist stands and no shape 
 
 import json
 import re
+from datetime import date
 from functools import lru_cache
 
 from config import PROJECT_ROOT
 from skills.planning.enumerate import enumeration
 from skills.planning.queries import named_in_question
+from skills.temporal import reporting
 
 PATH = PROJECT_ROOT / "definitions" / "skills" / "question.json"
 
@@ -53,11 +55,59 @@ def _event(question: str, route: re.Match) -> str:
     return re.sub(r"^(?:was|were|did|is|will|the)\s+", "", rest, flags=re.I).strip()
 
 
+def statements_asked(question: str) -> list[str]:
+    """The financial statements a question names, in the order it names them ('income', 'balance', ...); every primary
+    statement when it asks for 'the financial statements'."""
+    st = config()["statement"]
+    found = sorted((m.start(), sid) for sid, pat in st["names"].items() for m in re.finditer(rf"\b(?:{pat})\b", question, re.I))
+    ids = list(dict.fromkeys(sid for _, sid in found))
+    if not ids and re.search(st["all_statements"], question, re.I):
+        ids = ["income", "balance", "cash_flow"]
+    return ids
+
+
+def _statement_frame(q: str, name: str, scope: dict | None) -> dict | None:
+    st = config()["statement"]
+    ids = statements_asked(q)
+    # 'S&P Global's Complete consolidated income statement': the words describing the statement are not the company's name
+    name = re.sub(r"(?:[\s’']+(?:s|complete|full|entire|whole|latest|recent|most|consolidated|condensed|standalone|quarterly|annual|"
+                  r"audited|unaudited|current|interim))+$", "", name or "", flags=re.I).strip()
+    if not ids or not name:
+        return None
+    # the period and the announcement window, by the temporal skill (skills/temporal/reporting.py): matched later against each
+    # filing's period end and filing date, and each column's dates
+    want = reporting.target(q)
+    years = (scope or {}).get("years") or []
+    latest = want.latest and not want.announced_from
+    if latest:
+        when = "from its latest earnings filing"
+    elif want.latest:                                   # only the announcement window is named
+        when = "from the earnings filing " + want.label.split(", ", 1)[1]
+    else:
+        when = want.label if want.span == "instant" else f"for {want.label}"
+    basis = "standalone" if re.search(st["standalone"], q, re.I) else "consolidated"
+    owner = name[:1].upper() + name[1:] + ("'" if name.endswith("s") else "'s")          # Reliance Industries', S&P Global's
+    if want.announced_from and want.latest:              # searched by when it came out: 'July 2026'
+        a, b = date.fromisoformat(want.announced_from), date.fromisoformat(want.announced_to)
+        words = a.strftime("%B %Y") if (a.year, a.month) == (b.year, b.month) else str(a.year) if a.year == b.year else f"{a.year} {b.year}"
+    else:
+        words = "latest" if want.latest else re.sub(r"^(?:as\s+(?:of|at)|at)\s+", "", " ".join(want.raw), flags=re.I)
+    fill = {"subject": name, "Owner": owner, "period_words": words}
+    items = [st["checklist"].format(**fill, basis=f"{basis} ", label=st["labels"][i], when=when) for i in ids]
+    queries = [re.sub(r"\s{2,}", " ", t.format(**fill, label=st["labels"][ids[0]])).strip() for t in st["queries"]]
+    return {"kind": "statement", "label": "A financial statement", "subject": name, "shape": "table",
+            "shape_text": config()["shapes"]["table"], "checklist": items, "queries": queries, "cues": "",
+            "statements": ids, "basis": basis, "latest": latest, "period": want.label, "years": years, "target": want.as_dict(),
+            "why": "the question asks for a financial statement: the table is read by code from the filing (skills/statements)"}
+
+
 def analyse(question: str, subject: str | None = None, scope: dict | None = None) -> dict:
     cfg = config()
     q = " ".join(question.split())
     quoted = re.search(r"[\"“']([A-Z][^\"”']{3,120})[\"”']", q)        # a title in quotes is the subject: 'Attention Is All You Need'
     name = ((quoted.group(1) if quoted else None) or subject or named_in_question(q) or "").strip()
+    if frame := _statement_frame(q, name, scope):
+        return frame
     # 'What were Apple's net sales for fiscal 2025 and what period does that cover?' asks two things: the kind and its
     # searches still help, but the planner's checklist (one item per thing asked) stands
     several = bool(re.search(r"\band (?:what|when|who|which|how|where|why)\b|\?\s*\S.*\?", q, re.I))

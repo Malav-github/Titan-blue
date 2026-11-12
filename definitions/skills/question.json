@@ -2,6 +2,23 @@
   "name": "question",
   "version": 1,
   "about": "Question analysis: what kind of answer a question wants, worked out once, by code, for every later step. The planner (an 8B model) was asked to decide the subject, the company, the facts needed and the searches in one call, and it left the company empty, gave a portfolio a one-line checklist and wrote three rewordings of one search. Here the kind of question decides the checklist, what an answering claim must contain (its shape), the searches that suit it and the words that mark an answering sentence. The model is left to supply what code cannot know: other phrasings, names it has seen. A kind is chosen only when its pattern matches; otherwise the question is 'open' and the planner's checklist stands.",
+  "statement": {
+    "about": "A question asking for a whole financial statement ('S&P Global's consolidated income statement, latest earnings') is answered with the table itself, read by code from the filing (skills/statements), never with sentences about it. Checked before the other kinds: 'cash flow statement' is a statement, not a figure.",
+    "names": {
+      "income": "income statements?|statements? of (?:consolidated |condensed )*(?:income|operations|earnings)|profit (?:and|&) loss(?: statement| account)?|p ?& ?l(?: statement)?",
+      "comprehensive_income": "statements? of (?:consolidated |condensed )*comprehensive (?:income|loss)|comprehensive income statement",
+      "balance": "balance sheets?|statements? of (?:consolidated |condensed )*financial (?:position|condition)",
+      "cash_flow": "cash[- ]flows? statements?|statements? of (?:consolidated |condensed )*cash flows?",
+      "equity": "statements? of (?:consolidated |condensed )*(?:changes in )?(?:stockholders'?|shareholders'?)? ?equity|(?:stockholders'?|shareholders'?) equity statement"
+    },
+    "labels": {"income": "income statement", "comprehensive_income": "statement of comprehensive income", "balance": "balance sheet",
+               "cash_flow": "cash flow statement", "equity": "statement of shareholders' equity"},
+    "all_statements": "\\b(?:financial statements|all (?:the |three )?statements|full financials)\\b",
+    "standalone": "\\b(?:standalone|stand-alone|separate|parent[- ]only)\\b",
+    "checklist": "{Owner} {basis}{label} {when}",
+    "queries": ["{subject} {period_words} earnings release {label}", "{subject} {period_words} quarterly results financial statements", "{subject} investor relations {period_words} results"],
+    "shape": "table"
+  },
   "kinds": [
     {
       "id": "person_role",
@@ -37,6 +54,7 @@
     "date": "a date (day, month or year) for the event asked about",
     "items": "the names of the items in the portfolio, each with what it is",
     "events": "distinct events, each with its date",
+    "table": "the financial statement itself, as a table read by code from the company's filing",
     "open": "whatever the question asks; no shape is checked by code"
   }
 }

@@ -112,6 +112,8 @@ def _caption(table) -> str:
     parts, size, node = [], 0, table
     while node is not None and size < MAX_CAPTION:
         for sib in node.itersiblings(preceding=True):
+            if not isinstance(sib.tag, str):             # a comment or processing instruction prints nothing
+                continue
             if _local(sib.tag) == "table" or any(_local(d.tag) == "table" for d in sib.iterdescendants()):
                 return " ".join(reversed(parts))[-MAX_CAPTION:]       # the previous table's numbers are not this one's title
             t = _text(sib)

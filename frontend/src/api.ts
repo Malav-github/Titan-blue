@@ -171,6 +171,7 @@ export interface Report {
   list_question?: string | null
   events_found?: number | null
   diagnosis?: { id: string; kind: string; kind_label: string; label: string; count: number; examples: string[]; handled_by: string; workaround: string }[]
+  tables?: StatementTableView[]
   quality?: {
     score: number | null; grade: string | null; form?: string; revisions?: number; uncited_removed?: string[]
     blockers: { id: string; cap: number; detail: string }[]
@@ -331,6 +332,39 @@ export interface Models {
 
 export interface ServerInfo { started_at: string; pid: number; can_restart: boolean; busy: number }
 
+/** A financial statement read by code from a filing, as it prints it (skills/statements/answer.py). */
+export interface StatementTableView {
+  n?: number; source_n?: number
+  statement: string; title: string; basis: string | null; scale: string | null; currency: string | null
+  reading: string; reading_label: string
+  columns: { header: string; label: string; kind: string; end: string | null; months: number | null; asked?: boolean }[]
+  period?: string
+  rows: { label: string; heading: boolean; cells: { printed: string; verdict: string }[] }[]
+  figures: Record<string, number>; checks: { passed: number; failed: number }; notes: string[]
+  source_url: string; source_label: string; source_date: string | null; form: string | null; filed: string | null; why?: string; item?: string
+}
+
+/** Only the answer of a research run: the text with [n] citations, and the sources with the exact quotes each backs. */
+export interface AnswerSource { n: number; url: string; label: string; date: string | null; corroboration: string; quotes: { claim_id: number; quote: string; caution: boolean }[]; tables?: string[] }
+export interface AnswerView {
+  question: string; subject: string; outcome: string; outcome_text: string; as_of: string | null
+  answer: string; sources: AnswerSource[]; notes: string[]; tables: StatementTableView[]
+}
+export interface RunAnswer { run_id: string; status: string | null; question: string | null; subject: string | null; answer: AnswerView | null }
+
+/** A file from the API (the token travels in a header, so a plain link cannot fetch it): saved under the server's file name. */
+async function download(path: string, fallback: string): Promise<void> {
+  const res = await fetch(path, { headers: token ? { 'X-Titan-Token': token } : {} })
+  if (!res.ok) throw new ApiError(res.status, [`The server answered ${res.status}`])
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? fallback
+  const url = URL.createObjectURL(await res.blob())
+  const a = Object.assign(document.createElement('a'), { href: url, download: name })
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 export interface HarnessNode { id: string; label: string; col: number; row: number; does: string }
 export interface HarnessEdge { from: string; to: string; label?: string; bend?: number; via?: [number, number][]; control?: boolean }
 export interface Harness { id: string; title: string; nodes: HarnessNode[]; edges: HarnessEdge[]; control_note?: string; problems?: string[] }
@@ -353,6 +387,8 @@ export const api = {
   resumeRun: (id: string) => post(`/api/runs/${id}/resume`, {}),
   stopRun: (id: string) => post(`/api/runs/${id}/stop`, {}),
   rerun: (id: string) => post<{ run_id: string }>(`/api/runs/${id}/rerun`, {}),
+  answer: (id: string) => request<RunAnswer>(`/api/runs/${id}/answer`),
+  downloadAnswer: (id: string) => download(`/api/runs/${id}/answer.docx`, 'answer.docx'),
   server: () => request<ServerInfo>('/api/server'),
   restartServer: () => post<{ ok: boolean; started_at: string }>('/api/server/restart', {}),
   verifyRun: (id: string, claimIds: number[] = []) => post<{ verify_run_id: string }>(`/api/runs/${id}/verify`, { claim_ids: claimIds }),

@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { api, pageText, type Approval, type ClaimReview, type ClaimVerification, type FigureCheck, type Verification, type Report, type ReportClaim, type RunDetail, type RunEvent } from '../api'
+import { api, pageText, type Approval, type ClaimReview, type ClaimVerification, type FigureCheck, type Verification, type Report, type ReportClaim, type RunDetail, type RunEvent, type StatementTableView } from '../api'
+import { StatementTable } from '../StatementTable'
 import { ACTIVE, describeEvent, lines, time } from '../format'
 import { Flow } from '../Flow'
 import { useRunEvents } from '../useRunEvents'
@@ -119,7 +120,7 @@ function Figures({ checks, label }: { checks: FigureCheck[]; label?: string }) {
 }
 
 /** The written answer, with each [claim:N] marker turned into a link to that claim. */
-function Answer({ text }: { text: string }) {
+function Answer({ text, tables = [] }: { text: string; tables?: StatementTableView[] }) {
   const links = useLinks()
   const inline = (line: string, key: number) => line.split(/(\[claim:\d+\])/g).map((part, i) => {
     const m = /^\[claim:(\d+)\]$/.exec(part)
@@ -127,6 +128,16 @@ function Answer({ text }: { text: string }) {
   })
   // a report's headings ('# Title', '## Section') are shown as headings; everything else keeps its line breaks
   return <>{text.split('\n').map((line, i) => {
+    const tm = /^\s*\[table:(\d+)\]\s*$/.exec(line)
+    if (tm) {
+      const t = tables.find((x) => x.n === Number(tm[1]))
+      return t ? (
+        <span key={i} className="block whitespace-normal">
+          <StatementTable table={t} source={<>From <ExternalLink href={t.source_url}>{t.source_label || t.source_url}</ExternalLink>.
+            {t.why ? <span className="block">Chosen by code: {t.why}.</span> : null}</>} />
+        </span>
+      ) : null
+    }
     const h = /^(#{1,3})\s+(.*)$/.exec(line)
     if (h) {
       const size = h[1].length === 1 ? 'text-xl' : h[1].length === 2 ? 'text-lg' : 'text-base'
@@ -201,8 +212,10 @@ function ReportView({ report, runId }: { report: Report; runId?: string }) {
         </div>
       )}
       {report.summary ? (
-        <Card><p className="whitespace-pre-line"><Answer text={report.summary} /></p>
-          <p className="mt-2 text-xs text-muted">Written by a model from the verified claims below only; each [claim:N] points to one of them.</p>
+        <Card><div className="whitespace-pre-line"><Answer text={report.summary} tables={report.tables ?? []} /></div>
+          <p className="mt-2 text-xs text-muted">{(report.tables ?? []).length > 0
+            ? 'The table is the filing’s own, read and laid out by code: no model wrote, chose or copied any figure.'
+            : 'Written by a model from the verified claims below only; each [claim:N] points to one of them.'}</p>
           {report.quality?.score != null && (
             <details className="mt-3 text-sm">
               <summary className="cursor-pointer">

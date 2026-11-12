@@ -8,6 +8,8 @@
   "max_documents": 8,
   "max_exhibits_per_filing": 2,
   "lookback_days": {"latest": 200, "default": 400},
+  "statement_filing_lag_days": 120,
+  "statement_scan_filings": 40,
   "item_groups": [
     {"id": "deals", "cues": "acqui\\w*|merg\\w*|deal|transaction|divest\\w*|sale of|sell\\w*|spin[- ]?off|separat\\w*|joint venture|tender offer",
      "items": ["1.01", "2.01", "8.01", "7.01"], "forms": ["S-4", "425"],

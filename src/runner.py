@@ -31,6 +31,7 @@ from skills.temporal import clock as tclock, freshness, intent as tintent, setti
 from skills.temporal.display import short_date
 from skills.temporal import periods as tperiods
 from skills.statements import figures
+from skills.statements import answer as statement_answer
 from skills import edgar, planning, statements, writing
 from skills.writing import report as report_writer
 from skills.planning import sense as common_sense
@@ -273,6 +274,7 @@ class State(TypedDict, total=False):
     enumerate: dict | None     # a list question (skills.planning.enumerate): collect every distinct event, write a round-up
     edgar_done: bool           # the EDGAR skill has run for this run
     cik: str | None            # the subject's SEC CIK, looked up by code in the SEC's own company list
+    fiscal_year_end: str | None  # the subject's fiscal year end ('1231', '0927'), from the SEC's record: dates a fiscal period
     covered: list[int]
     fetched_keys: list[str]
     backlog: list[str]         # sources fetched but not read yet because the needed facts were already backed
@@ -896,7 +898,12 @@ class Runner:
         queries = _dedupe(tintent.apply_year_terms(queries, scope, now))[:b["max_queries_per_iter"]]
         queries = _dedupe(planning.diversify(queries, s["question"], subject, plan.company, brief, scope, now, b["max_queries_per_iter"]))
         checklist = _dedupe(plan.checklist)[:(rt["sections"] or {}).get("max", 6)] or [s["question"]]
-        if frame["kind"] in ("person_role", "metric", "date_of") and not rt["sections"]:
+        if frame["kind"] == "open" and not frame["subject"] and question_skill.statements_asked(s["question"]):
+            # 'Apple balance sheet ...' names the company first, where code does not take a capital for a name: the planner's
+            # subject frames it
+            frame = question_skill.analyse(s["question"], planning.the_subject(subject, plan.company, s["question"]), scope.as_dict())
+        # a statement is answered with the table itself, whatever the report type
+        if (frame["kind"] in ("person_role", "metric", "date_of") and not rt["sections"]) or frame["kind"] == "statement":
             # the kind of question is known (skills/question): its checklist replaces the planner's, and its searches,
             # written for the kind, are taken in turn with the planner's
             replaced = checklist
@@ -935,7 +942,7 @@ class Runner:
         # A figure for a period or who holds a role takes nothing for granted but the subject: the model's 'premise' is the
         # question restated ('S&P Global reported revenue for Q3 2026'), and on weak results its screen ended the run unread.
         # Whether the period can have been reported yet is the time skill's check (planning/sense.py), by code.
-        restated = frame["kind"] in ("metric", "person_role")
+        restated = frame["kind"] in ("metric", "person_role", "statement")
         if restated and rt["premise_check"]:
             self.runs.emit(rid, "plan", "premise_skipped", {"kind": frame["kind"],
                            "why": "a question about a figure or a role assumes only that the subject exists; the dates are checked by code"})
@@ -1387,6 +1394,49 @@ class Runner:
         return {**row, "figure": v, "why": f"the quote is the '{row['label']}' row of the {row['statement']} statement read from this "
                                           f"document ({row['title']}); for {span} it gives {v['printed']}"}
 
+    def _statement_answers(self, s: State) -> dict[int, dict]:
+        """For a statement question: checklist index -> the table that answers it (skills/statements/answer.py), from the
+        statements this run read of the subject's own documents (another company's statements are never linked)."""
+        frame = s.get("frame") or {}
+        if frame.get("kind") != "statement":
+            return {}
+        self._statements_done(s["run_id"])
+        events = self.runs.events(s["run_id"])
+        # the subject's own statements: any reading of a document that linked it to the subject counts
+        read = [e["payload"] for e in events if e["type"] == "statements_read" and e["payload"].get("linked")]
+        filed = {e["payload"]["source_sha256"]: e["payload"] for e in events if e["type"] == "edgar_document_read"}
+        # the company's fiscal year end dates a fiscal period: the SEC's record of it, else the market's statutory year
+        fye = next((e["payload"].get("fiscal_year_end") for e in events if e["type"] == "edgar_filings" and e["payload"].get("fiscal_year_end")), None)
+        tables, meta = [], {}
+        for p in read:
+            sha = p["source_sha256"]
+            if sha in meta:
+                continue
+            best = best_date(self._source_dates(sha))
+            f = filed.get(sha) or {}
+            meta[sha] = {"url": p["url"], "label": self._profile(s, sha)["label"], "date": best.value if best else None,
+                         "form": f.get("form"), "filed": f.get("filed")}
+            fye = fye or statements.manifest()["settings"]["fiscal_year_end_by_market"].get(p.get("market") or "")
+            for t in self.store.statements_for(sha, primary_only=True):
+                # when the document came out: its filing date on EDGAR, else its own publication date
+                tables.append({**t, "source_sha256": sha, "came_out": meta[sha]["filed"] or meta[sha]["date"]})
+        out, missing = {}, {}
+        for i, sid in enumerate(frame.get("statements") or []):
+            if i >= len(s["checklist"]):
+                break
+            t, why = statement_answer.choose(tables, sid, frame.get("basis") or "consolidated", target=frame.get("target"), fye=fye,
+                                             today=tclock.now(self.now_fn).local.date())
+            if t:
+                out[i] = {**statement_answer.view(t, meta[t["source_sha256"]], target=frame.get("target"), fye=fye),
+                          "why": why, "item": s["checklist"][i]}
+            else:
+                missing[i] = why
+        said = [{"item": s["checklist"][i], "why": w} for i, w in missing.items()]
+        before = next((e["payload"]["items"] for e in reversed(events) if e["type"] == "statement_not_matched"), None)
+        if said and tables and said != before:          # once per change, not at every step that asks
+            self.runs.emit(s["run_id"], "assess", "statement_not_matched", {"items": said})
+        return out
+
     def _statements_done(self, run_id: str) -> None:
         """Wait for this run's statement reading still under way (it runs beside the model)."""
         for job in (self.__dict__.get("_statements_jobs") or {}).pop(run_id, []):
@@ -1403,14 +1453,18 @@ class Runner:
             return
         if not summary.get("ok"):
             return
+        linked = False
         if summary["statements"] and s.get("entity_id"):
             if why := self._not_the_subjects(s, sha, url):
                 # another company's statements must never index this company's claims
                 self.runs.emit(s["run_id"], "fetch", "statements_not_linked", {"url": url, "reason": why})
             else:
+                linked = True
                 self.store.link_source_entity(sha, s["entity_id"], created_by=f"runner:{s['run_id'][:8]}")   # its figures index the subject's claims
         if summary["statements"]:
-            self.runs.emit(s["run_id"], "fetch", "statements_read", {"url": url, "source_sha256": sha, **{
+            # `linked`: this reading found the statements to be the subject's own (a web copy read before the CIK was known
+            # may be refused, and the same filing read again from EDGAR accepted)
+            self.runs.emit(s["run_id"], "fetch", "statements_read", {"url": url, "source_sha256": sha, "linked": linked, **{
                 k: summary[k] for k in ("tables", "statements", "market", "ocr_pages")}})
         if summary["doubts"] or summary["unread_pages"]:
             self.runs.emit(s["run_id"], "fetch", "statements_doubt", {"url": url, "source_sha256": sha, **{
@@ -1584,6 +1638,18 @@ class Runner:
             out = {"edgar_done": True, "cik": cik, "api_calls_used": s["api_calls_used"] + calls,
                    "new_sources": filed + list(s["new_sources"])}          # the company's own filings are read first
             room -= calls
+            if (s.get("frame") or {}).get("kind") == "statement":
+                found = self._statement_answers({**s, **out})
+                covered = sorted(set(s["covered"]) | set(found))
+                out["covered"] = covered
+                if len(covered) == len(s["checklist"]):
+                    # every statement asked for is a table read by code: no sentence is needed, so the model does not read
+                    # the filings (a 10-Q is a hundred pages) for claims
+                    out["new_sources"] = []
+                    self.runs.emit(rid, "api_lookup", "statements_answer", {
+                        "statements": [{"item": s["checklist"][i], "title": v["title"], "url": v["source_url"], "why": v["why"]}
+                                       for i, v in found.items()],
+                        "why": "every statement asked for was read by code from the filings; the model reads nothing for it"})
         active = [(v, m) for v, m in active if m.connector_id != "sec_edgar"]
         routed = sources.route([m.connector_id for _, m in active], s["question"], " ".join(s["checklist"]))
         self.runs.emit(rid, "api_lookup", "sources_routed", routed)
@@ -1669,7 +1735,8 @@ class Runner:
                 return [], 0, None
             cik = match["cik"]
             self.runs.emit(rid, "api_lookup", "edgar_cik", {**match, "source": edgar.manifest()["tickers_url"], "source_sha256": list_sha})
-            if not edgar.named_groups(s["question"], s["checklist"]) and not source_class.is_development(s["question"], s.get("time_scope")):
+            statement_q = (s.get("frame") or {}).get("kind") == "statement"
+            if not statement_q and not edgar.named_groups(s["question"], s["checklist"]) and not source_class.is_development(s["question"], s.get("time_scope")):
                 # Filings hold results, deals, leadership and other events. A question about something else (a technology
                 # portfolio) once read seven earnings releases by default: about 90 seconds, nothing on the question.
                 self.runs.emit(rid, "api_lookup", "edgar_skipped", {
@@ -1682,13 +1749,25 @@ class Runner:
             listing = self.store.ingest(result)        # the filing list: read last, it is metadata
             submissions = json.loads(Path(result["archive_path"]).read_bytes())
             today = tclock.now(self.now_fn).local.date()
-            groups = edgar.groups_for(s["question"], s["checklist"])
-            start, end = edgar.window(s.get("time_scope"), today)
-            filings = edgar.select_filings(submissions, groups, start, end)
+            fye = submissions.get("fiscalYearEnd") or None
+            chosen_why = ""
+            if statement_q:
+                # a statement: the results filings for the asked period only (the 10-Q or 10-K prints the statements; the
+                # earnings release may be newer), dated by the temporal skill against the company's fiscal year end
+                target = (s.get("frame") or {}).get("target") or {}
+                groups = [g for g in edgar.manifest()["item_groups"] if g["id"] == "results"]
+                start, end = edgar.statement_window(target, today, fye)
+                filings, chosen_why = edgar.results_for(edgar.select_filings(submissions, groups, start, end,
+                                                                             limit=edgar.manifest()["statement_scan_filings"]), target, fye)
+            else:
+                groups = edgar.groups_for(s["question"], s["checklist"])
+                start, end = edgar.window(s.get("time_scope"), today)
+                filings = edgar.select_filings(submissions, groups, start, end)
             self.runs.emit(rid, "api_lookup", "edgar_filings", {
                 "cik": cik, "kinds": [g["id"] for g in groups], "window": [start.isoformat(), end.isoformat()],
-                "filings": [{k: f[k] for k in ("form", "filed", "items", "description", "why")} for f in filings]})
-            for metric in edgar.metric_calls(s["question"], s["checklist"]):
+                "filings": [{k: f[k] for k in ("form", "filed", "items", "description", "why")} for f in filings],
+                **({"why": f"a statement question: {chosen_why}", "fiscal_year_end": fye} if statement_q else {})})
+            for metric in ([] if statement_q else edgar.metric_calls(s["question"], s["checklist"])):
                 for tag in metric["tags"]:
                     if calls >= room:
                         break
@@ -1721,7 +1800,9 @@ class Runner:
                     read.append(sha)
                     self.runs.emit(rid, "api_lookup", "edgar_document_read", {"url": url, "form": f["form"], "filed": f["filed"],
                                                                              "items": f["items"], "source_sha256": sha})
-                    self._read_statements(s, sha, url, market="US")
+                    # the CIK is known here though not yet in the state: a filing under it is the subject's own (its text
+                    # may open with tens of thousands of characters of hidden XBRL before the company's name)
+                    self._read_statements({**s, "cik": cik}, sha, url, market="US")
             return list(dict.fromkeys(read + history + [listing])), calls, cik
         except Exception as exc:
             self.runs.emit(rid, "api_lookup", "edgar_failed", {"error": f"{type(exc).__name__}: {str(exc)[:200]}"})
@@ -2159,6 +2240,8 @@ class Runner:
                 if v == "supported" and s["relevant"].get(c) and c in s["claim_items"]}
         else:                            # the tier rule (settling.py): one Tier 1 or 2 claim, or Tier 3 claims from two sites
             covered = set(s["covered"]) | self._settled_facts(s, s["verdicts"], s["relevant"], s["claim_items"], s.get("settle_sites", 2))
+        if (s.get("frame") or {}).get("kind") == "statement":
+            covered |= set(self._statement_answers(s))       # a statement is covered by its table (from a filing or a page read)
         gaps = [s["checklist"][i] for i in range(len(s["checklist"])) if i not in covered]
         queries: list[str] = []
         # Follow what the sources name (a technology, a product, a partner) rather than rewording the question: a small model
@@ -2580,7 +2663,16 @@ class Runner:
         premise_failed = s.get("outcome") == "premise_unverified"
         summary, dropped, quality = "", [], {}
         allowed = {r["claim_id"] for r in rows["supported"] if not r["premise"]}
-        if allowed and not premise_failed:
+        tables = [{**v, "n": n} for n, v in enumerate(self._statement_answers(s).values(), 1)]
+        unmatched = next((e["payload"]["items"] for e in reversed(self.runs.events(rid)) if e["type"] == "statement_not_matched"), []) \
+            if (s.get("frame") or {}).get("kind") == "statement" else []
+        unmatched = [u for u in unmatched if u["item"] in gaps]          # why a statement asked for is not in the answer
+        if tables and not premise_failed:
+            # the statement asked for is the answer: the table as the filing prints it, laid out by code, no model writing
+            summary = "\n\n".join(f"{statement_answer.describe(t, self._names(s)[0] if self._names(s) else s['subject'])}\n[table:{t['n']}]"
+                                  for t in tables)
+            quality = {"form": "statement", "writer": "code:statement_table"}
+        elif allowed and not premise_failed:
             summary, dropped, quality = self._write(s, [r for r in rows["supported"] if not r["premise"]], rows["context"], gaps, rid)
         if premise_failed:
             outcome = "premise_unverified"
@@ -2597,6 +2689,7 @@ class Runner:
             "not_supported": len(rows["not_supported"]), "unchecked": len(rows["unchecked"]),
             "off_topic": len(rows["off_topic"]), "context": rows["context"], "reference_only": rows["reference_only"], "conflicts": conflicts,
             "gaps": gaps, "rejected_quotes": s["rejected"], "warnings": s.get("warnings", []) + ([time_warning] if time_warning else []) + ([figure_warning] if figure_warning else [])
+                        + [f"{u['item']}: {u['why']}." for u in unmatched]
                         + (["Stopped by you before the run finished: this report covers only what was gathered up to the stop."]
                            if s.get("stopping") else [])
                         + ([f"{len(poor)} claim(s) rest on Tier 4 sources (blogs that are not a major brand's): poorly sourced. They are "
@@ -2609,6 +2702,7 @@ class Runner:
             "list_question": (s.get("enumerate") or {}).get("item"),
             "events_found": len({docs_of_shown.get(r["source_sha256"]) for r in rows["supported"]}) if s.get("enumerate") else None,
             "diagnosis": diagnosis.diagnose(self.runs.events(rid)),     # why parts failed: model limits, sources, search, rules
+            "tables": tables,                                           # a statement question's answer: the tables, read by code
         }
         self.runs.emit(rid, "report", "report_ready", {k: (len(v) if isinstance(v, list) else v)
                                                        for k, v in report.items() if k not in ("summary", "quality")})

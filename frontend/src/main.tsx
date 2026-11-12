@@ -7,6 +7,7 @@ import { Layout } from './Layout'
 import { Home } from './pages/Home'
 import { AppForm } from './pages/AppForm'
 import { Runs } from './pages/Runs'
+import { AnswerPage, Answers } from './pages/Answers'
 import { RunPage } from './pages/RunPage'
 import { Connectors } from './pages/Connectors'
 import { RequestPage } from './pages/RequestPage'
@@ -33,6 +34,8 @@ createRoot(document.getElementById('root')!).render(
           <Route element={<Layout />}>
             <Route index element={<Home />} />
             <Route path="apps/:id" element={<AppForm />} />
+            <Route path="answers" element={<Answers />} />
+            <Route path="answers/:id" element={<AnswerPage />} />
             <Route path="runs" element={<Runs />} />
             <Route path="runs/:id" element={<RunPage />} />
             <Route path="connectors" element={<Connectors />} />

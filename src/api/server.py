@@ -16,13 +16,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from typing import Literal
 
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 import config
+from api import answer as answer_view
 from api import probes
 from api.engine import TERMINAL, Engine, RunError
 from api.executors import MAX_UPLOAD_BYTES, save_upload
@@ -283,6 +284,28 @@ def create_app(registry: Registry | None = None, token: str | None = None,
         if kind == "verify":
             return describe_verification(run_id, events)
         return describe_research(run_id, events)
+
+    def answer_of(run_id: str) -> tuple[dict, dict | None]:
+        events = engine.runs.events(run_id)
+        if run_kind(events) != "research":
+            raise HTTPException(404, "No such research run")
+        d = describe_research(run_id, events)
+        return d, (answer_view.build(d["report"]) if d["report"] else None)
+
+    @app.get("/api/runs/{run_id}/answer")
+    def run_answer(run_id: str):
+        """Only the answer: the written text with numbered citations and the sources behind them. The run's steps stay on /runs."""
+        d, view = answer_of(run_id)
+        return {"run_id": run_id, "status": d["status"], "question": d["title"], "subject": d["subject"], "answer": view}
+
+    @app.get("/api/runs/{run_id}/answer.docx")
+    def run_answer_docx(run_id: str):
+        d, view = answer_of(run_id)
+        if not view:
+            raise HTTPException(409, "This run has no answer yet")
+        return Response(answer_view.to_docx(view, run_id=run_id),
+                        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        headers={"Content-Disposition": f'attachment; filename="{answer_view.filename(view)}"'})
 
     @app.get("/api/runs/{run_id}/events")
     def run_events(run_id: str, after: int = 0):
