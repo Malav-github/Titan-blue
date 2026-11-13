@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { api, pageText, type Approval, type ClaimReview, type ClaimVerification, type FigureCheck, type Verification, type Report, type ReportClaim, type RunDetail, type RunEvent, type StatementTableView } from '../api'
+import { api, pageText, type Approval, type ClaimReview, type ClaimVerification, type FigureCheck, type Report, type ReportClaim, type RunDetail, type RunEvent, type StatementTableView } from '../api'
 import { StatementTable } from '../StatementTable'
 import { ACTIVE, describeEvent, lines, time } from '../format'
 import { Flow } from '../Flow'
@@ -147,42 +147,16 @@ function Answer({ text, tables = [] }: { text: string; tables?: StatementTableVi
   })}</>
 }
 
-/** The verification agent: a separate run on request, which can be paused and stopped, and what it found. */
-function VerificationPanel({ runId, verification }: { runId: string; verification?: Verification }) {
-  const qc = useQueryClient()
-  const start = useMutation({ mutationFn: () => api.verifyRun(runId), onSuccess: () => qc.invalidateQueries({ queryKey: ['verification', runId] }) })
-  const v = verification
-  const counts = (v?.results ?? []).reduce<Record<string, number>>((a, r) => ({ ...a, [r.outcome]: (a[r.outcome] ?? 0) + 1 }), {})
-  const working = !!v?.status && ACTIVE.has(v.status)
-  return (
-    <Card>
-      <h3 className="font-semibold">Verification</h3>
-      <p className="mt-1 text-sm text-muted">
-        The answer below was given as soon as a strong enough source stated each fact. Check a claim yourself with the buttons under it,
-        or run the verification agent: it reads each source again, looks for an independent second source and for contradictions,
-        lists newer reports, and checks figures against the company's statements.
-      </p>
-      <div className="mt-2 flex flex-wrap items-center gap-3">
-        {!working && <Button disabled={start.isPending} onClick={() => start.mutate()}>{v?.verify_run_id ? 'Run the verification agent again' : 'Run the verification agent'}</Button>}
-        {v?.verify_run_id && v.status && <><RunControls runId={v.verify_run_id} status={v.status} /><StatusBadge status={v.status} /></>}
-        {v?.results?.length ? <span className="text-sm">{['corroborated', 'contradicted', 'unconfirmed'].filter((k) => counts[k]).map((k) => `${counts[k]} ${k}`).join(' · ')}</span> : null}
-      </div>
-      {start.error && <ErrorNote error={start.error} />}
-    </Card>
-  )
-}
-
 function ReportView({ report, runId }: { report: Report; runId?: string }) {
-  const verification = useQuery({
-    queryKey: ['verification', runId], queryFn: () => api.verification(runId ?? ''), enabled: !!runId,
-    refetchInterval: (q) => (q.state.data?.status && ACTIVE.has(q.state.data.status) ? 1500 : false),
-  })
-  const found = Object.fromEntries((verification.data?.results ?? []).map((v) => [v.claim_id, v]))
-  const card = (c: ReportClaim, caution?: boolean) => <ClaimCard key={c.claim_id} claim={c} caution={caution} runId={runId} verification={found[c.claim_id]} />
+  const card = (c: ReportClaim, caution?: boolean) => <ClaimCard key={c.claim_id} claim={c} caution={caution} runId={runId} />
   return (
     <section aria-labelledby="report-h" className="flex flex-col gap-4">
       <h2 id="report-h" className="text-xl font-semibold">Result</h2>
-      {runId && <VerificationPanel runId={runId} verification={verification.data} />}
+      <p className="text-sm text-muted">
+        Each claim below was checked on the way in: its quote is word for word in the archived source, and the quote supports it.
+        Check one yourself with the buttons under it. To check any other text, page or document against independent sources,
+        use <Link className="text-accent underline" to="/verify">Verify</Link>.
+      </p>
       {report.time && (
         <p className="text-sm text-muted">
           As of <strong>{report.time.today}</strong>
@@ -241,13 +215,13 @@ function ReportView({ report, runId }: { report: Report; runId?: string }) {
           <Card><p className="text-sm text-muted">No answer was written: nothing was established strongly enough.</p></Card>
       )}
       {report.list_question && (
-        <p className="text-sm text-muted">A list question: Titan collected every distinct event it could read ({report.events_found ?? 0} documents with established claims) for “{report.list_question}”. The list covers what was found, not everything that happened.</p>
+        <p className="text-sm text-muted">A list question: WrAI8 collected every distinct event it could read ({report.events_found ?? 0} documents with established claims) for “{report.list_question}”. The list covers what was found, not everything that happened.</p>
       )}
       {(report.diagnosis ?? []).length > 0 && (
         <details className="rounded-lg border border-line bg-surface p-3 text-sm">
           <summary className="cursor-pointer font-medium">Why parts of this run failed ({(report.diagnosis ?? []).reduce((n, d) => n + d.count, 0)}), and what covers for it</summary>
           <table className="mt-2 w-full text-left text-xs">
-            <thead><tr className="text-muted"><th className="pr-2">Kind</th><th className="pr-2">What happened</th><th className="pr-2">Times</th><th className="pr-2">What Titan does</th><th>Could be done next</th></tr></thead>
+            <thead><tr className="text-muted"><th className="pr-2">Kind</th><th className="pr-2">What happened</th><th className="pr-2">Times</th><th className="pr-2">What WrAI8 does</th><th>Could be done next</th></tr></thead>
             <tbody>{(report.diagnosis ?? []).map((d) => (
               <tr key={d.id} className="align-top">
                 <td className="pr-2"><Badge tone={d.kind === 'llm' ? 'warn' : d.kind === 'design' ? 'neutral' : 'bad'}>{d.kind_label}</Badge></td>
@@ -275,8 +249,7 @@ function ReportView({ report, runId }: { report: Report; runId?: string }) {
           <h3 className="mb-1 font-semibold text-bad">Poorly sourced, Tier 4 ({(report.poorly_sourced ?? []).length})</h3>
           <p role="alert" className="mb-2 rounded-md border border-bad bg-bad-bg p-2 text-sm text-bad">
             These claims rest on blogs that are not a major brand's. They are treated like Tier 3 (a fact needs two independent
-            sources) and may be in the answer above, marked. Verify them before any use: check them yourself, or run the
-            verification agent.
+            sources) and may be in the answer above, marked. Verify them before any use: check them yourself, or in Verify.
           </p>
           <p className="text-sm text-muted">{(report.poorly_sourced ?? []).map((c) => `#${c.claim_id}`).join(', ')}</p>
         </div>
@@ -402,7 +375,7 @@ function ApprovalPanel({ runId, plan }: { runId: string; plan: Approval }) {
         </div>
       )}
       <p className="mt-3 text-sm text-muted">
-        If you go ahead, Titan will run these searches and then read pages looking for the facts listed. You can edit either list, one item per line.
+        If you go ahead, WrAI8 will run these searches and then read pages looking for the facts listed. You can edit either list, one item per line.
         {plan.page_categories.length > 0 && <> It will also look for the company’s own pages about: {plan.page_categories.join(', ')}.</>}
       </p>
       <div className="mt-3 grid gap-4 md:grid-cols-2">

@@ -8,12 +8,22 @@ export function Home() {
   return (
     <>
       <PageHeader
-        title="What would you like to do?"
-        subtitle="Each app below is a ready-made process. Every claim it produces is kept only if its quote appears word for word in the archived source."
+        title="WritsBlocker"
+        subtitle="What would you like to do? Each card below is a ready-made process. Every claim it produces is kept only if its quote appears word for word in the archived source."
       />
       {templates.isLoading && <Loading what="Loading apps" />}
       <ErrorNote error={templates.error} />
       <ul className="grid gap-4 sm:grid-cols-2">
+        <li>
+          <Card className="flex h-full flex-col gap-3">
+            <div>
+              <Badge tone="info">Verify</Badge>
+              <h2 className="mt-2 text-lg font-semibold">Verify a text, page or document</h2>
+              <p className="mt-1 text-sm text-muted">Paste text, give a link or upload a document: each factual statement is checked against independent sources.</p>
+            </div>
+            <Link to="/verify" className="mt-auto self-start rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:opacity-90">Open</Link>
+          </Card>
+        </li>
         {templates.data?.map((t) => (
           <li key={t.id}>
             <Card className="flex h-full flex-col gap-3">

@@ -2,6 +2,8 @@
 
 A multi-agent competitive-intelligence platform built on open-source parts. Information integrity comes first: every claim should trace to archived evidence, contradictions are tracked, and history is append-only.
 
+In the app it is shown under the working name **WrAI8**: the home page is **WritsBlocker** and the run history is **WrAIth**. Code, folders and branches still say Titan.
+
 Titan is being built as a general capability platform (tools driven by skills and instructions). Competitive intelligence is the first domain.
 
 ## Status
@@ -23,11 +25,15 @@ Built and tested:
 
 - **Usage rules for outside sites** ([definitions/policies/](definitions/policies), [src/policy.py](src/policy.py), [docs/api-usage-rules.md](docs/api-usage-rules.md)): a provider's own rules (request limits, declared contact, no crawling, pauses after a refusal) are stored as data with their verbatim quotes and enforced in every request path, including a request budget shared across processes. `uv run python check_policies.py` re-checks that each quote is still on the provider's page. SEC EDGAR is the first policy.
 
-- **Web app** ([frontend/](frontend)): React, TypeScript, Tailwind. Home (ready-made apps drawn from [definitions/templates/](definitions/templates)), Runs (live step-by-step history, plan approval, the result with each claim's quote and source), Data sources (the approval gate, with the provider's terms linked and facts from third-party sites labelled), Evidence (every claim with its quote in its page), Health. Build once with `cd frontend && npm install && npm run build`, then `uv run python serve.py` and open http://127.0.0.1:8000/. For development run `npm run dev` in `frontend/` (it proxies to the API and adds the session token itself). Browser tests: `uv run pytest tests/test_e2e.py`.
+- **Web app** ([frontend/](frontend)): React, TypeScript, Tailwind. WritsBlocker, the home page (ready-made apps drawn from [definitions/templates/](definitions/templates)), Answers (only the answer, numbered citations and a Word download), Verify (see below), WrAIth, the run history (live step-by-step history, plan approval, the result with each claim's quote and source), Data sources (the approval gate, with the provider's terms linked and facts from third-party sites labelled), Evidence (every claim with its quote in its page), Health. Build once with `cd frontend && npm install && npm run build`, then `uv run python serve.py` and open http://127.0.0.1:8000/. For development run `npm run dev` in `frontend/` (it proxies to the API and adds the session token itself). Browser tests: `uv run pytest tests/test_e2e.py`.
 
 - **Temporal skill, phase 1** ([src/skills/temporal/](src/skills/temporal), [definitions/skills/temporal.json](definitions/skills/temporal.json)): planning is told today's date and time zone (`TITAN_TIMEZONE`, default this computer's), a deterministic classifier works out the time scope of each question (fixed past fact, named date, latest, reporting period, timeline), queries get today's year and a recency window when the question is about the current state, every search records its exact time, and the page chooser sees each page's date. Phase 2 collects every date a page carries (with where each came from) and flags stale answers. **Phase 3** ([periods.py](src/skills/temporal/periods.py), [corroboration.py](src/corroboration.py)) reads each claim's own time frame by code from its quote: the period (fiscal or calendar year, quarter, half, "three months ended", year over year change) and event dates (announced, effective, filed, closed, deal start and end). A boundary the source does not state is left empty, and a statement about the future ("will become") is marked as planned, not done. SEC facts give their exact period from the fact itself. A claim about one period cannot be "supported" by a quote about another, and the report labels each fact (primary source, independent sources, single source unconfirmed, sources disagree) without hiding anything. Timelines come next.
 - **Flowchart** ([src/harness.py](src/harness.py), [definitions/harness/research.json](definitions/harness/research.json), [frontend/src/Flow.tsx](frontend/src/Flow.tsx)): the research pipeline drawn as a flowchart, on every run page (steps light up as the run moves; click one to see what it does and its events) and on the "How it works" page. Steps and arrows are read from the real LangGraph graph, and a test fails if the description file ever drifts from it.
 - **Source profiles** ([definitions/sources/](definitions/sources), [src/sources.py](src/sources.py)): what each source covers, how to query it, what it is weak at, its time behaviour, evidence tier and limits, kept as data in the project. The planner is given the web advice, and a deterministic router offers an approved connector only when the question points to it (the run log shows `Chose data sources`). [evals/source_cases.json](evals/source_cases.json) holds a seven-step ladder of questions per source (direct, variant, disambiguation, period, several facts, a trap that must not be answered, and a wrong-source case); the routing of every case is a test.
+
+- **Answers** ([src/api/answer.py](src/api/answer.py), [frontend/src/pages/Answers.tsx](frontend/src/pages/Answers.tsx)): a finished run's answer on its own, each `[claim:N]` turned into a numbered source with the exact quotes it backs, what was not found left to WrAIth, and a Word copy written with the standard library (`GET /api/runs/{id}/answer`, `/answer.docx`).
+- **Statements as the answer** ([src/skills/statements/answer.py](src/skills/statements/answer.py), [src/skills/temporal/reporting.py](src/skills/temporal/reporting.py)): "S&P Global's consolidated income statement, Q2 2026" is answered with the filing's own table, chosen and laid out by code. The period and announcement window are dated from the company's fiscal year end; EDGAR reads the 10-Q or 10-K for that period and the release after it; inline XBRL is preferred to a release's copy; the asked columns are shaded; a period not reported yet is said so.
+- **Verify** ([src/checking.py](src/checking.py), [src/skills/roles/](src/skills/roles), [frontend/src/pages/Verify.tsx](frontend/src/pages/Verify.tsx)): an independent system for checking any pasted text, link or uploaded document against independent sources. Statements are split by code, forecasts and opinions set aside, and each checkable statement is checked by the verification agent's checks; a figure that equals the company's own filed statements corroborates it. A statement about who holds a role is checked against the officer who certified the latest 10-Q or 10-K (Exhibit 31.1 or 31.2) and the 8-K Item 5.02 filings since, with names compared as people write them. The input, its site and copies of it are never evidence. Verdicts: corroborated, partly corroborated, contradicted, unconfirmed, not checkable (`POST /api/check`, `/api/runs/{id}/check.docx`). Research runs keep their own checks on the way in (verbatim quotes, support check, tiers) and no longer carry a separate verification step.
 
 Not built yet: Lab (run any single block), Models and Chat screens, more templates, the block canvas, templates, chat endpoint, evidence and connector endpoints, skills loader, search reranker, A2A, MCP-server integration.
 
@@ -85,14 +91,98 @@ official records, then scholarly bodies, then established news, then everything 
 to look first. If the question names a year that no result mentions while another year appears, code (not the model) offers
 "Did you mean 2026?" for you to accept or ignore. What the quick look shows is context, never evidence: no claim is taken from it.
 
-**Ontologies.** `definitions/ontology/` holds two files read by code, validated when loaded. `sources.json` describes every source by
-its issuer (whose document it is), document type (press release, earnings release, Form 10-K ...), venue (investor relations site,
-newsroom, EDGAR, wire service, publication) and publisher, and derives the tier from them: primary when it is the subject's own
-document, wherever it is hosted. Apple's earnings release on investor.apple.com and the same release filed on EDGAR as Exhibit 99.1
-share issuer and type and differ in venue. One description per source is used by every step, so the tier that decides when to stop
-reading is the tier the report shows. `company_events.json` lists the kinds of company event (acquisitions, divestitures, leadership,
-results, guidance ...) with their required parts, cues, a worked example (made-up companies only) and rules such as "completion is not
-before announcement"; it is not yet used in extraction (next step: offer the model only the few predicates that fit the question).
+## Skills and Ontologies
+
+Titan keeps what it knows and how it works out of the model, in two layers:
+
+- **Ontologies** (`definitions/ontology/`) are the nouns and the rules: what a thing *is*, which parts it needs, and what
+  settles it. They are data, read and validated by code when loaded.
+- **Skills** (`src/skills/`, settings in `definitions/skills/`) are the verbs: *how* to find, read, date and check something.
+  They are code, with a few narrow model calls. Skills use ontologies: the statements skill runs on
+  `financial_statements.json`, and the claim checks will run on `claims.json`.
+
+### The ontologies
+
+| File | What it defines | How it is used |
+| --- | --- | --- |
+| `sources.json` | A source's issuer (whose document), document type (press release, Form 10-K ...), venue (investor relations, newsroom, EDGAR, wire, publication) and publisher, and the tier that follows | One description per source for every step, so the tier that decides when to stop reading is the tier the report shows. Apple's release on investor.apple.com and the same release on EDGAR as Exhibit 99.1 share issuer and type and differ in venue |
+| `company_events.json` | 20 kinds of company event (acquisitions, divestitures, leadership, results, guidance ...) with required parts, cues, a worked example (made-up companies only) and rules such as "one CEO per company" and "completion is not before announcement" | A fixed list a model chooses from, never invents; rules checked by code |
+| `financial_statements.json` | Statements, line items, XBRL tags, the labels companies print, scale words, period words and arithmetic rules, for US GAAP and IFRS, US, Indian and Philippine conventions | Code reads statement tables with it; no model touches a figure |
+| `claims.json` (draft for review, not read yet) | 11 claim types and 37 subtypes (attribute, state at a time, event, quantity, attributed speech, cause, judgment, comparison, forward-looking, absence, trend), 10 qualifiers (time, period, scope, attribution, hedge, quantifier, precision, unit, condition, negation), 21 checks, how each subtype is settled, combination rules for verdicts (including misleading and outdated), and indicator sets that turn judgments ("governance failure") into observable signals (8-K Items 4.01, 4.02, 5.02(a), material weakness, restatement ...) | Phase 1: Verify splits each statement into atoms, types them and shows their qualifiers |
+
+Question kinds (`definitions/skills/question.json`) and reporting periods (`skills/temporal/reporting.py`) work the same way:
+they turn "who is the CEO" or "Q2 FY26" into the shape an answer must have and the exact dates a filing must cover.
+
+### What they do for the process
+
+1. **Constrain the model**: it chooses from a list instead of inventing a category, a CIK or a period.
+2. **Move reasoning into code**: classifying, dating, matching and arithmetic become testable and give the same answer every time.
+3. **Define "correct"**: required parts, rules and what settles a claim are written down, not decided per run.
+4. **Give every step one vocabulary**: planner, reader, checker, writer and app mean the same thing by "leadership change".
+5. **Make it measurable**: the benchmark and the tests score against definitions, not impressions.
+
+### Local model or a frontier model
+
+With the local 8B model, skills and ontologies do the reasoning the model cannot: it invented CIKs, gave a portfolio question a
+one-line checklist, could not read wide tables and wrote sentences no claim backed. With an Opus-class model some of that work
+is no longer needed, and the most important part stays.
+
+#### Ontologies
+
+| | Local 8B | Opus-class |
+| --- | --- | --- |
+| Role | Do the reasoning the model cannot | A contract the model fills and code checks |
+| Biggest gain | Getting things to work at all | Consistency, audit trail, cost, current data |
+| Shape | Patterns, cues and rules | Definitions, examples and rules |
+| Hand-written patterns | Essential | Mostly unnecessary |
+
+What becomes less needed: splitting compound sentences, classifying claims, knowing that "Jensen" and "Jen-Hsun Huang" are one
+person or that "Hu-ang" is a typo, judging whether a reworded sentence states the same fact, reading phrasings the patterns miss.
+
+What stays, and matters more: facts newer than any model (an 8-K filed yesterday; the ontology says where the truth lives and
+which filing must exist); the same verdict for the same input (reproducibility and an audit trail are the product); policy that
+is a business choice, not a capability (what counts as corroborated, the tier of a blog, label rather than hide); confident
+errors that a stronger model still makes (verbatim quotes and code-checked figures keep it honest); cost and speed at scale
+(code is free and instant, so only hard claims go to the large model); and swapping models without changing what
+"corroborated" means.
+
+#### Skills
+
+Skills split three ways with a stronger model:
+
+1. **Tools**: the same value, a different role. Fresh data, exact lookups, deterministic arithmetic and hashed archives that
+   no model has. They become tools the model calls instead of fixed steps.
+2. **Playbooks**: the same knowledge, a different form. Expert procedure a strong model may know but not apply reliably ("a
+   chief executive's departure must be on 8-K Item 5.02 within four business days"; "a filing's inline XBRL beats the
+   release's copy"). Written as instructions plus tools, the model follows and adapts them.
+3. **Crutches**: mostly fade. Question framing, query diversification, relevance by answer shape, planner fixes, sentence and
+   name patterns. What survives of them are gates: the verbatim lock and the sentence-to-claim lock.
+
+| Skill | Local 8B | Opus-class | Outcome |
+| --- | --- | --- | --- |
+| `edgar` (CIK, filing choice) | Does it all | Tool: filings change daily, CIKs must be exact | Stays |
+| `statements` (tables by code, XBRL checks) | Does it all | Tool: exact, checkable, cheaper than model calls | Stays |
+| `temporal` (today, fiscal periods, reporting dates) | Does it all | Date arithmetic stays a tool; the time-intent classifier fades | Mostly stays |
+| `roles` (certification, 8-K Item 5.02) | Does it all | Filing lookups stay a tool; name comparison fades | Splits |
+| `question` (kinds, checklists) | Frames the question for the planner | The model plans well; the answer-shape check stays as a gate | Becomes a gate |
+| `planning` (queries, lists, names, sense) | Does it all | Mostly fades; source-routing knowledge stays as a playbook | Mostly fades |
+| `writing` (lock, citations) | Model drafts, code locks | The model writes; the lock stays | Becomes a gate |
+| Checking and verification | Gates | Gates | Stays |
+
+| | Local 8B | Opus-class |
+| --- | --- | --- |
+| Who decides the next step | The fixed pipeline | The model, choosing among skills |
+| Skills | The reasoning itself | Tools and playbooks |
+| Ontologies | Lists and rules the model is held to | The contract it fills |
+| Code checks | Catch the model's mistakes | Catch the model's mistakes, which are rarer but more convincing |
+| Value of hand-written heuristics | High | Low |
+
+**The design rule that follows**: build skills that serve both. Each skill is a self-contained tool with clear inputs and
+outputs (for example `role_holder(company, role) -> {name, title, filing, quote}`) and a written playbook. The fixed pipeline
+calls them in order for the local model; a frontier model gets them as tools and playbooks and decides when to use them; the
+same ontologies define the terms and the same code checks guard the output in both modes. The `edgar`, `statements`,
+`temporal` and `roles` skills are close to that shape already. The crutch-style skills are where a Power mode would save the
+most, and the ones not worth growing further if a stronger model is planned.
 
 ## Skills that cover for the local model
 

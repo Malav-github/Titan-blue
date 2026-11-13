@@ -8,6 +8,7 @@ import { Home } from './pages/Home'
 import { AppForm } from './pages/AppForm'
 import { Runs } from './pages/Runs'
 import { AnswerPage, Answers } from './pages/Answers'
+import { CheckPage, VerifyPage } from './pages/Verify'
 import { RunPage } from './pages/RunPage'
 import { Connectors } from './pages/Connectors'
 import { RequestPage } from './pages/RequestPage'
@@ -23,7 +24,7 @@ import { PageHeader } from './ui'
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } } })
 
 function NotFound() {
-  return <PageHeader title="Page not found" subtitle="That address does not exist in Titan." />
+  return <PageHeader title="Page not found" subtitle="That address does not exist in WrAI8." />
 }
 
 createRoot(document.getElementById('root')!).render(
@@ -36,6 +37,8 @@ createRoot(document.getElementById('root')!).render(
             <Route path="apps/:id" element={<AppForm />} />
             <Route path="answers" element={<Answers />} />
             <Route path="answers/:id" element={<AnswerPage />} />
+            <Route path="verify" element={<VerifyPage />} />
+            <Route path="verify/:id" element={<CheckPage />} />
             <Route path="runs" element={<Runs />} />
             <Route path="runs/:id" element={<RunPage />} />
             <Route path="connectors" element={<Connectors />} />

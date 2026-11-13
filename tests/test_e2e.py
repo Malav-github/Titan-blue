@@ -122,7 +122,7 @@ def page(base_url):
 
 def test_home_lists_the_apps(page: Page):
     page.goto("/")
-    expect(page.get_by_role("heading", name="What would you like to do?")).to_be_visible()
+    expect(page.get_by_role("heading", name="WritsBlocker")).to_be_visible()
     expect(page.get_by_role("heading", name="Research a company")).to_be_visible()
     expect(page.get_by_role("heading", name="Add a data source (API)")).to_be_visible()
 

@@ -1,9 +1,10 @@
 import { NavLink, Outlet } from 'react-router-dom'
 
 const NAV = [
-  { to: '/', label: 'Home', end: true },
+  { to: '/', label: 'WritsBlocker', end: true },
   { to: '/answers', label: 'Answers' },
-  { to: '/runs', label: 'Runs' },
+  { to: '/verify', label: 'Verify' },
+  { to: '/runs', label: 'WrAIth' },
   { to: '/connectors', label: 'Data sources' },
   { to: '/evidence', label: 'Evidence' },
   { to: '/stores', label: 'Stores and archives' },
@@ -18,7 +19,7 @@ export function Layout() {
         Skip to content
       </a>
       <nav aria-label="Main" className="border-b border-line bg-surface p-3 md:min-h-screen md:w-52 md:shrink-0 md:border-b-0 md:border-r">
-        <p className="mb-3 px-2 text-lg font-semibold tracking-tight">Titan</p>
+        <p className="mb-3 px-2 text-lg font-semibold tracking-tight">WrAI8</p>
         <ul className="flex flex-wrap gap-1 md:flex-col">
           {NAV.map((n) => (
             <li key={n.to}>

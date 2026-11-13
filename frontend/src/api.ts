@@ -1,4 +1,4 @@
-// The one place the app talks to the Titan API. Nothing here decides anything: the server owns the rules.
+// The one place the app talks to the WrAI8 API. Nothing here decides anything: the server owns the rules.
 
 const token = document.querySelector('meta[name="titan-token"]')?.getAttribute('content') ?? ''
 
@@ -352,6 +352,32 @@ export interface AnswerView {
 }
 export interface RunAnswer { run_id: string; status: string | null; question: string | null; subject: string | null; answer: AnswerView | null }
 
+/** Verify: a text, a link or a file checked against independent sources (checking.py). */
+export interface CheckStatement {
+  n: number; text: string; checkable: boolean; why: string; span: [number, number] | null; claim_id?: number
+  outcome?: 'corroborated' | 'partial' | 'contradicted' | 'unconfirmed'; checks?: ClaimVerification['checks']
+  notes?: string[]; role?: { org: string; role: string; role_label: string; person: string; event: string; reason: string | null }
+}
+export interface CheckRun {
+  run_id: string; kind: 'check'; status: string | null; title: string; subject: string | null; error: string | null
+  input: { kind: 'text' | 'url' | 'file'; url?: string; title?: string } | null
+  text: string; statements: CheckStatement[]
+  counts: { corroborated: number; partial: number; contradicted: number; unconfirmed: number; not_checkable: number; waiting: number }
+}
+export interface CheckRequest { kind: 'text' | 'url' | 'file'; text?: string; url?: string; upload_id?: string; subject?: string }
+
+async function uploadFile(file: File): Promise<{ upload_id: string; name: string; size: number }> {
+  const res = await fetch(`/api/uploads?filename=${encodeURIComponent(file.name)}`, {
+    method: 'POST', body: file, headers: token ? { 'X-Titan-Token': token } : {},
+  })
+  if (!res.ok) {
+    let detail = `The server answered ${res.status}`
+    try { const b = await res.json(); if (typeof b.detail === 'string') detail = b.detail } catch { /* not JSON */ }
+    throw new ApiError(res.status, [detail])
+  }
+  return res.json()
+}
+
 /** A file from the API (the token travels in a header, so a plain link cannot fetch it): saved under the server's file name. */
 async function download(path: string, fallback: string): Promise<void> {
   const res = await fetch(path, { headers: token ? { 'X-Titan-Token': token } : {} })
@@ -389,6 +415,10 @@ export const api = {
   rerun: (id: string) => post<{ run_id: string }>(`/api/runs/${id}/rerun`, {}),
   answer: (id: string) => request<RunAnswer>(`/api/runs/${id}/answer`),
   downloadAnswer: (id: string) => download(`/api/runs/${id}/answer.docx`, 'answer.docx'),
+  startCheck: (body: CheckRequest) => post<{ run_id: string }>('/api/check', body),
+  check: (id: string) => request<CheckRun>(`/api/runs/${id}`),
+  downloadCheck: (id: string) => download(`/api/runs/${id}/check.docx`, 'verify.docx'),
+  upload: uploadFile,
   server: () => request<ServerInfo>('/api/server'),
   restartServer: () => post<{ ok: boolean; started_at: string }>('/api/server/restart', {}),
   verifyRun: (id: string, claimIds: number[] = []) => post<{ verify_run_id: string }>(`/api/runs/${id}/verify`, { claim_ids: claimIds }),

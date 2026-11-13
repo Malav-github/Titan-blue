@@ -24,6 +24,7 @@ from sse_starlette.sse import EventSourceResponse
 
 import config
 from api import answer as answer_view
+import checking
 from api import probes
 from api.engine import TERMINAL, Engine, RunError
 from api.executors import MAX_UPLOAD_BYTES, save_upload
@@ -283,7 +284,42 @@ def create_app(registry: Registry | None = None, token: str | None = None,
             return {**engine.describe(run_id), "kind": "block"}
         if kind == "verify":
             return describe_verification(run_id, events)
+        if kind == "check":
+            return checking.describe(engine.runs, run_id)
         return describe_research(run_id, events)
+
+    class CheckRequest(BaseModel):
+        kind: Literal["text", "url", "file"]
+        text: str | None = None
+        url: str | None = None
+        upload_id: str | None = None
+        subject: str | None = None
+
+    @app.post("/api/check", status_code=202)
+    def start_check(body: CheckRequest):
+        """Verify: check a pasted text, a web page or an uploaded file against independent sources (a run of its own)."""
+        problems = []
+        if body.kind == "text" and not (body.text or "").strip():
+            problems.append("paste the text to check")
+        if body.kind == "text" and len(body.text or "") > checking.MAX_TEXT_CHARS:
+            problems.append(f"the text is longer than {checking.MAX_TEXT_CHARS:,} characters; check it in parts")
+        if body.kind == "url" and not re.match(r"https?://\S+$", (body.url or "").strip()):
+            problems.append("give a web address that starts with http:// or https://")
+        if body.kind == "file" and not re.fullmatch(r"[0-9a-f]{64}", body.upload_id or ""):
+            problems.append("upload the file first")
+        if problems:
+            raise HTTPException(422, {"problems": problems})
+        return {"run_id": jobs.start_check(body.model_dump(), engine.uploads_dir)}
+
+    @app.get("/api/runs/{run_id}/check.docx")
+    def check_docx(run_id: str):
+        if run_kind(engine.runs.events(run_id)) != "check":
+            raise HTTPException(404, "No such check")
+        d = checking.describe(engine.runs, run_id)
+        if not d["statements"]:
+            raise HTTPException(409, "Nothing has been checked yet")
+        return Response(answer_view.check_docx(d), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        headers={"Content-Disposition": f'attachment; filename="{answer_view.filename({"question": d["title"]})}"'})
 
     def answer_of(run_id: str) -> tuple[dict, dict | None]:
         events = engine.runs.events(run_id)
@@ -371,12 +407,15 @@ def create_app(registry: Registry | None = None, token: str | None = None,
     WAITING = {"paused", "awaiting_approval", "needs_capability", "needs_source"}
 
     def research_status(run_id: str) -> str:
-        if run_kind(engine.runs.events(run_id)) not in ("research", "verify"):
+        if run_kind(engine.runs.events(run_id)) not in ("research", "verify", "check"):
             raise HTTPException(404, "No such research or verification run")
         return engine.runs.status(run_id)
 
     def is_verify(run_id: str) -> bool:
         return run_kind(engine.runs.events(run_id)) == "verify"
+
+    def is_check(run_id: str) -> bool:
+        return run_kind(engine.runs.events(run_id)) == "check"
 
     @app.post("/api/runs/{run_id}/pause", status_code=202)
     def pause_run(run_id: str):
@@ -396,7 +435,8 @@ def create_app(registry: Registry | None = None, token: str | None = None,
             return {"ok": True, "status": "running"}
         if status != "paused":
             raise HTTPException(409, {"problems": [f"this run is {status}, not paused"]})
-        (jobs.resume_verification(run_id) if is_verify(run_id) else jobs.resume_research(run_id, None))
+        (jobs.resume_check(run_id) if is_check(run_id) else jobs.resume_verification(run_id) if is_verify(run_id)
+         else jobs.resume_research(run_id, None))
         return {"ok": True, "status": "queued"}
 
     @app.post("/api/runs/{run_id}/stop", status_code=202)
@@ -407,7 +447,8 @@ def create_app(registry: Registry | None = None, token: str | None = None,
             raise HTTPException(409, {"problems": [f"this run is already {status}"]})
         engine.runs.emit(run_id, "api", "stop_requested", {})
         if status in WAITING:
-            (jobs.stop_verification(run_id) if is_verify(run_id) else jobs.stop_research(run_id))   # not working now: end it now
+            (jobs.stop_check(run_id) if is_check(run_id) else jobs.stop_verification(run_id) if is_verify(run_id)
+             else jobs.stop_research(run_id))                                                         # not working now: end it now
         return {"ok": True, "status": "stopping"}
 
     @app.post("/api/runs/{run_id}/rerun", status_code=202)

@@ -21,7 +21,7 @@ function CandidateView({ c }: { c: Candidate }) {
 
       {c.verified_facts.length > 0 && (
         <div className="mt-3">
-          <h4 className="text-sm font-semibold">Facts backed by a quote from a page Titan read</h4>
+          <h4 className="text-sm font-semibold">Facts backed by a quote from a page WrAI8 read</h4>
           <ul className="mt-1 flex flex-col gap-2">
             {c.verified_facts.map((f) => (
               <li key={f.field + f.quote} className="rounded-md border border-line p-2 text-sm">
@@ -39,7 +39,7 @@ function CandidateView({ c }: { c: Candidate }) {
       {plan && (
         <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
           <dt className="text-muted">Host</dt><dd><Mono>{plan.host}</Mono> <TierBadge tier={plan.tier} /></dd>
-          <dt className="text-muted">Key</dt><dd>{plan.key_env ? <>Put it in <Mono>.env</Mono> as <Mono>{plan.key_env}</Mono> (Titan checks the name only)</> : 'None needed'}</dd>
+          <dt className="text-muted">Key</dt><dd>{plan.key_env ? <>Put it in <Mono>.env</Mono> as <Mono>{plan.key_env}</Mono> (WrAI8 checks the name only)</> : 'None needed'}</dd>
           <dt className="text-muted">Endpoints</dt><dd className="break-words">{Object.keys(plan.endpoints).join(', ')}</dd>
           <dt className="text-muted">Test call</dt><dd><Mono>{plan.smoke_test.endpoint}</Mono></dd>
           <dt className="text-muted">Limits</dt><dd>{plan.budget.max_calls_per_day} calls a day, {plan.budget.max_calls_per_run} per run, {plan.rate_limit_per_minute} a minute</dd>
@@ -75,7 +75,7 @@ function GateView({ req, gate }: { req: CapabilityRequest; gate: Gate }) {
       <h2 id="gate-h" className="text-xl font-semibold">Your decision</h2>
       {gate.candidates.map((c) => <CandidateView key={c.connector_id} c={c} />)}
       <Card>
-        <p className="text-sm"><strong>Titan’s recommendation:</strong> {gate.recommendation.choice}</p>
+        <p className="text-sm"><strong>WrAI8’s recommendation:</strong> {gate.recommendation.choice}</p>
         <p className="mt-1 text-sm text-muted">The reasoning below was written by a model and is an opinion, not a verified fact: {gate.recommendation.reasoning}</p>
       </Card>
       {gate.note && <p role="alert" className="rounded-md bg-warn-bg p-3 text-sm text-warn">{gate.note}</p>}

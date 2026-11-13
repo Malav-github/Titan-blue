@@ -49,6 +49,8 @@ const DESCRIBE: Record<string, [string, Fmt]> = {
   api_failed: ['A connector call failed', (p) => `${p.connector}.${p.endpoint}: ${short(p.error, 80)}`],
   capability_needed: ['Needs a data source', (p) => short(p.need, 120)],
   statements_answer: ['Statement found: the table is the answer', (p) => (p.statements ?? []).map((t: { title: string; url: string }) => `${t.title} (${short(t.url, 50)})`).join('; ')],
+  statements_found: ['Statements to check', (p) => `${p.checkable} of ${(p.statements ?? []).length} can be checked (a figure, a date, a role or an event); the rest are forecasts, opinions or headings`],
+  statement_checked: ['Statement checked', (p) => `#${p.n}: ${p.outcome}`],
   statement_not_matched: ['Statement not found for the period asked', (p) => (p.items ?? []).map((i: { item: string; why: string }) => `${i.item}: ${i.why}`).join('; ')],
   statements_read: ['Read financial statements', (p) => `${short(p.url, 60)} · ${(p.statements ?? []).map((t: { statement: string }) => t.statement).join(', ')}`],
   statements_doubt: ['Statement figures to double-check', (p) => `${p.doubt_count} figure${p.doubt_count === 1 ? '' : 's'} in doubt${(p.unread_pages ?? []).length ? ` · ${p.unread_pages.length} page(s) unread` : ''}`],

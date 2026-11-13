@@ -98,19 +98,25 @@ class Verifier:
 
     # -- one claim ------------------------------------------------------------------------------------------------------
 
-    def verify_claim(self, values: dict, row: dict, verify_id: str) -> tuple[str, list[dict]]:
+    def verify_claim(self, values: dict, row: dict, verify_id: str, same_document=None) -> tuple[str, list[dict]]:
+        """`same_document(sha) -> bool`: a page that is the checked text itself (Verify: a copy of a pasted text), which is
+        never a second source."""
         claim = self.store.get_claim(row["claim_id"])
         source = self.store.get_source(claim["source_sha256"])
         names = self.r._names(values) or [values.get("subject") or ""]
         fact = (values.get("checklist") or [""])[values.get("claim_items", {}).get(str(claim["claim_id"]), 0)] if values.get("checklist") else ""
         checks = [self._source_check(claim, source)]
         target = self._target(values, claim, fact)
-        second, contradiction, newer = self._search_checks(values, claim, source, names, fact, verify_id, target)
+        second, contradiction, newer = self._search_checks(values, claim, source, names, fact, verify_id, target, same_document)
         checks += [second, contradiction, newer, self._figures_check(values, claim, names, target)]
         gone = checks[0]["result"] in ("quote gone", "unreachable")
+        # the figure equals the company's own filed statements, read from another document than the claim's: the company's
+        # financial statements are a stronger second source than a news page (never the claim's own document)
+        by_statements = checks[-1]["result"] == "matches" and any(
+            f["source_sha256"] != claim["source_sha256"] for f in checks[-1].get("sources") or [])
         if checks[0]["result"] == "quote gone" or contradiction["result"] == "found" or checks[-1]["result"] == "differs":
             outcome = "contradicted"
-        elif second["result"] == "found" and not gone:
+        elif (second["result"] == "found" or by_statements) and not gone:
             outcome = "corroborated"
         else:
             outcome = "unconfirmed"
@@ -176,7 +182,7 @@ class Verifier:
         return False, disagree
 
     def _search_checks(self, values: dict, claim, source, names: list[str], fact: str, verify_id: str,
-                       target: dict | None = None) -> tuple[dict, dict, dict]:
+                       target: dict | None = None, same_document=None) -> tuple[dict, dict, dict]:
         value = (claim["value"] or "").strip()
         numbers, words = self._terms(claim, fact, names)
         if target:                                     # an amount: search for the line item and the period, not the table's cells
@@ -185,6 +191,7 @@ class Verifier:
             words = list(dict.fromkeys([*target["label"].lower().split(), *fact_words]))[:6]
             from skills.temporal.periods import find_periods
             when = next((p.raw for p in find_periods(f"{fact} {values.get('question', '')}")), "")    # "Q3 2026": the period asked
+            words = [w for w in words if w not in when.lower().split()]                              # not 'third third quarter'
             query = " ".join([names[0] if names else "", *words[:3], when]).strip()
         else:
             anchor = value or (numbers[0] if numbers else "")
@@ -210,7 +217,7 @@ class Verifier:
             except Exception:
                 continue
             groups = self.r._documents([claim["source_sha256"], sha])
-            if groups.get(sha) == groups.get(claim["source_sha256"]):
+            if groups.get(sha) == groups.get(claim["source_sha256"]) or (same_document and same_document(sha)):
                 continue                                        # a copy of the same document is not a second source
             raw = Path(self.store.get_source(sha)["text_path"]).read_text(encoding="utf-8")
             for sent in sentences.split(raw):
@@ -266,7 +273,9 @@ class Verifier:
             return {"check": "figures", "result": "no figures", "detail": "the quote states no figure the statements cover"}
         worst = next((r for r in results if r["verdict"] == "differs"), None) or next(
             (r for r in results if r["verdict"] in ("matches", "found")), results[0])
-        return {"check": "figures", "result": worst["verdict"], "detail": worst["why"]}
+        used = list({(f.get("source_sha256"), f.get("source_url")) for f in worst.get("compared_with") or []})
+        return {"check": "figures", "result": worst["verdict"], "detail": worst["why"],
+                "sources": [{"source_sha256": sha, "url": url} for sha, url in used if sha]}
 
 
 def _same_kind(ours: list[str], theirs: list[str]) -> bool:

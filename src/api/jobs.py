@@ -17,10 +17,10 @@ _COUNT = threading.Lock()
 
 
 def run_kind(events: list[dict]) -> str | None:
-    """block | research, from the first event of a run. None for an unknown run."""
+    """block | research | verify | check, from the first event of a run. None for an unknown run."""
     for e in events:
         if e["type"] == "run_started":
-            return "block" if "graph" in e["payload"] else e["payload"].get("kind") if e["payload"].get("kind") == "verify" else "research"
+            return "block" if "graph" in e["payload"] else e["payload"]["kind"] if e["payload"].get("kind") in ("verify", "check") else "research"
         if e["type"] == "queued":
             return e["payload"].get("kind")
     return None
@@ -159,6 +159,42 @@ class Jobs:
             self.verifier.resume(verify_id)
         except Exception as exc:
             self.runs.emit(verify_id, "api", "run_failed", {"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
+
+    # -- Verify: a text, a link or a file checked against independent sources (checking.py) --------------------------------
+
+    @property
+    def checker(self):
+        from checking import Checker
+        return Checker(self.runner)
+
+    def start_check(self, request: dict, uploads_dir=None) -> str:
+        check_id = uuid.uuid4().hex
+        from checking import short_title
+        title = request.get("url") or short_title(request.get("text") or "") or "a document"
+        self.runs.emit(check_id, "api", "queued", {"kind": "check", "question": f"Verify: {title}",
+                                                   "input": {"kind": request.get("kind"), "title": title}})
+        self._submit(self._start_check, check_id, request, uploads_dir)
+        return check_id
+
+    def _start_check(self, check_id: str, request: dict, uploads_dir) -> None:
+        try:
+            self.checker.start(check_id, request, uploads_dir)
+        except Exception as exc:
+            self.runs.emit(check_id, "api", "run_failed", {"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
+
+    def resume_check(self, check_id: str) -> None:
+        self.runs.emit(check_id, "api", "queued", {"kind": "check"})
+        self._submit(self._resume_check, check_id)
+
+    def _resume_check(self, check_id: str) -> None:
+        try:
+            self.checker.resume(check_id)
+        except Exception as exc:
+            self.runs.emit(check_id, "api", "run_failed", {"error": f"{type(exc).__name__}: {str(exc)[:300]}"})
+
+    def stop_check(self, check_id: str) -> None:
+        """A paused check: end it, keeping the statements checked so far."""
+        self.checker._finish(check_id, stopped=True)
 
     def stop_verification(self, verify_id: str) -> None:
         """A paused verification: end it, keeping the claims verified so far."""

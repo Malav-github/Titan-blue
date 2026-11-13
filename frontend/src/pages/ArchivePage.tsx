@@ -24,7 +24,7 @@ export function ArchivePage() {
           <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
             <dt className="text-muted">Name</dt><dd><Mono>{m.id}</Mono></dd>
             <dt className="text-muted">On disk</dt><dd><Mono>data/archives/{m.id}/</Mono></dd>
-            {m.titan_commit && <><dt className="text-muted">Titan version</dt><dd><Mono>{m.titan_commit}</Mono></dd></>}
+            {m.titan_commit && <><dt className="text-muted">WrAI8 version</dt><dd><Mono>{m.titan_commit}</Mono></dd></>}
             <dt className="text-muted">Holds</dt><dd><ul className="list-disc pl-5">{m.contains.map((c) => <li key={c}>{c}</li>)}</ul></dd>
           </dl>
           <p className="mt-3 flex flex-wrap items-center gap-2 text-sm">

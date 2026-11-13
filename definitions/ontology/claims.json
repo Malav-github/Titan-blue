@@ -1,0 +1,459 @@
+{
+  "id": "claims",
+  "version": "0.1-draft",
+  "status": "DRAFT FOR REVIEW. Nothing reads this file yet. Once agreed, code will validate it at start-up like the other ontologies.",
+  "about": "What kinds of claim Titan verifies, and how each kind is settled. A statement is first split into atomic claims (each a word-for-word span of the original) with the qualifiers attached to it; each atom gets a type and a subtype from this file; the subtype says which sources can settle it, which checks apply, how it typically goes wrong, and how its result is worded. Types are about what is ASSERTED (an event, a quantity, a cause, a judgment), not about the topic. Event subtypes reuse the predicates of company_events.json; source kinds reuse the document types of sources.json. Examples use made-up companies (Northwind, Contoso, Litware, Tailspin, Acme, Fabrikam, Woodgrove) so they can never be mistaken for evidence about a real one.",
+
+  "principles": [
+    "Code first. Patterns, registries, filings and arithmetic settle what they can; a model is only a judge on a short (atom, quote) pair with fixed labels, and every quote it judges is first found word for word in its source by code.",
+    "An atom is checked on its own, and so is each qualifier: a claim is often wrong only in its period, scope, attribution or hedge.",
+    "The checked text, its own site and copies of it are never evidence for it.",
+    "Absence of evidence is reported with its search scope ('no 8-K Item 5.02 filed since 2026-08-26'), never as 'false'.",
+    "A judgment is not called true or false: its grounds are listed (observable indicators), or it is said to be an opinion.",
+    "Newer sources supersede older ones for states of the world; for events, the issuer's own document outranks reports about it.",
+    "Every verdict says what would settle what is left open."
+  ],
+
+  "decomposition": {
+    "about": "How a statement becomes atoms. Code splits on the connectors below; a model may split a compound sentence code cannot, but each atom must be a contiguous word-for-word span of the statement, and the atoms together must cover every checkable word.",
+    "split_on": [
+      {"id": "conjunction", "cues": "\\b(?:and|while|whereas|but|as well as)\\b", "note": "only between two clauses that each have a verb"},
+      {"id": "cause", "cues": "\\b(?:over|because of|due to|amid|after|following|as a result of|citing|driven by|thanks to|led to|resulting in)\\b", "note": "the event and its cause become two atoms; the cause atom is typed causal"},
+      {"id": "apposition", "cues": ",\\s+(?:the|its|a|an)\\s+[a-z]", "note": "'Jordan Reyes, the chief executive of Contoso, said ...' holds a role atom and a speech atom"},
+      {"id": "relative", "cues": "\\b(?:which|who|that)\\s+(?:is|was|has|had|became)\\b", "note": "a relative clause asserting something is its own atom"},
+      {"id": "evaluation", "cues": "\\b(?:failure|crisis|scandal|struggling|troubled|record|landmark|historic|strong|weak|leading|dominant)\\b", "note": "a characterising word inside an event claim becomes an evaluative atom"}
+    ],
+    "example": {
+      "statement": "Contoso CEO Jordan Reyes resigns over governance failure",
+      "atoms": [
+        {"span": "Contoso CEO Jordan Reyes", "type": "state", "subtype": "role_holder"},
+        {"span": "Jordan Reyes resigns", "type": "event", "subtype": "leadership_change"},
+        {"span": "resigns over governance failure", "type": "causal", "subtype": "stated_cause"},
+        {"span": "governance failure", "type": "evaluative", "subtype": "characterisation", "indicator_set": "governance_failure"}
+      ]
+    }
+  },
+
+  "qualifiers": [
+    {"id": "time", "label": "Time of the claim", "cues": "\\b(?:as of|as at|on|in|since|until|by|currently|now|today|recently|last (?:week|month|year|quarter))\\b",
+     "effect": "fixes when the claim must hold; a state claim is checked at that time, else at today", "checks": ["period_alignment", "currency_of_state"]},
+    {"id": "period", "label": "Reporting period", "cues": "\\b(?:Q[1-4]|quarter|fiscal|FY|half|H[12]|year[- ]to[- ]date|YTD|trailing|twelve months|nine months|three months)\\b",
+     "effect": "a figure is compared only for the same period (skills/temporal/reporting.py)", "checks": ["period_alignment"]},
+    {"id": "scope", "label": "Scope", "cues": "\\b(?:consolidated|standalone|segment|division|unit|region|in (?:the )?(?:US|U\\.S\\.|Europe|China|India|Asia)|worldwide|global(?:ly)?|excluding|including|organic|adjusted|non-GAAP|GAAP)\\b",
+     "effect": "a segment's or an adjusted figure is not the company's reported total", "checks": ["scope_alignment"]},
+    {"id": "attribution", "label": "Who says so", "cues": "\\b(?:according to|said|says|stated|reported by|told|per|cited|in a (?:statement|filing|letter|interview))\\b",
+     "effect": "the claim becomes 'X says Y': checked as speech; Y itself is checked only if asked", "checks": ["attribution_trace"]},
+    {"id": "hedge", "label": "Certainty", "cues": "\\b(?:reportedly|allegedly|is said to|rumou?red|sources say|people familiar|may have|appears to|is believed to|unconfirmed)\\b",
+     "effect": "a hedged claim is verified as 'it is reported', and a verdict never drops the hedge", "checks": ["attribution_trace"]},
+    {"id": "quantifier", "label": "How many", "cues": "\\b(?:all|every|most|majority|many|some|few|none|no|only|nearly all|half)\\b",
+     "effect": "'most' needs a count over a defined set; 'all' and 'none' are bounded absence or universal claims", "checks": ["comparison_set", "search_scope"]},
+    {"id": "precision", "label": "Precision", "cues": "\\b(?:about|around|approximately|roughly|nearly|almost|over|more than|less than|at least|up to|some|close to)\\b",
+     "effect": "the comparison tolerance: 'about $3.7 billion' agrees with 3,678 million; 'more than $4 billion' does not", "checks": ["number_normalise", "precision"]},
+    {"id": "unit", "label": "Unit or currency", "cues": "[$€£¥₹₱]|\\b(?:USD|EUR|GBP|INR|PHP|dollars?|euros?|rupees?|crore|lakh|million|billion|thousand|percent|%|basis points|bps|shares|employees|units)\\b",
+     "effect": "a figure in another unit or currency is converted only when the source states the rate; else not compared", "checks": ["unit_currency"]},
+    {"id": "condition", "label": "Condition", "cues": "\\b(?:if|unless|subject to|pending|provided that|once|conditional on)\\b",
+     "effect": "a conditional claim is checked as announced-with-condition, never as done", "checks": ["event_stage"]},
+    {"id": "negation", "label": "Negation", "cues": "\\b(?:not|no|never|neither|nor|denied|denies|without)\\b",
+     "effect": "the claim asserts an absence or a denial: typed absence, or speech when someone denies", "checks": ["search_scope", "counter_search"]}
+  ],
+
+  "checks": [
+    {"id": "verbatim_quote", "by": "code", "does": "the evidence sentence is found word for word in the archived source (as for every claim)"},
+    {"id": "entity_resolution", "by": "code", "does": "the organisation is resolved to one registrant or domain (SEC list, company site); several matches are said, never chosen"},
+    {"id": "name_variants", "by": "code", "does": "a person's name compared surname first, allowing misspellings and the name used versus the name filed (skills/roles)"},
+    {"id": "number_normalise", "by": "code", "does": "amounts compared as amounts: '$3.68 billion' is 3,678 million (skills/statements/figures)"},
+    {"id": "precision", "by": "code", "does": "the tolerance the claim's own wording allows ('about', 'more than', the digits written)"},
+    {"id": "unit_currency", "by": "code", "does": "the same unit and currency, or a stated conversion"},
+    {"id": "period_alignment", "by": "code", "does": "the evidence covers the claim's period, dated by the company's fiscal year (skills/temporal/reporting)"},
+    {"id": "scope_alignment", "by": "code", "does": "consolidated vs segment, GAAP vs adjusted, region: the same scope or said otherwise"},
+    {"id": "currency_of_state", "by": "code", "does": "for a state of the world, the newest source wins; an older one is reported as 'true as of <date>'"},
+    {"id": "one_holder", "by": "code", "does": "one holder per role per company at a time (company_events rule)"},
+    {"id": "filing_obligation", "by": "code", "does": "an event a US registrant must file (8-K items) is looked for in the filings; none within the window is evidence, said with the window"},
+    {"id": "event_order", "by": "code", "does": "completed after announced; terminated after announced (company_events rule)"},
+    {"id": "event_stage", "by": "code", "does": "announced, agreed, pending, completed or terminated: a claim of completion needs a completion"},
+    {"id": "counter_search", "by": "code", "does": "a search aimed at denials, corrections and the opposite ('<company> denies', 'not', 'correction')"},
+    {"id": "attribution_trace", "by": "code", "does": "who said it first: the earliest dated source carrying it, and whether later ones only repeat it"},
+    {"id": "recompute", "by": "code", "does": "a derived figure (margin, growth, ratio) is recomputed from the reported figures it rests on"},
+    {"id": "comparison_set", "by": "code", "does": "a comparative names its set (peers, market, index); without one the claim is bounded to the set that could be checked, and said so"},
+    {"id": "search_scope", "by": "code", "does": "an absence or universal claim is checked within a stated scope (sources, period), and the verdict names it"},
+    {"id": "indicator_scan", "by": "code", "does": "an evaluative term is mapped to observable indicators (indicator_sets below) and those are looked for"},
+    {"id": "entailment", "by": "model_judge", "does": "does this quote state the atom, in other words? Labels: states | contradicts | related | unrelated. Code has verified the quote; disagreement with code's own match is 'needs review'"},
+    {"id": "cause_attribution", "by": "model_judge", "does": "does this quote give the cause, and who gives it (the company, a named person, unnamed sources, the writer)? Code finds the candidate sentences by the cause's words"}
+  ],
+
+  "settled_by": {
+    "registry": "an official register settles it alone (SEC company list, a stock exchange listing, a companies registry)",
+    "issuer_document": "the issuer's own document settles it alone (a filing, its release, its site): Tier 1",
+    "filing": "an SEC filing settles it alone, and the absence of a required filing is evidence within its window",
+    "statements": "the company's financial statements read by code settle it (skills/statements)",
+    "independent_two": "two independent sources (not copies of one document), or one Tier 1/2 source (settling.py)",
+    "attributed": "settled as 'reported by X': the strongest attribution found is the verdict; the underlying fact stays open",
+    "computed": "recomputed from settled figures",
+    "indicators": "grounds listed from observable indicators; never called true or false",
+    "bounded": "true or false only within a stated set or scope, which the verdict names",
+    "said_only": "only whether it was said can be verified, not whether it will happen"
+  },
+
+  "atom_results": {
+    "supported": "the evidence states it, within its qualifiers",
+    "contradicted": "the evidence states otherwise for the same thing, period and scope",
+    "not_found": "no evidence either way within the search scope",
+    "qualifier_wrong": "the core is right, a qualifier is not (period, scope, unit, hedge, stage)",
+    "outdated": "it held at an earlier time and newer evidence shows it no longer does",
+    "grounds_listed": "an evaluative atom: its indicators, found or not",
+    "not_checkable": "an opinion, a prediction or a claim with nothing observable in it"
+  },
+
+  "verdicts": [
+    {"id": "corroborated", "label": "Corroborated", "meaning": "every checkable atom is supported"},
+    {"id": "partial", "label": "Partly corroborated", "meaning": "the core atom is supported; another atom (a cause, a characterisation) is not found"},
+    {"id": "misleading", "label": "Misleading", "meaning": "the atoms are true but a qualifier is wrong or a framing atom is unsupported, so the statement as a whole misleads (the right figure for the wrong period; a segment presented as the company; a hedge dropped)"},
+    {"id": "outdated", "label": "Outdated", "meaning": "true when first reported, no longer"},
+    {"id": "contradicted", "label": "Contradicted", "meaning": "the core atom is contradicted by evidence"},
+    {"id": "unconfirmed", "label": "Unconfirmed", "meaning": "nothing found either way for the core atom"},
+    {"id": "opinion", "label": "Opinion", "meaning": "an evaluative or forward-looking statement: its grounds are listed, it is not called true or false"},
+    {"id": "not_checkable", "label": "Not checkable", "meaning": "nothing in it can be observed"}
+  ],
+
+  "combination_rules": [
+    {"when": "core contradicted", "verdict": "contradicted"},
+    {"when": "core outdated", "verdict": "outdated"},
+    {"when": "core supported and any qualifier_wrong", "verdict": "misleading", "say": "name the qualifier and what the evidence gives for it"},
+    {"when": "core supported and a causal atom contradicted", "verdict": "misleading", "say": "the event is confirmed; the cause given is contradicted by <source>"},
+    {"when": "core supported and a causal or evaluative atom not_found", "verdict": "partial", "say": "what happened is confirmed; '<span>' is not"},
+    {"when": "core supported and an evaluative atom grounds_listed", "verdict": "partial", "say": "list the indicators found, or 'no filed indicator of <term>'"},
+    {"when": "all checkable atoms supported", "verdict": "corroborated"},
+    {"when": "core not_found", "verdict": "unconfirmed"},
+    {"when": "only evaluative or forward-looking atoms", "verdict": "opinion"},
+    {"when": "no checkable atom", "verdict": "not_checkable"}
+  ],
+  "core_atom": "The atom the statement is about: an event's occurrence, a quantity's value, a state's holder. In 'X resigns over Y', the resignation; Y is a causal atom attached to it.",
+
+  "types": [
+    {
+      "id": "attribute",
+      "label": "Attribute",
+      "definition": "A lasting property of an entity: what it is called, where it is, when it began.",
+      "subtypes": [
+        {"id": "identifier", "label": "Identifier", "definition": "A code that names the entity: ticker, CIK, ISIN, LEI, registration number.",
+         "cues": "\\b(?:ticker|CIK|ISIN|LEI|CUSIP|symbol|trades (?:as|under)|listed as|registration number)\\b",
+         "example": "Northwind trades on Nasdaq under the ticker NWND.",
+         "evidence": {"sources": ["sec_filing", "company_page"], "settled_by": "registry", "checks": ["entity_resolution", "verbatim_quote"]},
+         "failure_modes": ["a former ticker", "a parent's or a subsidiary's identifier", "another class of shares"]},
+        {"id": "founding", "label": "Founding", "definition": "When and by whom the entity was founded or incorporated.",
+         "cues": "\\b(?:founded|established|incorporated|formed|started|set up|co-?founded)\\b",
+         "example": "Contoso was founded in 2007 by Jordan Reyes.",
+         "evidence": {"sources": ["form_10k", "company_page", "reference_entry", "news_article"], "settled_by": "independent_two",
+                      "checks": ["verbatim_quote", "name_variants", "counter_search"]},
+         "failure_modes": ["incorporation year vs launch year", "the year a predecessor was founded", "a co-founder left out or added"]},
+        {"id": "location", "label": "Headquarters or location", "definition": "Where the entity is based or operates.",
+         "cues": "\\b(?:headquartered|based in|head office|HQ|principal executive offices|located in)\\b",
+         "example": "Litware is headquartered in Austin, Texas.",
+         "evidence": {"sources": ["form_10k", "form_10q", "company_page"], "settled_by": "issuer_document", "checks": ["verbatim_quote", "currency_of_state"]},
+         "failure_modes": ["a former headquarters", "a large office taken for the head office"]},
+        {"id": "legal_name", "label": "Legal name or form", "definition": "The entity's registered name, legal form or former names.",
+         "cues": "\\b(?:formerly(?: known as)?|renamed|changed its name|doing business as|d/b/a|a subsidiary of|wholly owned)\\b",
+         "example": "Tailspin Inc., formerly Tailspin Toys, changed its name in 2024.",
+         "evidence": {"sources": ["sec_filing", "form_8k", "company_page"], "settled_by": "registry", "checks": ["entity_resolution", "verbatim_quote"]},
+         "failure_modes": ["brand vs legal entity", "parent vs subsidiary"]},
+        {"id": "classification", "label": "Industry or listing", "definition": "The industry, exchange or index the entity belongs to.",
+         "cues": "\\b(?:listed on|member of the|constituent of|S&P 500|Nasdaq-100|Dow Jones|industry|sector|SIC|NAICS)\\b",
+         "example": "Fabrikam joined the S&P 500 in March 2026.",
+         "evidence": {"sources": ["press_release", "news_article", "sec_filing"], "settled_by": "issuer_document", "checks": ["verbatim_quote", "currency_of_state"]},
+         "failure_modes": ["added vs announced to be added", "removed since"]}
+      ]
+    },
+    {
+      "id": "state",
+      "label": "State at a time",
+      "definition": "Something true at a point in time that can change: who holds a role, who owns what, how many employees.",
+      "subtypes": [
+        {"id": "role_holder", "label": "Role holder", "definition": "Who holds a role at an organisation.",
+         "cues": "\\b(?:CEO|CFO|COO|CTO|chief \\w+ officer|chair(?:man|woman|person)?|president|director|board member|founder)\\b",
+         "example": "Jordan Reyes is the chief executive officer of Contoso.",
+         "company_events": ["leadership.appointed", "leadership.departed"],
+         "evidence": {"sources": ["form_10q", "form_10k", "form_8k", "proxy_statement", "company_page"], "settled_by": "filing",
+                      "checks": ["entity_resolution", "name_variants", "one_holder", "currency_of_state", "filing_obligation"],
+                      "how": "the officer who certified the latest 10-Q or 10-K (Exhibit 31.1 chief executive, 31.2 chief financial), then 8-K Item 5.02 since (skills/roles)"},
+         "failure_modes": ["a misspelled or alternate name", "a former holder", "interim vs permanent", "co-CEO", "a title that is not the role (president of a division)"]},
+        {"id": "ownership", "label": "Ownership or stake", "definition": "Who owns an entity or what share of it.",
+         "cues": "\\b(?:owns?|stake|shareholding|holds? \\d|majority|controlling interest|beneficial owner|subsidiary of|% of)\\b",
+         "example": "Woodgrove holds a 12% stake in Litware.",
+         "evidence": {"sources": ["ownership_filing", "proxy_statement", "form_10k", "press_release"], "settled_by": "filing",
+                      "checks": ["entity_resolution", "number_normalise", "precision", "currency_of_state"]},
+         "failure_modes": ["voting vs economic interest", "a stake since sold", "fully diluted vs outstanding"]},
+        {"id": "headcount", "label": "Size", "definition": "How many employees, customers, stores or users an entity has.",
+         "cues": "\\b(?:employees|staff|headcount|workforce|customers|users|subscribers|stores|locations|offices)\\b",
+         "example": "Northwind had about 12,000 employees at the end of 2025.",
+         "evidence": {"sources": ["form_10k", "company_page", "investor_presentation"], "settled_by": "issuer_document",
+                      "checks": ["number_normalise", "precision", "period_alignment", "scope_alignment", "currency_of_state"]},
+         "failure_modes": ["full-time vs total", "including contractors", "a figure from an earlier year", "monthly vs daily active users"]},
+        {"id": "status", "label": "Operating status", "definition": "Whether an entity, product or deal is active, closed, bankrupt, acquired, delisted.",
+         "cues": "\\b(?:bankrupt|insolvent|delisted|defunct|shut down|ceased operations|went private|acquired by|is now part of|discontinued)\\b",
+         "example": "Tailspin filed for Chapter 11 protection in May 2026.",
+         "company_events": ["acquisition.completed", "legal.action"],
+         "evidence": {"sources": ["form_8k", "press_release", "news_article"], "settled_by": "filing", "checks": ["filing_obligation", "event_stage", "currency_of_state"]},
+         "failure_modes": ["filed vs emerged", "announced vs completed", "a unit vs the company"]}
+      ]
+    },
+    {
+      "id": "event",
+      "label": "Event",
+      "definition": "Something that happened (or was announced) at a time. Each subtype maps to company_events predicates, which give its required parts, its key date and its rules.",
+      "subtypes": [
+        {"id": "transaction", "label": "Transaction", "definition": "An acquisition, merger, divestiture, spin-off, investment or funding round.",
+         "company_events": ["acquisition.announced", "acquisition.completed", "acquisition.terminated", "merger.announced", "divestiture.announced",
+                            "divestiture.completed", "spin_off.announced", "investment.made", "funding_round.raised", "ipo.priced"],
+         "example": "Contoso completed its $2.1 billion acquisition of Litware on October 1, 2026.",
+         "evidence": {"sources": ["form_8k", "press_release", "registration_statement", "news_article"], "settled_by": "issuer_document",
+                      "checks": ["entity_resolution", "event_stage", "event_order", "number_normalise", "precision", "filing_obligation", "counter_search"],
+                      "filing_items": {"1.01": "material agreement", "2.01": "acquisition or disposal completed", "1.02": "agreement terminated"}},
+         "failure_modes": ["announced reported as completed", "the price including debt vs equity value", "a terminated deal reported as done", "the wrong buyer in a consortium"]},
+        {"id": "leadership_change", "label": "Leadership change", "definition": "An appointment, departure or succession in a senior role or on the board.",
+         "company_events": ["leadership.appointed", "leadership.departed"],
+         "example": "Contoso's chief financial officer, Sam Okafor, will step down on June 30, 2026.",
+         "evidence": {"sources": ["form_8k", "press_release", "proxy_statement"], "settled_by": "filing",
+                      "checks": ["name_variants", "one_holder", "filing_obligation", "event_stage", "counter_search"],
+                      "filing_items": {"5.02": "departure or appointment of directors and certain officers (within four business days)"}},
+         "failure_modes": ["a planned departure reported as done", "interim vs permanent", "resigned vs was removed", "the effective date taken for the announcement date"]},
+        {"id": "strategy", "label": "Strategic action", "definition": "A strategic review, restructuring, layoff, partnership or product launch.",
+         "company_events": ["strategic_review.announced", "restructuring.announced", "partnership.announced", "product.launched"],
+         "example": "Fabrikam announced it will cut 8% of its workforce.",
+         "evidence": {"sources": ["press_release", "form_8k", "news_article"], "settled_by": "issuer_document",
+                      "checks": ["event_stage", "number_normalise", "precision", "scope_alignment"],
+                      "filing_items": {"2.05": "costs of exit or disposal (restructuring)"}},
+         "failure_modes": ["a plan reported as done", "a percentage of one unit reported as of the company", "a partnership's scope overstated"]},
+        {"id": "financial_event", "label": "Financial event", "definition": "Results reported, guidance issued, a dividend or buyback announced.",
+         "company_events": ["results.reported", "guidance.issued", "capital_return.announced"],
+         "example": "Northwind raised its quarterly dividend to $0.42 per share.",
+         "evidence": {"sources": ["earnings_release", "form_8k", "form_10q", "form_10k"], "settled_by": "issuer_document",
+                      "checks": ["period_alignment", "number_normalise", "precision"], "filing_items": {"2.02": "results of operations"}},
+         "failure_modes": ["the wrong period", "a declared vs paid dividend", "an authorisation reported as a completed buyback"]},
+        {"id": "legal_regulatory", "label": "Legal or regulatory", "definition": "A lawsuit, settlement, fine, investigation, approval or ruling.",
+         "company_events": ["legal.action"],
+         "example": "Regulators fined Woodgrove $40 million over data handling.",
+         "evidence": {"sources": ["form_8k", "form_10q", "form_10k", "press_release", "news_article"], "settled_by": "independent_two",
+                      "checks": ["event_stage", "number_normalise", "counter_search", "attribution_trace"]},
+         "failure_modes": ["alleged reported as found", "a proposed fine reported as final", "an appeal left out", "a settlement 'without admitting' reported as an admission"]},
+        {"id": "other_event", "label": "Other event", "definition": "A dated event no other subtype fits.",
+         "company_events": ["other.fact"], "example": "Acme opened its first store in Lisbon in 2025.",
+         "evidence": {"sources": ["press_release", "news_article"], "settled_by": "independent_two", "checks": ["verbatim_quote", "counter_search"]},
+         "failure_modes": ["the date of the announcement vs the date of the event"]}
+      ]
+    },
+    {
+      "id": "quantity",
+      "label": "Quantity",
+      "definition": "A figure: reported, derived from others, estimated by a third party, or a market price.",
+      "subtypes": [
+        {"id": "reported_metric", "label": "Reported figure", "definition": "A figure the company reports: revenue, net income, EPS, cash, debt.",
+         "company_events": ["results.reported"],
+         "cues": "\\b(?:revenue|net sales|sales|net income|net loss|profit|EPS|earnings per share|operating income|cash|debt|assets|EBITDA)\\b",
+         "example": "Northwind reported revenue of $3.7 billion for the third quarter of 2026.",
+         "evidence": {"sources": ["form_10q", "form_10k", "earnings_release"], "settled_by": "statements",
+                      "checks": ["number_normalise", "precision", "unit_currency", "period_alignment", "scope_alignment"]},
+         "failure_modes": ["the wrong period", "adjusted reported as GAAP", "a segment reported as the company", "a restated figure", "millions vs billions"]},
+        {"id": "derived_metric", "label": "Derived figure", "definition": "A ratio or change computed from reported figures: margin, growth, share of total.",
+         "cues": "\\b(?:margin|growth|grew|rose|fell|increased|decreased|up|down|year[- ]over[- ]year|YoY|ratio|percent of|share of)\\b",
+         "example": "Contoso's operating margin widened to 24% in fiscal 2026.",
+         "evidence": {"sources": ["form_10q", "form_10k", "earnings_release"], "settled_by": "computed",
+                      "checks": ["recompute", "period_alignment", "scope_alignment", "precision"]},
+         "failure_modes": ["a different base period", "percentage points vs percent", "adjusted vs reported basis", "rounding presented as exact"]},
+        {"id": "estimate", "label": "Third-party estimate", "definition": "A figure an analyst, research firm or reporter estimates: market share, market size, valuation, sales of a private company.",
+         "cues": "\\b(?:estimated|estimates|according to (?:research|analysts|data from)|market share|market size|valued at|worth|projected|forecast)\\b",
+         "example": "Litware holds about 30% of the market, according to research firm Tailspin Analytics.",
+         "evidence": {"sources": ["news_article", "web_page"], "settled_by": "attributed", "checks": ["attribution_trace", "precision", "period_alignment"]},
+         "failure_modes": ["the estimate presented as reported", "one firm's estimate presented as consensus", "an old estimate"]},
+        {"id": "market_price", "label": "Market price", "definition": "A share price, market capitalisation or trading move at a time.",
+         "cues": "\\b(?:shares (?:rose|fell|jumped|dropped|closed)|stock price|market (?:cap|capitalisation|capitalization|value)|trading at)\\b",
+         "example": "Fabrikam shares fell 9% on May 4, 2026.",
+         "evidence": {"sources": ["news_article"], "settled_by": "independent_two", "checks": ["period_alignment", "precision", "number_normalise"]},
+         "failure_modes": ["intraday vs close", "the wrong day", "a market cap at another date"]}
+      ]
+    },
+    {
+      "id": "speech",
+      "label": "Attributed speech",
+      "definition": "That someone said, wrote or announced something. What is verified is that it was said, by whom, where and when; whether it is true is a separate atom.",
+      "subtypes": [
+        {"id": "direct_quote", "label": "Direct quote", "definition": "Words in quotation marks attributed to a person or organisation.",
+         "cues": "[\"“][^\"”]{8,}[\"”]\\s*,?\\s*(?:said|says|wrote|according to)|(?:said|says|wrote)\\s*,?\\s*[\"“]",
+         "example": "\"We had a record quarter,\" said Jordan Reyes, Contoso's chief executive.",
+         "evidence": {"sources": ["press_release", "earnings_call_transcript", "news_article"], "settled_by": "issuer_document",
+                      "checks": ["verbatim_quote", "name_variants", "attribution_trace"]},
+         "failure_modes": ["words not said", "said by someone else", "cut so the meaning changes", "said years earlier"]},
+        {"id": "paraphrase", "label": "Reported speech", "definition": "What someone said, in other words.",
+         "cues": "\\b(?:said that|says that|stated that|told|explained|argued|claimed|announced that|warned)\\b",
+         "example": "Contoso's chief executive said demand for its chips exceeds supply.",
+         "evidence": {"sources": ["earnings_call_transcript", "press_release", "news_article"], "settled_by": "independent_two",
+                      "checks": ["entailment", "name_variants", "attribution_trace"]},
+         "failure_modes": ["a stronger claim than what was said", "a hedge dropped", "the context changed"]},
+        {"id": "position", "label": "Position or denial", "definition": "An organisation's stated position, a denial or a refusal to comment.",
+         "cues": "\\b(?:denied|denies|declined to comment|refused to|rejected|disputes|maintains that|confirmed)\\b",
+         "example": "Woodgrove denied that it is in talks to sell its payments unit.",
+         "evidence": {"sources": ["press_release", "news_article"], "settled_by": "issuer_document", "checks": ["verbatim_quote", "attribution_trace", "currency_of_state"]},
+         "failure_modes": ["a denial since retracted", "'declined to comment' reported as a denial"]}
+      ]
+    },
+    {
+      "id": "causal",
+      "label": "Cause or effect",
+      "definition": "That one thing happened because of another, or led to another. Usually attached to an event or a quantity (the core atom).",
+      "subtypes": [
+        {"id": "stated_cause", "label": "Cause given by the party", "definition": "The reason the company or person itself gives.",
+         "cues": "\\b(?:because|due to|as a result of|citing|over|after|following|driven by|attributed (?:it )?to)\\b",
+         "example": "Contoso said the decline was due to lower demand in China.",
+         "evidence": {"sources": ["press_release", "form_8k", "earnings_release", "earnings_call_transcript", "form_10q"], "settled_by": "issuer_document",
+                      "checks": ["cause_attribution", "verbatim_quote", "counter_search"]},
+         "failure_modes": ["a cause the company never gave", "one of several causes presented as the only one", "the writer's inference presented as the company's"]},
+        {"id": "reported_cause", "label": "Cause reported by others", "definition": "A reason reporters or unnamed sources give.",
+         "cues": "\\b(?:sources say|people familiar|according to (?:people|sources|reports)|reportedly|is said to have)\\b",
+         "example": "The chief executive left after a dispute with the board, people familiar with the matter said.",
+         "evidence": {"sources": ["news_article"], "settled_by": "attributed", "checks": ["cause_attribution", "attribution_trace", "counter_search"]},
+         "failure_modes": ["a single report repeated by others presented as many", "the attribution dropped"]},
+        {"id": "inferred_cause", "label": "Cause inferred", "definition": "A cause the writer draws, not stated by anyone.",
+         "example": "Shares fell as investors worried about governance.",
+         "evidence": {"sources": [], "settled_by": "indicators", "checks": ["indicator_scan"]},
+         "failure_modes": ["correlation presented as cause"]}
+      ]
+    },
+    {
+      "id": "evaluative",
+      "label": "Judgment",
+      "definition": "A characterisation that is not observed directly: a failure, a crisis, a leader, strong or weak. Checked through observable indicators, never called true or false.",
+      "subtypes": [
+        {"id": "characterisation", "label": "Characterisation", "definition": "A label for a situation or an entity.",
+         "cues": "\\b(?:failure|crisis|scandal|turmoil|troubled|struggling|embattled|healthy|robust|successful|disastrous|record|landmark|historic)\\b",
+         "example": "Contoso is a troubled company after a governance failure.",
+         "evidence": {"sources": ["form_8k", "form_10k", "news_article"], "settled_by": "indicators", "checks": ["indicator_scan"]},
+         "failure_modes": ["a label without any observable ground", "one indicator presented as a pattern"]},
+        {"id": "quality", "label": "Quality or standing", "definition": "How good, big or leading something is, without a measure given.",
+         "cues": "\\b(?:leading|leader|dominant|best|premier|top|world-class|innovative|market-leading)\\b",
+         "example": "Litware is a leading provider of payroll software.",
+         "evidence": {"sources": [], "settled_by": "indicators", "checks": ["indicator_scan", "comparison_set"]},
+         "failure_modes": ["a company's self-description repeated as fact"]}
+      ]
+    },
+    {
+      "id": "comparative",
+      "label": "Comparison",
+      "definition": "More, less, largest, first, only: true only within a set.",
+      "subtypes": [
+        {"id": "comparison", "label": "Comparison", "definition": "One thing more or less than another.",
+         "cues": "\\b(?:more than|less than|higher than|lower than|bigger than|smaller than|outpaced|ahead of|behind|twice|half of)\\b",
+         "example": "Northwind's revenue grew faster than Contoso's in 2025.",
+         "evidence": {"sources": ["form_10k", "earnings_release"], "settled_by": "computed", "checks": ["recompute", "period_alignment", "scope_alignment"]},
+         "failure_modes": ["different periods compared", "different measures compared (growth vs size)"]},
+        {"id": "superlative", "label": "Superlative or rank", "definition": "The largest, fastest, top-ranked within a set.",
+         "cues": "\\b(?:largest|biggest|smallest|fastest|highest|lowest|most|least|top \\d+|No\\. ?1|number one|ranked)\\b",
+         "example": "Fabrikam is the largest maker of industrial drones in Europe.",
+         "evidence": {"sources": ["news_article", "web_page"], "settled_by": "bounded", "checks": ["comparison_set", "attribution_trace", "period_alignment"]},
+         "failure_modes": ["no set named", "a ranking by one firm presented as fact", "an old ranking"]},
+        {"id": "priority", "label": "First or only", "definition": "The first to do something, or the only one.",
+         "cues": "\\b(?:first(?: ever)?|only|sole|unique|pioneer(?:ed)?|never before)\\b",
+         "example": "Tailspin was the first company to ship a solid-state battery scooter.",
+         "evidence": {"sources": ["news_article", "press_release"], "settled_by": "bounded", "checks": ["search_scope", "counter_search", "attribution_trace"]},
+         "failure_modes": ["a self-description repeated", "first in one market presented as first anywhere"]}
+      ]
+    },
+    {
+      "id": "forward_looking",
+      "label": "Forward-looking",
+      "definition": "About the future. What can be verified is that it was said, by whom and when; the outcome is checked later, if ever.",
+      "subtypes": [
+        {"id": "guidance", "label": "Company guidance", "definition": "A figure or range the company expects.",
+         "company_events": ["guidance.issued"],
+         "cues": "\\b(?:guidance|outlook|expects?|forecasts?|projects?|anticipates?)\\b.{0,60}\\b(?:revenue|earnings|EPS|margin|growth|sales)\\b",
+         "example": "Contoso expects fiscal 2027 revenue of $15 to $16 billion.",
+         "evidence": {"sources": ["earnings_release", "form_8k", "earnings_call_transcript"], "settled_by": "said_only",
+                      "checks": ["period_alignment", "number_normalise", "precision", "currency_of_state"]},
+         "failure_modes": ["withdrawn or revised guidance", "a range reported as a point", "the wrong period"]},
+        {"id": "plan", "label": "Plan or intention", "definition": "What an organisation plans or intends to do.",
+         "cues": "\\b(?:plans? to|intends? to|will|aims? to|is set to|is expected to|on track to)\\b",
+         "example": "Northwind plans to open a factory in Ohio in 2027.",
+         "evidence": {"sources": ["press_release", "form_8k", "news_article"], "settled_by": "said_only", "checks": ["attribution_trace", "currency_of_state"]},
+         "failure_modes": ["a plan since cancelled", "a plan reported as done"]},
+        {"id": "prediction", "label": "Prediction by others", "definition": "What analysts, reporters or others expect.",
+         "cues": "\\b(?:analysts expect|is forecast to|predicts?|consensus|estimates? that|could|may|might)\\b",
+         "example": "Analysts expect Fabrikam to return to profit next year.",
+         "evidence": {"sources": ["news_article"], "settled_by": "attributed", "checks": ["attribution_trace"]},
+         "failure_modes": ["one analyst presented as consensus"]}
+      ]
+    },
+    {
+      "id": "absence",
+      "label": "Absence or universal",
+      "definition": "That something has not happened, never happened, or holds for all. True only within a stated scope.",
+      "subtypes": [
+        {"id": "never", "label": "Never or not", "definition": "That something has not happened.",
+         "cues": "\\b(?:never|has not|have not|hasn't|haven't|did not|didn't|no (?:record|history|evidence) of|yet to)\\b",
+         "example": "Woodgrove has never paid a dividend.",
+         "evidence": {"sources": ["form_10k", "sec_filing"], "settled_by": "bounded", "checks": ["search_scope", "filing_obligation", "counter_search"]},
+         "failure_modes": ["true for a period only", "a special dividend overlooked"]},
+        {"id": "universal", "label": "All or none", "definition": "That something holds for every member of a set.",
+         "cues": "\\b(?:all of|every|none of|no other|each of)\\b",
+         "example": "All of Litware's factories run on renewable power.",
+         "evidence": {"sources": ["form_10k", "company_page"], "settled_by": "bounded", "checks": ["comparison_set", "search_scope"]},
+         "failure_modes": ["one exception unchecked", "a target presented as achieved"]}
+      ]
+    },
+    {
+      "id": "trend",
+      "label": "Trend",
+      "definition": "A direction over time: a company's own measure, or a wider movement.",
+      "subtypes": [
+        {"id": "entity_trend", "label": "Entity trend", "definition": "A direction in one entity's figures over several periods.",
+         "cues": "\\b(?:consecutive|in a row|straight|for the \\w+ (?:quarter|year)|steadily|consistently|continued to)\\b",
+         "example": "Northwind's revenue has grown for eight consecutive quarters.",
+         "evidence": {"sources": ["form_10q", "form_10k"], "settled_by": "computed", "checks": ["recompute", "period_alignment"]},
+         "failure_modes": ["a break in the run", "a different measure"]},
+        {"id": "general_trend", "label": "Wider trend or consensus", "definition": "A movement in a market or society, or what 'most' people think.",
+         "cues": "\\b(?:industry|market|sector|adoption|increasingly|growing number|most analysts|experts agree|widely)\\b",
+         "example": "Adoption of AI coding tools is accelerating across the industry.",
+         "evidence": {"sources": ["news_article", "web_page"], "settled_by": "independent_two", "checks": ["attribution_trace", "comparison_set", "period_alignment"]},
+         "failure_modes": ["one survey presented as the trend", "a forecast presented as observed"]}
+      ]
+    }
+  ],
+
+  "indicator_sets": [
+    {
+      "id": "governance_failure",
+      "terms": "\\b(?:governance (?:failure|lapse|crisis|issues?|concerns?)|board (?:turmoil|crisis|dysfunction)|accounting (?:scandal|irregularit(?:y|ies)|problems?)|misconduct)\\b",
+      "about": "Observable signs a company's governance failed. Found: listed as grounds. None found: 'no filed indicator of a governance failure', never 'false'.",
+      "indicators": [
+        {"id": "non_reliance", "label": "Earlier financial statements can no longer be relied on", "source": "form_8k", "signal": "8-K Item 4.02"},
+        {"id": "auditor_change", "label": "Auditor resigned or was dismissed", "source": "form_8k", "signal": "8-K Item 4.01"},
+        {"id": "material_weakness", "label": "Material weakness in internal control", "source": "form_10k", "signal": "Item 9A text: 'material weakness'"},
+        {"id": "restatement", "label": "Financial statements restated", "source": "form_10k", "signal": "'restated' or 'restatement' with a period"},
+        {"id": "investigation", "label": "Investigation disclosed", "source": "form_10q", "signal": "'investigation', 'subpoena', 'Wells notice' in Legal Proceedings"},
+        {"id": "director_disagreement", "label": "A director left citing a disagreement", "source": "form_8k", "signal": "8-K Item 5.02(a)"},
+        {"id": "late_filing", "label": "A periodic report filed late", "source": "sec_filing", "signal": "Form NT 10-K or NT 10-Q"},
+        {"id": "exchange_notice", "label": "Exchange listing deficiency notice", "source": "form_8k", "signal": "8-K Item 3.01"}
+      ]
+    },
+    {
+      "id": "financial_distress",
+      "terms": "\\b(?:struggling|troubled|financial (?:distress|trouble)|cash crunch|on the brink|going concern)\\b",
+      "about": "Observable signs of financial distress.",
+      "indicators": [
+        {"id": "going_concern", "label": "Going-concern doubt", "source": "form_10k", "signal": "'substantial doubt' about the ability to continue as a going concern"},
+        {"id": "losses", "label": "Net losses in recent periods", "source": "form_10q", "signal": "net loss in the statements read (skills/statements)"},
+        {"id": "default", "label": "Debt default or acceleration", "source": "form_8k", "signal": "8-K Item 2.04"},
+        {"id": "bankruptcy", "label": "Bankruptcy filing", "source": "form_8k", "signal": "8-K Item 1.03"},
+        {"id": "exchange_notice", "label": "Exchange listing deficiency notice", "source": "form_8k", "signal": "8-K Item 3.01"},
+        {"id": "layoffs", "label": "Restructuring costs", "source": "form_8k", "signal": "8-K Item 2.05"}
+      ]
+    },
+    {
+      "id": "market_leadership",
+      "terms": "\\b(?:leading|leader|dominant|market-leading|number one|No\\. ?1)\\b",
+      "about": "Observable grounds for a claim of leadership. Without a stated measure and set, the claim is an opinion with these grounds.",
+      "indicators": [
+        {"id": "share_estimate", "label": "A named firm's market-share estimate", "source": "news_article", "signal": "a share figure with its source and date"},
+        {"id": "ranking", "label": "A published ranking", "source": "news_article", "signal": "a rank with the ranking's name and year"},
+        {"id": "self_description", "label": "The company's own description", "source": "company_page", "signal": "said by the company itself: noted, never counted as independent"}
+      ]
+    }
+  ]
+}

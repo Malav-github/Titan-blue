@@ -1,8 +1,8 @@
-// The quiet side of Titan: questions and their answers, with citations and a Word copy. How each answer was
+// The quiet side of WrAI8: questions and their answers, with citations and a Word copy. How each answer was
 // found (every search, page and check) stays on the Runs page; this page only links there.
 import type { ReactElement } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, type AnswerView, type RunSummary, type StatementTableView } from '../api'
 import { StatementTable } from '../StatementTable'
 import { time } from '../format'
@@ -27,7 +27,7 @@ export function Answers() {
     <>
       <PageHeader
         title="Answers"
-        subtitle="Your questions and Titan's answers, with the sources behind them. To see how an answer was found, open it in Runs."
+        subtitle="Your questions and WrAI8's answers, with the sources behind them. To see how an answer was found, open it in WrAIth."
         actions={<Link to="/apps/research-company" className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:opacity-90">Ask a question</Link>}
       />
       {runs.isLoading && <Loading />}
@@ -110,6 +110,11 @@ function Sources({ view }: { view: AnswerView }) {
   )
 }
 
+/** The answer as plain text for Verify: no citation numbers, no heading marks, no bullets. */
+function plainAnswer(text: string): string {
+  return text.split('\n').map((l) => l.replace(/\s*\[\d+\]/g, '').replace(/^#{1,3}\s+/, '').replace(/^\s*[-*]\s+/, '')).join('\n')
+}
+
 export function AnswerPage() {
   const { id = '' } = useParams()
   const q = useQuery({
@@ -118,6 +123,7 @@ export function AnswerPage() {
     refetchInterval: (s) => (s.state.data && !DONE.has(s.state.data.status ?? '') && s.state.data.status !== 'failed' ? 2000 : false),
   })
   const save = useMutation({ mutationFn: () => api.downloadAnswer(id) })
+  const navigate = useNavigate()
   if (q.isLoading) return <Loading />
   if (q.error || !q.data) return <><PageHeader title="Answer not found" /><ErrorNote error={q.error} /></>
   const { status, question, answer: view } = q.data
@@ -129,15 +135,21 @@ export function AnswerPage() {
       <PageHeader
         title={question ?? 'Answer'}
         subtitle={<>{view?.as_of ? <>As of {view.as_of} · </> : null}<Link className="text-accent underline" to="/answers">All answers</Link> · {runLink}</>}
-        actions={view && <Button onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? 'Preparing…' : 'Download Word'}</Button>}
+        actions={view && <span className="flex flex-wrap gap-2">
+          {view.answer && !(view.tables ?? []).length && (
+            <Button variant="secondary" title="Check this answer's statements against independent sources in Verify"
+              onClick={() => navigate('/verify', { state: { text: plainAnswer(view.answer) } })}>Verify this answer</Button>
+          )}
+          <Button onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? 'Preparing…' : 'Download Word'}</Button>
+        </span>}
       />
       <ErrorNote error={save.error} />
       {!view && (
         <Card>
           <p className="flex items-center gap-2"><Badge tone={s.tone}>{s.label}</Badge></p>
           <p className="mt-2 text-sm">
-            {WORKING.has(status ?? '') && 'Titan is researching this. The answer appears here when it is ready; this page updates by itself.'}
-            {NEEDS_YOU.has(status ?? '') && <>Titan is waiting for you before it can go on. Open {<Link className="text-accent underline" to={`/runs/${id}`}>the run</Link>} to decide.</>}
+            {WORKING.has(status ?? '') && 'WrAI8 is researching this. The answer appears here when it is ready; this page updates by itself.'}
+            {NEEDS_YOU.has(status ?? '') && <>WrAI8 is waiting for you before it can go on. Open {<Link className="text-accent underline" to={`/runs/${id}`}>the run</Link>} to decide.</>}
             {status === 'failed' && <>The run stopped with an error. The details are in {runLink}.</>}
           </p>
         </Card>
@@ -146,7 +158,7 @@ export function AnswerPage() {
         <div className="flex flex-col gap-6">
           <Card>
             {view.outcome !== 'answered' && view.outcome_text && <p className="mb-2"><Badge tone="warn">{view.outcome_text}</Badge></p>}
-            {view.answer ? <AnswerText text={view.answer} tables={view.tables ?? []} /> : <p className="text-sm text-muted">No answer could be established from sources Titan could read and quote.</p>}
+            {view.answer ? <AnswerText text={view.answer} tables={view.tables ?? []} /> : <p className="text-sm text-muted">No answer could be established from sources WrAI8 could read and quote.</p>}
             {view.notes.length > 0 && (
               <ul className="mt-4 list-disc border-t border-line pl-5 pt-3 text-sm text-muted">
                 {view.notes.map((n) => <li key={n}>{n}</li>)}

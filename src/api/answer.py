@@ -202,14 +202,14 @@ def to_docx(view: dict, *, run_id: str = "") -> bytes:
 
     body: list[str] = [_para(_run(view["question"] or "Answer"), style="Title")]
     meta = " · ".join(x for x in [f"As of {view['as_of']}" if view.get("as_of") else "", view.get("outcome_text") or "",
-                                   f"Titan run {run_id[:8]}" if run_id else ""] if x)
+                                   f"WrAI8 run {run_id[:8]}" if run_id else ""] if x)
     if meta:
         body.append(_para(_run(meta, color="666666", size=18), space_after=240))
 
     body.append(_para(_run("Answer"), style="Heading1"))
     answer = view.get("answer") or ""
     if not answer:
-        body.append(_para(_run("No answer could be established from sources Titan could read and quote.", italic=True)))
+        body.append(_para(_run("No answer could be established from sources WrAI8 could read and quote.", italic=True)))
     for line in answer.split("\n"):
         h = re.match(r"^(#{1,3})\s+(.*)$", line)
         tm = re.fullmatch(r"\s*\[table:(\d+)\]\s*", line)
@@ -248,8 +248,12 @@ def to_docx(view: dict, *, run_id: str = "") -> bytes:
             body.append(_para("", space_after=60))
 
     body.append(_para(_run("Every quote above appears word for word in the archived copy of its source. "
-                           "How each one was found and checked is recorded in the run on Titan's Runs page.", color="666666", size=16)))
+                           "How each one was found and checked is recorded in the run, in WrAI8's WrAIth.", color="666666", size=16)))
+    return _package(view["question"] or "Answer", body, links)
 
+
+def _package(title: str, body: list[str], links: list[str]) -> bytes:
+    """The .docx package around a body of paragraphs and tables; `links[i]` is hyperlink rIdL{i+1}."""
     document = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {_W}><w:body>{"".join(body)}'
                 '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" '
                 'w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>')
@@ -261,7 +265,7 @@ def to_docx(view: dict, *, run_id: str = "") -> bytes:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     core = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
             'xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
-            f'<dc:title>{escape(view["question"] or "Answer")}</dc:title><dc:creator>Titan</dc:creator>'
+            f'<dc:title>{escape(title)}</dc:title><dc:creator>WrAI8</dc:creator>'
             f'<dcterms:created xsi:type="dcterms:W3CDTF">{now}</dcterms:created></cp:coreProperties>')
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -272,6 +276,89 @@ def to_docx(view: dict, *, run_id: str = "") -> bytes:
         z.writestr("word/styles.xml", _STYLES)
         z.writestr("word/_rels/document.xml.rels", rels)
     return buf.getvalue()
+
+
+VERDICT_TEXT = {"corroborated": "Corroborated", "partial": "Partly corroborated", "contradicted": "Contradicted", "unconfirmed": "Unconfirmed"}
+VERDICT_COLOR = {"corroborated": "2E7D32", "partial": "1F5FAD", "contradicted": "C62828", "unconfirmed": "9C5700"}
+
+
+def check_docx(d: dict) -> bytes:
+    """A Word copy of a Verify run: each statement word for word with its verdict and the evidence for it, then the
+    statements that could not be checked and why."""
+    view = {"question": d.get("title") or "Verify"}
+    links: list[str] = []
+
+    def link(url: str) -> str:
+        links.append(url)
+        return f'<w:hyperlink r:id="rIdL{len(links)}" w:history="1">{_run(url, style="Hyperlink")}</w:hyperlink>'
+
+    c = d.get("counts") or {}
+    inp = d.get("input") or {}
+    body = [_para(_run(view["question"]), style="Title"),
+            _para(_run(" · ".join(x for x in [f"Checked {utc_today()}", f"about {d['subject']}" if d.get("subject") else "",
+                                               f"from {inp.get('url')}" if inp.get("url") and not str(inp.get("url")).startswith("upload:") else ""] if x),
+                       color="666666", size=18)),
+            _para(_run(f"{c.get('corroborated', 0)} corroborated · {c.get('partial', 0)} partly corroborated · {c.get('contradicted', 0)} contradicted · "
+                       f"{c.get('unconfirmed', 0)} unconfirmed · {c.get('not_checkable', 0)} not checkable", bold=True), space_after=240)]
+    checked = [s for s in d["statements"] if s.get("outcome")]
+    if checked:
+        body.append(_para(_run("Statements checked"), style="Heading1"))
+    for s in checked:
+        o = s["outcome"]
+        body.append(_para(_run(f"{VERDICT_TEXT.get(o, o)}  ", bold=True, color=VERDICT_COLOR.get(o)) + _run(f"“{s['text']}”", italic=True),
+                          keep_next=True, space_after=60))
+        for n in s.get("notes") or []:
+            body.append(_para(_run(n, size=18, color="9C5700"), indent=567, space_after=40))
+        for ch in s.get("checks") or []:
+            line = _evidence_line(ch)
+            if not line:
+                continue
+            text, url = line
+            body.append(_para(_run(text, size=18) + (_run(" ", size=18) + link(url) if url else ""), indent=567, space_after=40))
+        body.append(_para("", space_after=60))
+    skipped = [s for s in d["statements"] if not s["checkable"]]
+    if skipped:
+        body.append(_para(_run("Not checked"), style="Heading1"))
+        for s in skipped:
+            body.append(_para(_run(f"“{s['text']}”", italic=True, size=18) + _run(f" ({s['why']})", color="666666", size=18), indent=567, space_after=40))
+    body.append(_para(_run("Each statement is your text word for word. Corroborated: an independent source states the same; "
+                           "contradicted: a source gives another figure, or the company's statements differ; unconfirmed: no "
+                           "independent source was found. Your text, its own site and copies of it never count as evidence.",
+                           color="666666", size=16)))
+    return _package(view["question"], body, links)
+
+
+def utc_today() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _evidence_line(ch: dict) -> tuple[str, str | None] | None:
+    kind, result = ch.get("check"), ch.get("result")
+    if kind == "role_holder" and ch.get("quote"):
+        return f"Who holds the role, from the company's filing: {ch.get('detail')} “{ch['quote']}”", ch.get("url")
+    if kind == "name":
+        return f"Name: {result}{': ' + ch['detail'] if ch.get('detail') else ''}", None
+    if kind == "role_event" and ch.get("quote"):
+        return f"{ch.get('detail')}: “{ch['quote']}”", ch.get("url")
+    if kind == "role_event":
+        return f"{ch.get('detail')}.", None
+    if kind == "reason":
+        return f"Reason: {ch.get('detail')}.", None
+    if kind == "second_source" and result == "found":
+        return f"Independent source ({ch.get('tier_label') or 'tier unknown'}): “{ch.get('quote')}”", ch.get("url")
+    if kind == "contradiction" and result == "found":
+        return f"Contradicting source: “{ch.get('quote')}” — {ch.get('detail')}", ch.get("url")
+    if kind == "figures" and result not in ("no statements read", "no figures"):
+        return f"Against the company's financial statements: {result}; {ch.get('detail')}", None
+    if kind == "newer" and ch.get("items"):
+        return f"Newer reports to look at: {', '.join(i['title'] for i in ch['items'][:3])}", None
+    if kind == "second_source" and result != "found":
+        return f"No independent source found (searched: {ch.get('query')}).", None
+    if kind == "source" and result in ("quote gone", "unreachable"):
+        return f"The page now: {result}.", ch.get("url")
+    if kind == "error":
+        return f"Could not be checked: {result}", None
+    return None
 
 
 def filename(view: dict) -> str:
