@@ -8,8 +8,8 @@ export function Home() {
   return (
     <>
       <PageHeader
-        title="WritsBlocker"
-        subtitle="What would you like to do? Each card below is a ready-made process. Every claim it produces is kept only if its quote appears word for word in the archived source."
+        title="WritersBlocker"
+        subtitle="Each block below is a ready-made process. Every claim it produces is kept only if its quote appears word for word in the archived source."
       />
       {templates.isLoading && <Loading what="Loading apps" />}
       <ErrorNote error={templates.error} />
