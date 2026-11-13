@@ -1,4 +1,4 @@
-// The one place the app talks to the WrAI8 API. Nothing here decides anything: the server owns the rules.
+// The one place the app talks to the WrAIph API. Nothing here decides anything: the server owns the rules.
 
 const token = document.querySelector('meta[name="titan-token"]')?.getAttribute('content') ?? ''
 

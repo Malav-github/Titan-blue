@@ -76,7 +76,7 @@ export function VerifyPage() {
               <label htmlFor="check-url" className="text-sm font-medium">Web address</label>
               <input id="check-url" type="url" placeholder="https://" value={url} onChange={(e) => setUrl(e.target.value)}
                 className="mt-1 w-full rounded-md border border-line bg-surface px-3 py-2 text-sm" />
-              <p className="mt-1 text-xs text-muted">WrAI8 reads the page and keeps a copy of it, so the check can be traced back to exactly what it read.</p>
+              <p className="mt-1 text-xs text-muted">WrAIph reads the page and keeps a copy of it, so the check can be traced back to exactly what it read.</p>
             </div>
           )}
           {tab === 'file' && (
@@ -90,7 +90,7 @@ export function VerifyPage() {
             <label htmlFor="check-subject" className="text-sm font-medium">Who is it about? <span className="font-normal text-muted">(optional)</span></label>
             <input id="check-subject" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="For example: S&P Global"
               className="mt-1 w-full rounded-md border border-line bg-surface px-3 py-2 text-sm" />
-            <p className="mt-1 text-xs text-muted">Left empty, WrAI8 takes the organisation the text names most.</p>
+            <p className="mt-1 text-xs text-muted">Left empty, WrAIph takes the organisation the text names most.</p>
           </div>
           <ErrorNote error={start.error} />
           <div><Button type="submit" disabled={!ready || start.isPending}>{start.isPending ? 'Starting…' : 'Check it'}</Button></div>

@@ -70,7 +70,7 @@ export function Stores() {
   const o = overview.data
   return (
     <>
-      <PageHeader title="Stores and archives" subtitle="The evidence store WrAI8 is using now, the ones archived before it, and what WrAI8 holds in memory." />
+      <PageHeader title="Stores and archives" subtitle="The evidence store WrAIph is using now, the ones archived before it, and what WrAIph holds in memory." />
       {overview.isLoading && <Loading />}
       <ErrorNote error={overview.error} />
       {o && (
@@ -107,7 +107,7 @@ export function Stores() {
             <p className="mt-2 text-xs text-muted">On disk: data/archives/&lt;name&gt;/ (evidence.db, runs.db, checkpoints.db, searches.db, files/, manifest.json), all read-only.</p>
           </Card>
           <Card>
-            <h2 className="font-semibold">Clear what WrAI8 holds in memory</h2>
+            <h2 className="font-semibold">Clear what WrAIph holds in memory</h2>
             <p className="mt-1 text-sm">Re-reads the definition files (ontologies, skills, guidance) on next use, so edits take effect without a restart, and forgets cached health checks and source descriptions. Nothing stored is touched.</p>
             <div className="mt-3"><Button variant="secondary" onClick={() => reload.mutate()} disabled={reload.isPending}>Reload definitions</Button></div>
             <ErrorNote error={reload.error} />

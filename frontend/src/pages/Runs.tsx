@@ -8,7 +8,7 @@ export function Runs() {
   const runs = useQuery({ queryKey: ['runs'], queryFn: api.runs, refetchInterval: 3000 })
   return (
     <>
-      <PageHeader title="WrAIth" subtitle="Every run WrAI8 has made, newest first. Each run keeps a permanent step-by-step history: what it searched, read, checked and why." />
+      <PageHeader title="WrAIth" subtitle="Every run WrAIph has made, newest first. Each run keeps a permanent step-by-step history: what it searched, read, checked and why." />
       {runs.isLoading && <Loading />}
       <ErrorNote error={runs.error} />
       {runs.data && runs.data.length === 0 && (

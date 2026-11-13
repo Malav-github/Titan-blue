@@ -202,14 +202,14 @@ def to_docx(view: dict, *, run_id: str = "") -> bytes:
 
     body: list[str] = [_para(_run(view["question"] or "Answer"), style="Title")]
     meta = " · ".join(x for x in [f"As of {view['as_of']}" if view.get("as_of") else "", view.get("outcome_text") or "",
-                                   f"WrAI8 run {run_id[:8]}" if run_id else ""] if x)
+                                   f"WrAIph run {run_id[:8]}" if run_id else ""] if x)
     if meta:
         body.append(_para(_run(meta, color="666666", size=18), space_after=240))
 
     body.append(_para(_run("Answer"), style="Heading1"))
     answer = view.get("answer") or ""
     if not answer:
-        body.append(_para(_run("No answer could be established from sources WrAI8 could read and quote.", italic=True)))
+        body.append(_para(_run("No answer could be established from sources WrAIph could read and quote.", italic=True)))
     for line in answer.split("\n"):
         h = re.match(r"^(#{1,3})\s+(.*)$", line)
         tm = re.fullmatch(r"\s*\[table:(\d+)\]\s*", line)
@@ -248,7 +248,7 @@ def to_docx(view: dict, *, run_id: str = "") -> bytes:
             body.append(_para("", space_after=60))
 
     body.append(_para(_run("Every quote above appears word for word in the archived copy of its source. "
-                           "How each one was found and checked is recorded in the run, in WrAI8's WrAIth.", color="666666", size=16)))
+                           "How each one was found and checked is recorded in the run, in WrAIph's WrAIth.", color="666666", size=16)))
     return _package(view["question"] or "Answer", body, links)
 
 
@@ -265,7 +265,7 @@ def _package(title: str, body: list[str], links: list[str]) -> bytes:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     core = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
             'xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
-            f'<dc:title>{escape(title)}</dc:title><dc:creator>WrAI8</dc:creator>'
+            f'<dc:title>{escape(title)}</dc:title><dc:creator>WrAIph</dc:creator>'
             f'<dcterms:created xsi:type="dcterms:W3CDTF">{now}</dcterms:created></cp:coreProperties>')
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:

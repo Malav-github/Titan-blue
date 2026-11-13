@@ -2,7 +2,7 @@
 
 A multi-agent competitive-intelligence platform built on open-source parts. Information integrity comes first: every claim should trace to archived evidence, contradictions are tracked, and history is append-only.
 
-In the app it is shown under the working name **WrAI8**: the home page (the Home tab) is titled **WritersBlock** and the run history is **WrAIth**. Code, folders and branches still say Titan.
+In the app it is shown under the working name **WrAIph**: the home page (the Home tab) is titled **WritersBlock** and the run history is **WrAIth**. Code, folders and branches still say Titan.
 
 Titan is being built as a general capability platform (tools driven by skills and instructions). Competitive intelligence is the first domain.
 

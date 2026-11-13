@@ -215,13 +215,13 @@ function ReportView({ report, runId }: { report: Report; runId?: string }) {
           <Card><p className="text-sm text-muted">No answer was written: nothing was established strongly enough.</p></Card>
       )}
       {report.list_question && (
-        <p className="text-sm text-muted">A list question: WrAI8 collected every distinct event it could read ({report.events_found ?? 0} documents with established claims) for “{report.list_question}”. The list covers what was found, not everything that happened.</p>
+        <p className="text-sm text-muted">A list question: WrAIph collected every distinct event it could read ({report.events_found ?? 0} documents with established claims) for “{report.list_question}”. The list covers what was found, not everything that happened.</p>
       )}
       {(report.diagnosis ?? []).length > 0 && (
         <details className="rounded-lg border border-line bg-surface p-3 text-sm">
           <summary className="cursor-pointer font-medium">Why parts of this run failed ({(report.diagnosis ?? []).reduce((n, d) => n + d.count, 0)}), and what covers for it</summary>
           <table className="mt-2 w-full text-left text-xs">
-            <thead><tr className="text-muted"><th className="pr-2">Kind</th><th className="pr-2">What happened</th><th className="pr-2">Times</th><th className="pr-2">What WrAI8 does</th><th>Could be done next</th></tr></thead>
+            <thead><tr className="text-muted"><th className="pr-2">Kind</th><th className="pr-2">What happened</th><th className="pr-2">Times</th><th className="pr-2">What WrAIph does</th><th>Could be done next</th></tr></thead>
             <tbody>{(report.diagnosis ?? []).map((d) => (
               <tr key={d.id} className="align-top">
                 <td className="pr-2"><Badge tone={d.kind === 'llm' ? 'warn' : d.kind === 'design' ? 'neutral' : 'bad'}>{d.kind_label}</Badge></td>
@@ -375,7 +375,7 @@ function ApprovalPanel({ runId, plan }: { runId: string; plan: Approval }) {
         </div>
       )}
       <p className="mt-3 text-sm text-muted">
-        If you go ahead, WrAI8 will run these searches and then read pages looking for the facts listed. You can edit either list, one item per line.
+        If you go ahead, WrAIph will run these searches and then read pages looking for the facts listed. You can edit either list, one item per line.
         {plan.page_categories.length > 0 && <> It will also look for the company’s own pages about: {plan.page_categories.join(', ')}.</>}
       </p>
       <div className="mt-3 grid gap-4 md:grid-cols-2">

@@ -1,4 +1,4 @@
-// The quiet side of WrAI8: questions and their answers, with citations and a Word copy. How each answer was
+// The quiet side of WrAIph: questions and their answers, with citations and a Word copy. How each answer was
 // found (every search, page and check) stays on the Runs page; this page only links there.
 import type { ReactElement } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
@@ -27,7 +27,7 @@ export function Answers() {
     <>
       <PageHeader
         title="Answers"
-        subtitle="Your questions and WrAI8's answers, with the sources behind them. To see how an answer was found, open it in WrAIth."
+        subtitle="Your questions and WrAIph's answers, with the sources behind them. To see how an answer was found, open it in WrAIth."
         actions={<Link to="/apps/research-company" className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:opacity-90">Ask a question</Link>}
       />
       {runs.isLoading && <Loading />}
@@ -148,8 +148,8 @@ export function AnswerPage() {
         <Card>
           <p className="flex items-center gap-2"><Badge tone={s.tone}>{s.label}</Badge></p>
           <p className="mt-2 text-sm">
-            {WORKING.has(status ?? '') && 'WrAI8 is researching this. The answer appears here when it is ready; this page updates by itself.'}
-            {NEEDS_YOU.has(status ?? '') && <>WrAI8 is waiting for you before it can go on. Open {<Link className="text-accent underline" to={`/runs/${id}`}>the run</Link>} to decide.</>}
+            {WORKING.has(status ?? '') && 'WrAIph is researching this. The answer appears here when it is ready; this page updates by itself.'}
+            {NEEDS_YOU.has(status ?? '') && <>WrAIph is waiting for you before it can go on. Open {<Link className="text-accent underline" to={`/runs/${id}`}>the run</Link>} to decide.</>}
             {status === 'failed' && <>The run stopped with an error. The details are in {runLink}.</>}
           </p>
         </Card>
@@ -158,7 +158,7 @@ export function AnswerPage() {
         <div className="flex flex-col gap-6">
           <Card>
             {view.outcome !== 'answered' && view.outcome_text && <p className="mb-2"><Badge tone="warn">{view.outcome_text}</Badge></p>}
-            {view.answer ? <AnswerText text={view.answer} tables={view.tables ?? []} /> : <p className="text-sm text-muted">No answer could be established from sources WrAI8 could read and quote.</p>}
+            {view.answer ? <AnswerText text={view.answer} tables={view.tables ?? []} /> : <p className="text-sm text-muted">No answer could be established from sources WrAIph could read and quote.</p>}
             {view.notes.length > 0 && (
               <ul className="mt-4 list-disc border-t border-line pl-5 pt-3 text-sm text-muted">
                 {view.notes.map((n) => <li key={n}>{n}</li>)}

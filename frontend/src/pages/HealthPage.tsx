@@ -32,7 +32,7 @@ function ServerCard() {
       </p>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Button variant="secondary" disabled={!s?.can_restart || !!s?.busy || restart.isPending || !!waiting}
-          onClick={() => { if (window.confirm('Restart the WrAI8 server? The app will be unavailable for a few seconds.')) restart.mutate() }}>
+          onClick={() => { if (window.confirm('Restart the WrAIph server? The app will be unavailable for a few seconds.')) restart.mutate() }}>
           <span aria-hidden="true">↻ </span>{waiting ? 'Restarting…' : 'Restart server'}
         </Button>
         <span aria-live="polite" className="text-sm">
@@ -53,7 +53,7 @@ export function HealthPage() {
   const problems = (h?.evidence.audit_problems as string[] | undefined) ?? []
   return (
     <>
-      <PageHeader title="Health" subtitle="Whether the parts WrAI8 depends on are running, and whether the evidence store still checks out." />
+      <PageHeader title="Health" subtitle="Whether the parts WrAIph depends on are running, and whether the evidence store still checks out." />
       {(health.isLoading || models.isLoading) && <Loading />}
       <ErrorNote error={health.error ?? models.error} />
       <div className="grid gap-4 md:grid-cols-2">
