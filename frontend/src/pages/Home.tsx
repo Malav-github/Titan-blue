@@ -8,7 +8,7 @@ export function Home() {
   return (
     <>
       <PageHeader
-        title="WritersBlocker"
+        title="WritersBlock"
         subtitle="Each block below is a ready-made process. Every claim it produces is kept only if its quote appears word for word in the archived source."
       />
       {templates.isLoading && <Loading what="Loading apps" />}
