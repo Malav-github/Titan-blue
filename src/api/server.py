@@ -25,6 +25,7 @@ from sse_starlette.sse import EventSourceResponse
 import config
 from api import answer as answer_view
 import checking
+from skills import advisor, sourcing
 from api import probes
 from api.engine import TERMINAL, Engine, RunError
 from api.executors import MAX_UPLOAD_BYTES, save_upload
@@ -90,6 +91,7 @@ class Continue(BaseModel):
 class TemplateRun(BaseModel):
     inputs: dict = Field(default_factory=dict)
     ask_sources: bool = True                # pause for a source when something cannot be established (headless callers send false)
+    request_id: str | None = None           # add-data-source: start the request a research run filed, not a new one
 
 
 class ArchiveRequest(BaseModel):
@@ -101,6 +103,15 @@ class ArchiveRequest(BaseModel):
 class CapabilityDecision(BaseModel):
     approve: str | None = None              # connector id, or null to cancel
     terms_ok: bool = False
+
+
+class ChatMessage(BaseModel):
+    message: str = Field(min_length=1, max_length=1000)
+
+
+class ChatAction(BaseModel):
+    action: Literal["alternatives", "retest", "retry", "close", "look_up"]
+    params: dict = Field(default_factory=dict)
 
 
 def terms_documents(candidate: dict) -> list[dict]:
@@ -446,6 +457,8 @@ def create_app(registry: Registry | None = None, token: str | None = None,
         if status in TERMINAL or status == "stopping":
             raise HTTPException(409, {"problems": [f"this run is already {status}"]})
         engine.runs.emit(run_id, "api", "stop_requested", {})
+        if status == "needs_capability":
+            jobs.close_requests_of_run(run_id, "the run was stopped")
         if status in WAITING:
             (jobs.stop_check(run_id) if is_check(run_id) else jobs.stop_verification(run_id) if is_verify(run_id)
              else jobs.stop_research(run_id))                                                         # not working now: end it now
@@ -508,6 +521,7 @@ def create_app(registry: Registry | None = None, token: str | None = None,
         if body.capability and connectors.active(body.capability) is None:
             raise HTTPException(422, {"problems": [f"{body.capability!r} is not an active connector"]})
         jobs.resume_research(run_id, {"capability": body.capability} if body.capability else {})
+        jobs.close_requests_of_run(run_id, "the run carried on " + (f"with {body.capability}" if body.capability else "without a new data source"))
         return {"ok": True}
 
     # -- templates: ready-made apps -------------------------------------------------------------------
@@ -531,8 +545,15 @@ def create_app(registry: Registry | None = None, token: str | None = None,
             run_id = jobs.start_research(values["question"], values["subject"], budgets, bool(values.get("allow_capabilities")),
                                           ask_sources=body.ask_sources, report_type=values.get("report_type"))
             return {"kind": "research", "run_id": run_id}
+        if not sourcing.usable_need(values.get("need")):
+            raise HTTPException(422, {"problems": ["describe the data you need in a few words (for example: patent family records for EU filings)"]})
+        if body.request_id:
+            filed = connectors.get_request(body.request_id)
+            if filed is None or filed["status"] != "requested":
+                raise HTTPException(409, {"problems": ["that request is not waiting to be started"]})
         known = {"name": values["api_name"], "docs_url": values["docs_url"]} if values.get("api_name") else None
-        return {"kind": "capability", "request_id": jobs.start_capability(values["need"], known)}
+        brief = sourcing.brief_from(values)
+        return {"kind": "capability", "request_id": jobs.start_capability(values["need"], known, brief, request_id=body.request_id)}
 
     # -- capability requests and connectors ----------------------------------------------------------
 
@@ -561,6 +582,92 @@ def create_app(registry: Registry | None = None, token: str | None = None,
             raise HTTPException(422, {"problems": ["tick that you have read the provider's terms before approving"]})
         jobs.decide_capability(request_id, {"approve": body.approve, "terms_ok": body.terms_ok} if body.approve else {"approve": None})
         return {"ok": True}
+
+    @app.post("/api/capability/requests/{request_id}/cancel", status_code=202)
+    def capability_cancel(request_id: str):
+        """Close a request: one waiting at the gate is cancelled there; one never started, or one that failed, is closed."""
+        req = connectors.get_request(request_id)
+        if req is None:
+            raise HTTPException(404, "No such request")
+        if req["status"] == "awaiting_user":
+            jobs.decide_capability(request_id, {"approve": None})
+        elif req["status"] in ("requested", "failed", "tests_failed"):
+            connectors.request_event(request_id, "cancelled", {"reason": "closed by you"})
+        else:
+            raise HTTPException(409, {"problems": [f"this request is {req['status']} and cannot be closed now"]})
+        return {"ok": True}
+
+    @app.post("/api/capability/requests/{request_id}/retry", status_code=202)
+    def capability_retry(request_id: str):
+        """Start again from a request that failed or was cancelled: a new request with the same need, brief and named API."""
+        req = connectors.get_request(request_id)
+        if req is None:
+            raise HTTPException(404, "No such request")
+        if req["status"] not in ("failed", "cancelled", "tests_failed"):
+            raise HTTPException(409, {"problems": [f"this request is {req['status']}; only a failed or closed request can be tried again"]})
+        if not sourcing.usable_need(req["need"]):
+            raise HTTPException(422, {"problems": [f"its need ({req['need']!r}) does not describe any data: start a new request instead"]})
+        brief = req.get("brief") or sourcing.brief_from({"need": req["need"]})
+        return {"request_id": jobs.start_capability(req["need"], req.get("known_api"), brief, retry_of=request_id)}
+
+    def request_with_gate(request_id: str) -> dict:
+        req = connectors.get_request(request_id)
+        if req is None:
+            raise HTTPException(404, "No such request")
+        gate = jobs.gate(request_id) if req["status"] == "awaiting_user" else None
+        return {**req, "gate": gate}
+
+    @app.post("/api/capability/requests/{request_id}/chat")
+    def capability_chat(request_id: str, body: ChatMessage):
+        """A message to the request's advisor: answered at once by code from what the request holds (skills/advisor)."""
+        req = request_with_gate(request_id)
+        out = advisor.reply(req, body.message)
+        jobs.say(request_id, "you", " ".join(body.message.split()))
+        jobs.say(request_id, "agent", out["text"], **{k: v for k, v in out.items() if k != "text"})
+        return out
+
+    @app.post("/api/capability/requests/{request_id}/act", status_code=202)
+    def capability_act(request_id: str, body: ChatAction):
+        """Do what the advisor offered. Each action checks the request's state again: an offer can be out of date."""
+        req = request_with_gate(request_id)
+        allowed = advisor.ACTION_ALLOWED[body.action]
+        if req["status"] not in allowed:
+            raise HTTPException(409, {"problems": [f"this request is {req['status']}: that can no longer be done here"]})
+        if body.action == "retry":
+            return capability_retry(request_id)
+        if body.action == "close":
+            return capability_cancel(request_id)
+        if body.action == "retest":
+            jobs.say(request_id, "you", "Run the tests again.")
+            jobs.retest(request_id)
+            return {"ok": True}
+        if body.action == "look_up":
+            cands = {c["name"]: c for c in advisor.candidates(req)}
+            name = str(body.params.get("candidate") or "")
+            if name not in cands or not cands[name].get("docs_url"):
+                raise HTTPException(422, {"problems": ["that candidate is not part of this request"]})
+            question = " ".join(str(body.params.get("question") or "").split())[:500]
+            if not question:
+                raise HTTPException(422, {"problems": ["say what to look up"]})
+            jobs.say(request_id, "you", f"Look it up on {name}'s own pages.")
+            c = cands[name]
+            # pages this request already read, from every candidate: look_up keeps only those on the provider's own domain
+            # (two entries for one provider, 'EPO Open Patent Services' and 'EPO OPS API', share what was read)
+            known = list(dict.fromkeys([f["source_url"] for x in [c, *cands.values()] for f in x.get("verified_facts") or [] if f.get("source_url")]
+                                       + [d["url"] for d in c.get("terms_documents") or [] if d.get("url")]))
+            jobs.look_up(request_id, name, c["docs_url"], question, known)
+            return {"ok": True}
+        # alternatives: a new request with the same need, the brief as changed in the conversation, and these left out
+        if not sourcing.usable_need(req["need"]):
+            raise HTTPException(422, {"problems": [f"its need ({req['need']!r}) does not describe any data: start a new request instead"]})
+        b = body.params.get("brief") if isinstance(body.params.get("brief"), dict) else (req.get("brief") or {})
+        as_list = lambda v: "\n".join(map(str, v)) if isinstance(v, list) else str(v or "")      # noqa: E731
+        brief = sourcing.brief_from({**b, "need": req["need"], "fields": as_list(b.get("fields")), "examples": as_list(b.get("examples")),
+                                     "volume": str(b.get("volume") or "")})
+        brief["exclude"] = [str(x)[:120] for x in (body.params.get("exclude") or [])[:20]]
+        new_id = jobs.start_capability(req["need"], None, brief, alternative_to=request_id)
+        jobs.say(request_id, "agent", "Started a new search for other sources.", intent="alternatives", link=new_id)
+        return {"request_id": new_id}
 
     @app.get("/api/connectors")
     def list_connectors():

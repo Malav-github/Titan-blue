@@ -1,4 +1,4 @@
-// The one place the app talks to the WrAIph API. Nothing here decides anything: the server owns the rules.
+// The one place the app talks to the WordBench API. Nothing here decides anything: the server owns the rules.
 
 const token = document.querySelector('meta[name="titan-token"]')?.getAttribute('content') ?? ''
 
@@ -208,11 +208,40 @@ export interface Fact {
   source_url: string
   official?: boolean
 }
+/** How one candidate fits the person's brief, criterion by criterion, worked out by code from quoted facts. */
+export interface FitCriterion { id: string; label: string; verdict: 'meets' | 'partly' | 'fails' | 'unknown'; why: string; hard: boolean; quote?: string; source_url?: string }
+export interface Fit { criteria: FitCriterion[]; excluded: boolean; exclusion_reasons: string[]; meets: number; unknown: number }
+export interface Brief {
+  need: string; fields: string[]; examples: string[]; coverage: string; kind: 'either' | 'api' | 'mcp'
+  budget: string; budget_label: string; budget_monthly_usd: number | null; volume: number | null
+  freshness: string; commercial_use: boolean; identity_ok: boolean
+  exclude?: string[]
+}
+/** A quoted fact as the request's advisor shows it in the conversation. */
+export interface ChatFact { candidate: string; label: string; value: string; quote: string; source_url?: string | null; official?: boolean }
+export type ChatActionId = 'alternatives' | 'retest' | 'retry' | 'close' | 'look_up'
+export interface ChatAction { id: ChatActionId; label: string; params: Record<string, unknown> }
+/** One line of the conversation on a request: what was said, and what the advisor offered to do. */
+export interface ChatLine {
+  role: 'you' | 'agent'
+  text: string
+  intent?: string
+  points?: string[]
+  facts?: ChatFact[]
+  notes?: string[]
+  actions?: ChatAction[]
+  link?: string
+}
 export interface Candidate {
   name: string
   connector_id: string
   kind: string
-  docs_url: string
+  kind_label?: string
+  found_in?: string | null
+  description?: string | null
+  registry?: { id: string; version: string | null; transport: string; remote_url: string | null; packages: string[]; needs_key: boolean; key_note: string | null } | null
+  fit?: Fit | null
+  docs_url: string | null
   cost_label?: string
   verified_facts: Fact[]
   unverified: string[]
@@ -233,7 +262,9 @@ export interface Candidate {
 }
 export interface Gate {
   need: string
-  recommendation: { choice: string; reasoning: string }
+  brief?: Brief | null
+  criteria?: { id: string; label: string; question: string; hard: boolean }[]
+  recommendation: { choice: string | null; reasoning: string; note?: string; best_mcp?: string | null; paid_justification?: string | null }
   candidates: Candidate[]
   your_steps: string[]
   note?: string
@@ -246,6 +277,9 @@ export interface CapabilityRequest {
   created_at: string
   events: { event: string; detail: Record<string, unknown>; at: string }[]
   gate: Gate | null
+  brief?: Brief | null
+  retry_of?: string | null
+  alternative_to?: string | null
 }
 export interface ConnectorSummary {
   connector_id: string
@@ -400,8 +434,8 @@ export interface Harness { id: string; title: string; nodes: HarnessNode[]; edge
 export const api = {
   harness: () => request<Harness>('/api/harness/research'),
   templates: () => request<Template[]>('/api/templates'),
-  runTemplate: (id: string, inputs: Record<string, unknown>) =>
-    post<{ kind: 'research' | 'capability'; run_id?: string; request_id?: string }>(`/api/templates/${id}/run`, { inputs }),
+  runTemplate: (id: string, inputs: Record<string, unknown>, requestId?: string | null) =>
+    post<{ kind: 'research' | 'capability'; run_id?: string; request_id?: string }>(`/api/templates/${id}/run`, { inputs, ...(requestId ? { request_id: requestId } : {}) }),
   runs: () => request<RunSummary[]>('/api/runs'),
   // `archive` names an archived store: the same data, read only, from /api/archives/<id>/...
   run: (id: string, archive?: string | null) => request<RunDetail>(`${scope(archive)}/runs/${id}`),
@@ -428,6 +462,11 @@ export const api = {
   requests: () => request<Omit<CapabilityRequest, 'events' | 'gate'>[]>('/api/capability/requests'),
   request: (id: string) => request<CapabilityRequest>(`/api/capability/requests/${id}`),
   decideRequest: (id: string, body: { approve: string | null; terms_ok: boolean }) => post(`/api/capability/requests/${id}/decision`, body),
+  cancelRequest: (id: string) => post(`/api/capability/requests/${id}/cancel`, {}),
+  retryRequest: (id: string) => post<{ request_id: string }>(`/api/capability/requests/${id}/retry`, {}),
+  chatRequest: (id: string, message: string) => post<ChatLine>(`/api/capability/requests/${id}/chat`, { message }),
+  actOnRequest: (id: string, action: ChatActionId, params: Record<string, unknown>) =>
+    post<{ ok?: boolean; request_id?: string }>(`/api/capability/requests/${id}/act`, { action, params }),
   claims: (entity?: string, archive?: string | null) =>
     request<ClaimRow[]>(`${scope(archive)}/evidence/claims${entity ? `?entity=${encodeURIComponent(entity)}` : ''}`),
   claim: (id: string, archive?: string | null) => request<ClaimDetail>(`${scope(archive)}/evidence/claims/${id}`),

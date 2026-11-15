@@ -11,7 +11,7 @@ export function Connectors() {
     <>
       <PageHeader
         title="Data sources"
-        subtitle="APIs WrAIph may call. Each one was vetted from its own documentation and approved by you; it can only make read-only calls to one host."
+        subtitle="APIs WordBench may call, each vetted from its own documentation and approved by you; it can only make read-only calls to one host. Add a data source to look for APIs and MCP servers that fit a brief; MCP servers are found and recommended, not installed yet."
         actions={<Link className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg" to="/apps/add-data-source">Add a data source</Link>}
       />
       <h2 className="mb-2 text-lg font-semibold">Active</h2>

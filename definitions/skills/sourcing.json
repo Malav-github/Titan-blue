@@ -1,0 +1,20 @@
+{
+  "id": "sourcing",
+  "version": "1.0",
+  "about": "Settings for the sourcing skill (src/skills/sourcing/): where candidates are found, how many are researched, and how a brief's budget and volume are read. Candidates come from WordBench's own catalogue first (definitions/catalogue/providers.json), then from directories (APIs.guru for APIs, the official MCP Registry for MCP servers), then from web search. A directory entry is a lead: its cost, limits and terms are researched from the provider's own pages like any other candidate.",
+  "directories": {
+    "apis_guru": {"label": "APIs.guru OpenAPI directory", "kind": "api", "list_url": "https://api.apis.guru/v2/list.json"},
+    "mcp_registry": {"label": "Official MCP Registry", "kind": "mcp", "search_url": "https://registry.modelcontextprotocol.io/v0/servers?search={q}&limit=20"}
+  },
+  "max_candidates": {"api": 3, "mcp": 2},
+  "min_overlap": 2,
+  "budget_options": {
+    "free": {"label": "Free only", "monthly_usd": 0},
+    "up_to_10": {"label": "Up to $10 a month", "monthly_usd": 10},
+    "up_to_50": {"label": "Up to $50 a month", "monthly_usd": 50},
+    "up_to_200": {"label": "Up to $200 a month", "monthly_usd": 200},
+    "up_to_1000": {"label": "Up to $1,000 a month", "monthly_usd": 1000},
+    "any": {"label": "No set limit", "monthly_usd": null}
+  },
+  "stop_words": ["data", "need", "needs", "source", "sources", "reliable", "api", "apis", "information", "about", "from", "with", "that", "this", "which", "their", "these", "those", "into", "over", "under", "between", "where", "when", "what", "will", "would", "should", "could", "have", "has", "and", "the", "for", "per", "all", "any", "each", "list", "lists", "get", "find", "show", "give", "records", "record", "details", "free", "paid", "service", "services", "access", "official", "public"]
+}

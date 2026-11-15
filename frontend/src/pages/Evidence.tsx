@@ -10,7 +10,7 @@ export function Evidence() {
   const claims = useQuery({ queryKey: ['claims', applied], queryFn: () => api.claims(applied || undefined) })
   return (
     <>
-      <PageHeader title="Evidence" subtitle="Every claim WrAIph has stored. A claim exists only if its quote appears word for word in an archived page; nothing here can be edited." />
+      <PageHeader title="Evidence" subtitle="Every claim WordBench has stored. A claim exists only if its quote appears word for word in an archived page; nothing here can be edited." />
       <form className="mb-4 flex items-end gap-2" onSubmit={(e) => { e.preventDefault(); setApplied(entity.trim()) }}>
         <div>
           <label htmlFor="entity" className="block text-sm font-medium">Company or subject</label>

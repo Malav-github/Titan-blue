@@ -58,8 +58,8 @@ class FakeManager:
         self.registry = registry
         self.decisions = []
 
-    def start(self, need, parent_run_id=None, request_id=None, known_api=None):
-        self.known_api = known_api
+    def start(self, need, parent_run_id=None, request_id=None, known_api=None, brief=None):
+        self.known_api, self.brief, self.parent_run_id = known_api, brief, parent_run_id
         self.registry.request_event(request_id, "researching", {"need": need})
         self.registry.request_event(request_id, "awaiting_user", {})
 
@@ -231,6 +231,77 @@ def test_cancelling_needs_no_terms_box(client, parts):
     assert client.post(f"/api/capability/requests/{rid}/decision", headers=H, json={"approve": None}).status_code == 202
     assert parts["manager"].decisions == [{"approve": None}]
     assert {r["request_id"]: r["status"] for r in client.get("/api/capability/requests", headers=H).json()}[rid] == "cancelled"
+
+
+def test_the_form_becomes_a_brief_and_a_meaningless_need_is_refused(client, parts):
+    rid = start_request(client, "patent family records", fields="publication number\napplicant", budget="up_to_50", kind="api",
+                        volume=500, commercial_use=True)
+    b = parts["manager"].brief
+    assert b["fields"] == ["publication number", "applicant"] and b["budget_monthly_usd"] == 50 and b["kind"] == "api"
+    assert b["volume"] == 500 and b["commercial_use"] is True and b["identity_ok"] is False
+    assert client.get(f"/api/capability/requests/{rid}", headers=H).json()["brief"]["budget_label"] == "Up to $50 a month"
+    from skills.sourcing import usable_need
+    assert not usable_need("yes") and not usable_need("Yes.") and usable_need("SEC filings")
+
+
+def test_a_runs_own_request_is_started_with_the_brief_not_duplicated_and_closed_when_the_run_carries_on(client, parts):
+    c = parts["connectors"]
+    filed = c.create_request("run-9", "A reliable source for: who founded Acme?", "no pages fetched")
+    r = client.post("/api/templates/add-data-source/run", headers=H,
+                    json={"inputs": {"need": "company founding records"}, "request_id": filed})
+    assert r.json()["request_id"] == filed and parts["manager"].parent_run_id == "run-9"      # the run's request, for the run
+    assert len(c.requests()) == 1
+    assert client.post("/api/templates/add-data-source/run", headers=H,
+                       json={"inputs": {"need": "company founding records"}, "request_id": filed}).status_code == 409   # not twice
+    other = c.create_request("run-10", "A reliable source for: x y", "no pages")
+    parts["runs"].emit("run-10", "api", "queued", {"kind": "research", "question": "q"})
+    parts["runs"].emit("run-10", "runner", "run_started", {"question": "q"})
+    parts["runs"].emit("run-10", "runner", "capability_needed", {"request_id": other, "need": "x"})
+    assert client.post("/api/runs/run-10/continue", headers=H, json={"capability": None}).status_code == 202
+    closed = c.get_request(other)
+    assert closed["status"] == "cancelled" and "carried on" in closed["events"][-1]["detail"]["reason"]
+
+
+def test_a_request_can_be_closed_and_tried_again_with_the_same_brief(client, parts):
+    c = parts["connectors"]
+    stuck = c.create_request(None, "patent family records", "requested from the app", {"brief": {"need": "patent family records", "budget": "free"}})
+    assert client.post(f"/api/capability/requests/{stuck}/cancel", headers=H).status_code == 202
+    assert c.get_request(stuck)["status"] == "cancelled"
+    assert client.post(f"/api/capability/requests/{stuck}/cancel", headers=H).status_code == 409        # already closed
+    again = client.post(f"/api/capability/requests/{stuck}/retry", headers=H).json()["request_id"]
+    assert again != stuck and parts["manager"].brief == {"need": "patent family records", "budget": "free"}
+    assert c.get_request(again)["retry_of"] == stuck
+    junk = c.create_request("run-1", "yes", "no pages")
+    client.post(f"/api/capability/requests/{junk}/cancel", headers=H)
+    assert client.post(f"/api/capability/requests/{junk}/retry", headers=H).status_code == 422          # 'yes' is not a need
+
+
+def test_a_request_holds_a_conversation_and_its_offers_start_a_search_without_what_was_already_found(client, parts):
+    c = parts["connectors"]
+    rid = client.post("/api/templates/add-data-source/run", headers=H,
+                      json={"inputs": {"need": "patent family records", "budget": "up_to_50"}}).json()["request_id"]
+    out = client.post(f"/api/capability/requests/{rid}/chat", headers=H, json={"message": "Is there a free alternative?"}).json()
+    assert out["intent"] == "alternatives" and out["actions"][0]["id"] == "alternatives"
+    chat = [e["detail"] for e in c.get_request(rid)["events"] if e["event"] == "chat"]
+    assert [x["role"] for x in chat] == ["you", "agent"] and chat[0]["text"] == "Is there a free alternative?"
+    assert c.get_request(rid)["status"] == "awaiting_user"                                  # talking changes nothing
+    act = out["actions"][0]
+    new = client.post(f"/api/capability/requests/{rid}/act", headers=H, json={"action": "alternatives", "params": act["params"]}).json()
+    started = c.get_request(new["request_id"])
+    assert started["alternative_to"] == rid and parts["manager"].brief["exclude"] == ["X"]
+    assert parts["manager"].brief["budget"] == "free" and parts["manager"].brief["need"] == "patent family records"
+    assert client.post(f"/api/capability/requests/{rid}/act", headers=H, json={"action": "retest", "params": {}}).status_code == 409
+    assert client.post(f"/api/capability/requests/{rid}/act", headers=H,
+                       json={"action": "look_up", "params": {"candidate": "Not here", "question": "q"}}).status_code == 422
+    assert client.post(f"/api/capability/requests/{rid}/chat", headers=H, json={"message": ""}).status_code == 422
+
+
+def test_a_working_request_shows_working_not_its_last_event_name(parts):
+    c = parts["connectors"]
+    rid = c.create_request(None, "patent family records", "x")
+    for e in ("researching", "candidates_found", "researched", "drafted"):
+        c.request_event(rid, e, {})
+    assert c.get_request(rid)["status"] == "researching"
 
 
 # --- connectors and evidence ---

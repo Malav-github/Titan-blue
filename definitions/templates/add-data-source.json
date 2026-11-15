@@ -1,16 +1,26 @@
 {
   "id": "add-data-source",
-  "version": 1,
+  "version": 2,
   "order": 2,
-  "title": "Add a data source (API)",
-  "summary": "Researches an API's requirements from its own documentation, shows only facts backed by a quote, and stops at one approval gate where you read the provider's terms and decide. It activates the connector only if all tests pass.",
+  "title": "Add a data source (API or MCP server)",
+  "summary": "Describe the data you need, your budget and your limits. WordBench looks in its own catalogue, the APIs.guru directory, the official MCP Registry and the web; researches each candidate from its own pages (only facts backed by a quote are shown); scores how well each fits your brief; and stops at one approval gate where you read the provider's terms and decide. APIs and MCP servers are labelled apart. An API is activated only if all tests pass; MCP servers are found and recommended, not installed yet.",
   "kind": "capability",
   "inputs": {
     "type": "object",
     "required": ["need"],
     "properties": {
-      "need": {"type": "string", "x-multiline": true, "title": "What data do you need?", "description": "For example: patent family records", "minLength": 8},
-      "api_name": {"type": "string", "title": "API name (if you already know it)", "description": "For example: OpenAlex"},
+      "need": {"type": "string", "x-multiline": true, "title": "What data do you need?", "description": "In your own words. For example: patent family records for European filings since 2015", "minLength": 8},
+      "fields": {"type": "string", "x-multiline": true, "title": "Facts or fields it must return", "description": "One per line. For example: publication number, applicant, priority date"},
+      "examples": {"type": "string", "x-multiline": true, "title": "Example questions or records", "description": "One per line: what you would ask it"},
+      "coverage": {"type": "string", "title": "Coverage", "description": "Countries, time span or entities. For example: EU and US, 2015 to now"},
+      "kind": {"type": "string", "title": "Kind of source", "enum": ["either", "api", "mcp"], "x-enum-labels": ["API or MCP server", "API only", "MCP server only"], "default": "either"},
+      "budget": {"type": "string", "title": "Budget", "enum": ["free", "up_to_10", "up_to_50", "up_to_200", "up_to_1000", "any"],
+                 "x-enum-labels": ["Free only", "Up to $10 a month", "Up to $50 a month", "Up to $200 a month", "Up to $1,000 a month", "No set limit"], "default": "free"},
+      "volume": {"type": "integer", "title": "Expected calls a day", "minimum": 1, "maximum": 10000000, "default": 100},
+      "freshness": {"type": "string", "title": "How fresh must the data be?", "enum": ["any", "daily", "realtime"], "x-enum-labels": ["Any", "Updated daily", "Real time"], "default": "any"},
+      "commercial_use": {"type": "boolean", "title": "I will use the data commercially", "default": false},
+      "identity_ok": {"type": "boolean", "title": "I can complete an identity check if the provider requires one", "default": false},
+      "api_name": {"type": "string", "title": "A source you already have in mind (optional)", "description": "For example: OpenAlex"},
       "docs_url": {"type": "string", "title": "Its official documentation URL (needed with the name)", "description": "https://..."}
     }
   },

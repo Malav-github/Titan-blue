@@ -151,11 +151,12 @@ class ConnectorRegistry:
 
     # -- capability requests ----------------------------------------------------------------------
 
-    def create_request(self, run_id: str | None, need: str, reason: str) -> str:
+    def create_request(self, run_id: str | None, need: str, reason: str, detail: dict | None = None) -> str:
+        """`detail`: what the request was made with (the brief, a named API, the request it retries)."""
         request_id = uuid.uuid4().hex[:12]
         with closing(self._connect()) as db, db:
             db.execute("INSERT INTO capability_requests VALUES (?,?,?,?,?)", (request_id, run_id, need, reason, utc_now()))
-        self.request_event(request_id, "requested", {})
+        self.request_event(request_id, "requested", detail or {})
         return request_id
 
     def request_event(self, request_id: str, event: str, detail: dict | None = None) -> None:
@@ -170,9 +171,17 @@ class ConnectorRegistry:
                 return None
             events = db.execute("SELECT event, detail, at FROM capability_events WHERE request_id = ? ORDER BY event_id",
                                 (request_id,)).fetchall()
-        last = events[-1]["event"] if events else "requested"
-        return {**dict(row), "status": CAPABILITY_STATUS.get(last, last),
-                "events": [{**dict(e), "detail": json.loads(e["detail"])} for e in events]}
+        # the status is the last event that sets one: 'candidates_found' or 'drafted' along the way leave it 'researching'
+        # (the app stopped refreshing when a working request showed an event name as its status)
+        marks = [e["event"] for e in events if e["event"] in CAPABILITY_STATUS]
+        last = marks[-1] if marks else "requested"
+        parsed = [{**dict(e), "detail": json.loads(e["detail"])} for e in events]
+        made_with = next((e["detail"] for e in parsed if e["event"] in ("requested", "brief") and e["detail"].get("brief")), {})
+        return {**dict(row), "status": CAPABILITY_STATUS[last], "brief": made_with.get("brief"),
+                "known_api": made_with.get("known_api"), "retry_of": next((e["detail"].get("retry_of") for e in parsed
+                                                                           if e["detail"].get("retry_of")), None),
+                "alternative_to": next((e["detail"].get("alternative_to") for e in parsed if e["detail"].get("alternative_to")), None),
+                "events": parsed}
 
     def requests(self, limit: int = 30) -> list[dict]:
         with closing(self._connect()) as db:

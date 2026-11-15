@@ -24,7 +24,7 @@ import { PageHeader } from './ui'
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } } })
 
 function NotFound() {
-  return <PageHeader title="Page not found" subtitle="That address does not exist in WrAIph." />
+  return <PageHeader title="Page not found" subtitle="That address does not exist in WordBench." />
 }
 
 createRoot(document.getElementById('root')!).render(

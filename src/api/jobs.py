@@ -209,16 +209,36 @@ class Jobs:
 
     # -- capability manager -----------------------------------------------------------------------------
 
-    def start_capability(self, need: str, known_api: dict | None = None) -> str:
-        request_id = self.connectors.create_request(None, need, "requested from the app")
-        self._submit(self._start_capability, request_id, need, known_api)
+    def start_capability(self, need: str, known_api: dict | None = None, brief: dict | None = None,
+                         request_id: str | None = None, retry_of: str | None = None, alternative_to: str | None = None) -> str:
+        """A new request, or (`request_id`) the one a research run filed when it paused for a data source: that request is
+        started with the brief, so the run's request is the one worked on, not left behind."""
+        made_with = {"brief": brief, "known_api": known_api, **({"retry_of": retry_of} if retry_of else {}),
+                     **({"alternative_to": alternative_to} if alternative_to else {})}
+        if request_id:
+            self.connectors.request_event(request_id, "brief", made_with)
+            parent = self.connectors.get_request(request_id)["run_id"]
+        else:
+            request_id, parent = self.connectors.create_request(None, need, "requested from the app", made_with), None
+        self._submit(self._start_capability, request_id, need, known_api, brief, parent)
         return request_id
 
-    def _start_capability(self, request_id: str, need: str, known_api: dict | None) -> None:
+    def _start_capability(self, request_id: str, need: str, known_api: dict | None, brief: dict | None = None,
+                          parent_run_id: str | None = None) -> None:
         try:
-            self.manager.start(need, request_id=request_id, known_api=known_api)
+            self.manager.start(need, parent_run_id=parent_run_id, request_id=request_id, known_api=known_api, brief=brief)
         except Exception as exc:
             self.connectors.request_event(request_id, "failed", {"reason": f"{type(exc).__name__}: {str(exc)[:300]}"})
+
+    def close_requests_of_run(self, run_id: str, reason: str) -> list[str]:
+        """A research run carried on (or stopped) without the data source it asked for: its request, if nobody started it,
+        is closed with the reason rather than left 'requested' for ever."""
+        closed = []
+        for r in self.connectors.requests(200):
+            if r["run_id"] == run_id and r["status"] == "requested":
+                self.connectors.request_event(r["request_id"], "cancelled", {"reason": reason})
+                closed.append(r["request_id"])
+        return closed
 
     def decide_capability(self, request_id: str, decision: dict) -> None:
         self._submit(self._decide_capability, request_id, decision)
@@ -228,6 +248,48 @@ class Jobs:
             self.manager.resume(request_id, decision)
         except Exception as exc:
             self.connectors.request_event(request_id, "failed", {"reason": f"{type(exc).__name__}: {str(exc)[:300]}"})
+
+    # -- the conversation on a request (skills/advisor) ----------------------------------------------------
+
+    def say(self, request_id: str, role: str, text: str, **extra) -> None:
+        """One line of the conversation, kept in the request's append-only record ('chat' sets no status)."""
+        self.connectors.request_event(request_id, "chat", {"role": role, "text": text, **extra})
+
+    def retest(self, request_id: str) -> None:
+        self._submit(self._retest, request_id)
+
+    def _retest(self, request_id: str) -> None:
+        try:
+            out = self.manager.retest(request_id)
+            passed = out["outcome"] == "integrated"
+            self.say(request_id, "agent", "The tests passed and the source is active." if passed else
+                     "The tests failed again. Ask me what went wrong to see the cause.", intent="retest")
+        except Exception as exc:
+            self.say(request_id, "agent", f"The tests could not be run: {type(exc).__name__}: {str(exc)[:200]}", intent="retest")
+
+    def look_up(self, request_id: str, candidate: str, docs_url: str, question: str, known_urls: list[str] | None = None) -> None:
+        self._submit(self._look_up, request_id, candidate, docs_url, question, known_urls)
+
+    def _look_up(self, request_id: str, candidate: str, docs_url: str, question: str, known_urls: list[str] | None = None) -> None:
+        try:
+            r = self.manager.look_up(request_id, candidate, docs_url, question, known_urls)
+        except Exception as exc:
+            self.say(request_id, "agent", f"The look-up could not be done: {type(exc).__name__}: {str(exc)[:200]}", intent="look_up")
+            return
+        if r["found"]:
+            self.say(request_id, "agent", f"From {candidate}'s own pages:", intent="look_up",
+                     facts=[{"candidate": candidate, "label": "answer", "value": r.get("answer", ""), "quote": r["quote"],
+                             "source_url": r["source_url"], "official": True}],
+                     notes=["The quote is checked word for word against the page. The one-line answer is the model's reading "
+                            "of it: rely on the quote."])
+        else:
+            pages, unread = r["pages"], r.get("unread") or []
+            self.say(request_id, "agent", f"I could not find an answer on {candidate}'s own pages"
+                     + (f" ({len(pages)} read)." if pages else " (none could be read).")
+                     + (" The model's quote was not on the page, so it was not kept." if r.get("rejected") else ""),
+                     intent="look_up", points=[f"Read: {u}" for u in pages] + [f"Could not be read (refused, or nothing readable): {u}" for u in unread],
+                     notes=["Not found is not the same as not allowed. Ask the provider directly before relying on it."]
+                     + (["WordBench does not work around a site that refuses it. Open those pages yourself in a browser."] if unread else []))
 
     def gate(self, request_id: str) -> dict | None:
         """The approval gate of a request that is waiting for a person, or None."""

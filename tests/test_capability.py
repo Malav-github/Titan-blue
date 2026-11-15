@@ -121,7 +121,7 @@ def manager(parts, world, hs, transport=None, ready=None):
         registry=parts["registry"], runs=parts["runs"], store=parts["store"], checkpoint_path=parts["ckpt"],
         llm_factory=lambda task: ScriptedLLM(hs), search_fn=world.search, fetch_fn=world.fetch,
         transport=transport or httpx.MockTransport(lambda r: httpx.Response(200, json={"results": [{"number": "WO1"}]})),
-        on_ready=ready)
+        on_ready=ready, discovery=("search",))           # the web only: catalogue and directories have their own tests
 
 
 APIS = [("PatentX", "patentx.example", True)]
@@ -140,7 +140,7 @@ def test_gate_shows_only_quote_verified_facts_and_never_invented_urls_or_mcp(par
     assert all(e["quote"] and e["source_url"] for e in px["verified_facts"])
     assert px["is_free"] is True and px["integration_plan"]["key_env"] == "PATENTX_API_KEY"
     assert px["integration_plan"]["host"] == "api.patentx.example"
-    assert "MCP servers are not integrated" in names["Some MCP"]["cannot_integrate"]
+    assert "MCP servers are not installed yet" in names["Some MCP"]["cannot_integrate"]
     assert any("PATENTX_API_KEY" in step for step in gate["your_steps"])
 
 
@@ -295,7 +295,7 @@ def test_a_model_that_mislabels_an_mcp_server_as_rest_is_corrected(parts):
     mislabelled = lambda p: Candidates(candidates=[  # noqa: E731
         Cand(name="Patent MCP Server", docs_url="https://mcp.example/server", kind="rest", reason="serves patents")])
     out = manager(parts, World(APIS), handlers(APIS, Candidates=mislabelled)).start("patent data")
-    assert out["status"] == "failed" and "not integrated" in out["problems"]["Patent MCP Server"]
+    assert out["status"] == "failed" and "not installed yet" in out["problems"]["Patent MCP Server"]
 
 
 from connectors.manifest import Requirements  # noqa: E402

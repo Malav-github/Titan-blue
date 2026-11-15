@@ -1,0 +1,25 @@
+{
+  "about": "WordBench's own catalogue of data-source providers: the first place candidates are looked for. An entry is a lead (name, kind, documentation, what it is about), never evidence: cost, limits, identity and terms are researched from the provider's own pages for every request, and only quoted facts are shown. Documentation links were checked to answer when added. Add an entry when a provider proves useful; keep facts out of it.",
+  "providers": [
+    {"id": "openalex", "name": "OpenAlex", "kind": "api", "docs_url": "https://docs.openalex.org/",
+     "topics": ["scholarly", "papers", "publications", "authors", "citations", "institutions", "research", "journals", "doi"], "regions": ["global"]},
+    {"id": "sec_edgar", "name": "SEC EDGAR", "kind": "api", "docs_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+     "topics": ["company", "filings", "financial", "statements", "xbrl", "10-k", "10-q", "8-k", "public companies", "registrants", "earnings"], "regions": ["us"]},
+    {"id": "epo_ops", "name": "EPO Open Patent Services", "kind": "api", "docs_url": "https://developers.epo.org/",
+     "topics": ["patents", "patent", "families", "inventors", "applicants", "claims", "intellectual property", "publications"], "regions": ["europe", "global"]},
+    {"id": "crossref", "name": "Crossref", "kind": "api", "docs_url": "https://www.crossref.org/documentation/retrieve-metadata/rest-api/",
+     "topics": ["scholarly", "doi", "citations", "journals", "publications", "metadata", "funders"], "regions": ["global"]},
+    {"id": "gleif", "name": "GLEIF LEI", "kind": "api", "docs_url": "https://www.gleif.org/en/lei-data/gleif-api",
+     "topics": ["legal entity", "lei", "company", "ownership", "parent", "subsidiaries", "registration", "entities"], "regions": ["global"]},
+    {"id": "companies_house", "name": "Companies House", "kind": "api", "docs_url": "https://developer.company-information.service.gov.uk/",
+     "topics": ["company", "officers", "directors", "filings", "registration", "ownership", "persons with significant control", "uk"], "regions": ["uk"]},
+    {"id": "world_bank", "name": "World Bank Indicators", "kind": "api", "docs_url": "https://datahelpdesk.worldbank.org/knowledgebase/articles/889392-about-the-indicators-api-documentation",
+     "topics": ["economic", "indicators", "gdp", "population", "countries", "development", "statistics", "macroeconomic"], "regions": ["global"]},
+    {"id": "wikidata", "name": "Wikidata", "kind": "api", "docs_url": "https://www.wikidata.org/wiki/Wikidata:REST_API",
+     "topics": ["entities", "facts", "people", "organisations", "places", "founded", "identifiers", "general knowledge"], "regions": ["global"]},
+    {"id": "federal_register", "name": "Federal Register", "kind": "api", "docs_url": "https://www.federalregister.gov/developers/documentation/api/v1",
+     "topics": ["regulations", "rules", "notices", "agencies", "government", "policy", "executive orders"], "regions": ["us"]},
+    {"id": "openfda", "name": "openFDA", "kind": "api", "docs_url": "https://open.fda.gov/apis/",
+     "topics": ["drugs", "devices", "recalls", "adverse events", "food", "fda", "medical", "labels"], "regions": ["us"]}
+  ]
+}

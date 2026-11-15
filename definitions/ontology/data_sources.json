@@ -1,0 +1,52 @@
+{
+  "id": "data_sources",
+  "version": "1.0",
+  "about": "What a data source is and what makes one fit a need, for the capability manager (src/capability.py) and the sourcing skill (src/skills/sourcing/). Two kinds, always labelled apart: an API (a web service called over HTTPS) and an MCP server (a Model Context Protocol server that exposes tools). A person describes the need in a brief; every candidate is judged against the brief on the criteria below, each with a verdict and the evidence for it. Facts about cost, limits, identity and terms come only from quotes found word for word on the provider's own pages (as today); a directory's description is a lead, never evidence.",
+
+  "kinds": [
+    {"id": "api", "label": "API", "internal": "rest",
+     "definition": "A web service called over HTTPS. WordBench calls it read-only, on one host, through a reviewed manifest.",
+     "installable": true},
+    {"id": "mcp", "label": "MCP server", "internal": "mcp",
+     "definition": "A Model Context Protocol server: a remote endpoint (streamable HTTP or SSE) or a local package (npm, PyPI, container) that exposes tools to a model.",
+     "installable": false,
+     "why_not_yet": "Installing an MCP server runs or trusts third-party code: it needs a pinned version, a review of its tools and a sandboxed run. MCP servers are found, vetted and recommended now; installing them comes in a later phase."}
+  ],
+
+  "mcp_transports": {
+    "remote": "Reached at a URL (streamable HTTP or SSE); nothing runs on this computer.",
+    "local": "A package (npm, PyPI or a container image) that runs on this computer."
+  },
+
+  "brief_fields": {
+    "need": "What data is needed, in the person's words.",
+    "fields": "Facts or fields the source must return, one per line.",
+    "examples": "Example questions or records the source should answer.",
+    "coverage": "Countries, time span or entities it must cover.",
+    "kind": "API, MCP server, or either.",
+    "budget": "The most the person will pay a month (0 = free only; null = no limit).",
+    "volume": "Expected calls a day.",
+    "freshness": "How fresh the data must be: any, daily or real time.",
+    "commercial_use": "The data will be used commercially.",
+    "identity_ok": "The person can complete an identity check if the provider requires one."
+  },
+
+  "verdicts": {
+    "meets": "The evidence shows the source meets this.",
+    "partly": "It meets part of it, or only with a condition.",
+    "fails": "The evidence shows it does not.",
+    "unknown": "No evidence either way: check before relying on it."
+  },
+
+  "criteria": [
+    {"id": "kind", "label": "Kind", "question": "Is it the kind of source asked for (API or MCP server)?", "hard": true},
+    {"id": "coverage", "label": "Covers the data", "question": "Does its documentation describe the data and fields asked for? (Mentioned in the documentation is not proof it returns them: the tests check that.)", "hard": false},
+    {"id": "cost", "label": "Cost within budget", "question": "Is it free, or does a verified price fit the budget?", "hard": true},
+    {"id": "storage", "label": "Results may be kept", "question": "Do its terms allow keeping results? WordBench archives every response as evidence, so this is required.", "hard": true},
+    {"id": "commercial", "label": "Commercial use", "question": "If the data is for commercial use, do its terms allow it?", "hard": true},
+    {"id": "identity", "label": "Identity check", "question": "Does it require an identity check the person cannot complete?", "hard": true},
+    {"id": "volume", "label": "Limits fit the volume", "question": "Do its verified rate limits or quotas allow the expected calls a day?", "hard": false},
+    {"id": "authority", "label": "Authority", "question": "Is it an official or regulatory source, the provider's own service, or found only in a directory?", "hard": false},
+    {"id": "installable", "label": "Can be connected now", "question": "Can WordBench connect it now (an API with a valid manifest), or not yet (an MCP server, or an API whose manifest could not be drafted)?", "hard": false}
+  ]
+}

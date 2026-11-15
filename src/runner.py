@@ -1811,7 +1811,10 @@ class Runner:
     def n_capability(self, s: State) -> dict:
         """Pause: this run needs a data source it does not have. The capability manager (a person in the loop) provides it."""
         gaps = [t for i, t in enumerate(s["checklist"]) if i not in s["covered"]]
-        need = s.get("data_need") or f"A reliable source for: {s['question']}"
+        # the planner's own words for the need, when they describe one: it once answered "yes" (to "does this need a data
+        # source?"), and "yes" became the request
+        from skills.sourcing import usable_need
+        need = s.get("data_need") if usable_need(s.get("data_need")) else f"A reliable source for: {s['question']}"
         reason = (f"{s['fetch_failures']} of {s['fetches_used']} pages were unusable" if s["fetches_used"] else "no pages fetched") \
             + f"; still unestablished: {gaps}"
         decision = interrupt({"type": "capability_needed", "need": need, "reason": reason, "gaps": gaps}) or {}

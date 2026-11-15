@@ -124,7 +124,7 @@ def test_home_lists_the_apps(page: Page):
     page.goto("/")
     expect(page.get_by_role("heading", name="WritersBlock")).to_be_visible()
     expect(page.get_by_role("heading", name="Research a company")).to_be_visible()
-    expect(page.get_by_role("heading", name="Add a data source (API)")).to_be_visible()
+    expect(page.get_by_role("heading", name="Add a data source (API or MCP server)")).to_be_visible()
 
 
 def test_research_from_form_to_verified_claim(page: Page):
@@ -212,12 +212,12 @@ def test_the_approval_gate_needs_the_terms_box_and_shows_the_documents(page: Pag
     expect(page.get_by_role("heading", name="Your decision")).to_be_visible()
     expect(page.get_by_text("third-party site")).to_be_visible()                       # facts quoted from other sites are labelled
     expect(page.get_by_role("link", name="https://www.sec.gov/about/privacy-information")).to_be_visible()   # the terms document is linked
-    approve = page.get_by_role("button", name="Approve and integrate")
+    approve = page.get_by_role("button", name="Approve and connect")
     expect(approve).to_be_disabled()                                                    # not without ticking that the terms were read
     page.get_by_label("I have read the provider’s terms and usage rules linked above", exact=False).check()
     expect(approve).to_be_enabled()
     approve.click()
-    expect(page.get_by_text("Read-only smoke call succeeds")).to_be_visible()
+    expect(page.get_by_role("listitem").filter(has_text="PASS").filter(has_text="Read-only smoke call succeeds")).to_be_visible()
     expect(page.locator("header").get_by_text("Ready", exact=True)).to_be_visible()
 
 
@@ -226,7 +226,7 @@ def test_a_provider_without_terms_gets_a_clear_warning_and_can_be_cancelled(page
     page.get_by_label("What data do you need?").fill("scholarly works")
     page.get_by_role("button", name="Start").click()
     expect(page.get_by_text("No terms document was found for this provider")).to_be_visible()
-    page.get_by_role("button", name="Cancel this request").click()
+    page.get_by_role("button", name="Close this request").click()
     expect(page.locator("header").get_by_text("Cancelled", exact=True)).to_be_visible()
 
 

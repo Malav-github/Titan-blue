@@ -32,6 +32,7 @@ from connectors.manifest import (ID_RE, PLACEHOLDER_RE, Auth, Budget, Evidence, 
 from connectors.registry import ConnectorRegistry
 from evidence import EvidenceStore, normalize, verify_quote
 from runs import RunStore
+from skills import advisor, sourcing
 from support import CONTEXT_CHARS, PROMPT as SUPPORT_PROMPT, SupportVerdict
 import policy
 from tools.archive import check_public_url, utc_now
@@ -105,9 +106,17 @@ class Recommendation(BaseModel):
     paid_justification: str | None = Field(None, description="Required if the choice is not verified free while a free option exists")
 
 
+class LookUp(BaseModel):
+    found: bool = Field(description="True only if a passage answers the question")
+    passage: int = Field(0, description="Number of the passage that answers it")
+    quote: str = Field("", description="The exact words copied from that passage that answer the question (20-400 characters)")
+    answer: str = Field("", description="The answer in one short plain sentence, saying only what the quote says")
+
+
 class State(TypedDict, total=False):
     request_id: str
     need: str
+    brief: dict                 # the person's brief (skills/sourcing): fields, coverage, kind, budget, volume, licence needs
     parent_run_id: str | None
     known_api: dict | None      # {"name", "docs_url"}: the user named the API, so skip guessing candidates
     candidates: list[dict]
@@ -196,6 +205,10 @@ def tag_sources(evidence: list[dict], *own_hosts: str) -> list[dict]:
 GENERIC_NAME_WORDS = {"api", "rest", "mcp", "server", "official", "the", "data", "web", "service", "services", "public", "open"}
 
 
+def _name_words(name: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]{2,}", name.lower()))
+
+
 def host_fits_name(host: str, name: str) -> bool:
     """Does an API host plausibly belong to the API named `name`? A blog or an aggregator hosting the docs does not
     (a manifest for dev.to is not a manifest for OpenAlex). Needs a distinctive word of the name inside the host."""
@@ -215,7 +228,8 @@ def best_windows(text: str, terms: set[str], k: int = 2, size: int = 1800) -> li
 class CapabilityManager:
     def __init__(self, registry: ConnectorRegistry | None = None, runs: RunStore | None = None,
                  store: EvidenceStore | None = None, checkpoint_path: str | None = None, llm_factory=None,
-                 search_fn=None, fetch_fn=None, transport=None, on_ready=None, render_fn=None):
+                 search_fn=None, fetch_fn=None, transport=None, on_ready=None, render_fn=None, directory_fn=None,
+                 discovery: tuple[str, ...] = ("catalogue", "directories", "search")):
         self.registry = registry or ConnectorRegistry()
         self.runs = runs or RunStore()
         self.store = store or EvidenceStore()
@@ -227,17 +241,24 @@ class CapabilityManager:
             from llm import get_chat_model
             llm_factory = lambda task: get_chat_model(task=task, temperature=0)  # noqa: E731
         self.llm_factory, self.transport, self.on_ready = llm_factory, transport, on_ready
+        # a directory's listing (APIs.guru, the MCP Registry): url -> parsed JSON. Its own loader: the APIs.guru list is larger
+        # than a page fetch allows. None in tests that do not use directories.
+        self.directory_fn = directory_fn if directory_fn is not None else self._default_directory
+        self._directory_cache: dict[str, dict] = {}
+        self.discovery = discovery                      # where candidates are looked for, in order
         self.graph = self._build(SqliteSaver(sqlite3.connect(checkpoint_path or CHECKPOINT_PATH, check_same_thread=False)))
 
     # -- public API ---------------------------------------------------------------------------------
 
     def start(self, need: str, parent_run_id: str | None = None, request_id: str | None = None,
-              known_api: dict | None = None) -> dict:
+              known_api: dict | None = None, brief: dict | None = None) -> dict:
         """`known_api` = {"name": ..., "docs_url": ...} when the user already knows which API they want. Everything
-        after identification (quote-checked research, manifest, host check, gate, tests) still applies."""
+        after identification (quote-checked research, manifest, host check, gate, tests) still applies. `brief`: the
+        person's requirements (skills/sourcing.brief_from); a need alone makes a brief with no constraints."""
         request_id = request_id or self.registry.create_request(parent_run_id, need, "requested directly")
         return self._drive(request_id, {"request_id": request_id, "need": need, "parent_run_id": parent_run_id,
-                                        "known_api": known_api, "tests": [], "gate_note": ""})
+                                        "known_api": known_api, "brief": brief or sourcing.brief_from({"need": need}),
+                                        "tests": [], "gate_note": ""})
 
     def pending(self, request_id: str) -> dict | None:
         """The result shape of start/resume for a request already waiting at the gate, without running anything."""
@@ -306,8 +327,12 @@ class CapabilityManager:
         g.add_edge(START, "identify")
         g.add_conditional_edges("identify", lambda s: "research" if s.get("candidates") else "finish")
         g.add_edge("research", "draft")
-        g.add_conditional_edges("draft", lambda s: "recommend" if any("manifest" in d for d in s["drafts"].values()) else "finish")
-        g.add_edge("recommend", "gate")
+        # an MCP server is recommended even though it cannot be installed yet: the person sees it, labelled, at the gate
+        g.add_conditional_edges("draft", lambda s: "recommend" if any("manifest" in d or d.get("kind") == "mcp"
+                                                                      for d in s["drafts"].values()) else "finish")
+        # the gate is for approving an API; with none that can be connected the request ends, its findings (MCP servers
+        # included, labelled) kept with it
+        g.add_conditional_edges("recommend", lambda s: "gate" if any("manifest" in d for d in s["drafts"].values()) else "finish")
         g.add_conditional_edges("gate", self._after_gate)
         g.add_edge("register", "test")
         g.add_edge("test", "finish")
@@ -334,7 +359,91 @@ class CapabilityManager:
             if known.get("manifest"):
                 cand["manifest"] = known["manifest"]     # {"base_url", "auth", "endpoints", "smoke_test"} written by a person
             self._event(s, "candidates_found", {"candidates": [cand["name"]], "source": "named by the user"})
-            return {"candidates": [cand], "outcome": ""}
+            return {"candidates": [{**cand, "found_in": "named by you"}], "outcome": ""}
+        brief = s.get("brief") or sourcing.brief_from({"need": s["need"]})
+        want = brief.get("kind", "either")
+        caps = {"rest": sourcing.settings()["max_candidates"]["api"], "mcp": sourcing.settings()["max_candidates"]["mcp"]}
+        if want == "api":
+            caps["mcp"] = 0
+        elif want == "mcp":
+            caps["rest"] = 0
+        cands: list[dict] = []
+        seen: set[str] = set()
+        first = lambda n: (re.findall(r"[a-z0-9]{3,}", n.lower()) or [""])[0]      # noqa: E731  'EPO OPS API' -> 'epo'
+        # "look for other sources": the ones already looked at are left out, with every other name for the same provider
+        left_out = {connector_slug(n) for n in brief.get("exclude") or []}
+        left_out_first = {first(n) for n in brief.get("exclude") or []} - {""}
+
+        def add(c: dict) -> None:
+            key = connector_slug(c["name"])
+            if key in left_out or first(c["name"]) in left_out_first:
+                if key not in seen:
+                    seen.add(key)
+                    self._event(s, "candidate_skipped", {"candidate": c["name"], "url": c.get("docs_url"),
+                                                         "reason": "you asked for sources other than this one"})
+                return
+            if not key or key in seen or sum(x["kind"] == c["kind"] for x in cands) >= caps.get(c["kind"], 0):
+                return
+            if c.get("docs_url"):
+                try:
+                    check_public_url(c["docs_url"])
+                except Exception as exc:                # a private address, or a host that does not resolve: skip this one
+                    self._event(s, "candidate_skipped", {"candidate": c["name"], "url": c["docs_url"],
+                                                         "reason": f"{type(exc).__name__}: {str(exc)[:120]}"})
+                    return
+            elif c["kind"] == "rest":
+                return                                  # an API with no documentation to read cannot be vetted
+            seen.add(key)
+            cands.append(c)
+
+        if "catalogue" in self.discovery:
+            for c in sourcing.from_catalogue(brief):
+                add(c)
+        if "directories" in self.discovery:
+            dirs = sourcing.settings()["directories"]
+            if caps["rest"]:
+                for c in sourcing.from_apis_guru(self._directory(s, dirs["apis_guru"]["list_url"]), brief):
+                    add(c)
+            if caps["mcp"]:
+                from urllib.parse import quote
+                found = [self._directory(s, dirs["mcp_registry"]["search_url"].format(q=quote(q))) for q in sourcing.mcp_queries(brief)]
+                for c in sourcing.from_mcp_registry(found, brief):
+                    add(c)
+        if "search" in self.discovery and sum(c["kind"] == "rest" for c in cands) < caps["rest"]:
+            for c in self._search_candidates(s):
+                if any(x["kind"] == c["kind"] and first(x["name"]) == first(c["name"]) for x in cands):
+                    # web search often finds an article about a provider already found ('EPO OPS API', a blog post on EPO)
+                    self._event(s, "candidate_skipped", {"candidate": c["name"], "url": c["docs_url"],
+                                                         "reason": "names a provider already found"})
+                    continue
+                add({**c, "found_in": "web search"})
+        by_kind: dict[str, list[str]] = {}
+        for c in cands:
+            by_kind.setdefault(sourcing.kind_label(c["kind"]), []).append(c["name"])
+        self._event(s, "candidates_found", {"candidates": [c["name"] for c in cands], "by_kind": by_kind,
+                                            "found_in": {c["name"]: c.get("found_in") for c in cands}})
+        return {"candidates": cands, "outcome": "" if cands else "no usable candidates"}
+
+    def _directory(self, s: State, url: str) -> dict:
+        """A directory's listing, once per manager. A failure is logged and the search carries on without it."""
+        if url not in self._directory_cache:
+            try:
+                self._directory_cache[url] = self.directory_fn(url) or {}
+            except Exception as exc:
+                self._event(s, "directory_failed", {"url": url, "error": f"{type(exc).__name__}: {str(exc)[:150]}"})
+                return {}
+        return self._directory_cache[url]
+
+    @staticmethod
+    def _default_directory(url: str) -> dict:
+        from tools.archive import archive_bytes
+        from tools.web import download
+        dl = download(url, max_bytes=25_000_000)        # the APIs.guru list is about 9 MB
+        archive_bytes(dl.body, ".json")                 # kept, like every page read
+        return json.loads(dl.body)
+
+    def _search_candidates(self, s: State) -> list[dict]:
+        """Web search, then the model picks up to 3 from the numbered results (its docs_url must be one of them)."""
         q = self._ask(Queries, (
             f"A research task is blocked because it lacks this data source: {s['need']}\n"
             "Write up to 3 web search queries to find APIs (preferably free or open-data) that provide it, including "
@@ -349,7 +458,8 @@ class CapabilityManager:
                 self._event(s, "search_failed", {"query": query, "error": str(exc)[:150]})
         shown = list(results.values())[:24]
         if not shown:
-            return {"candidates": [], "outcome": "no search results"}
+            self._event(s, "search_failed", {"query": "; ".join(queries), "error": "no search results"})
+            return []
         listing = "\n".join(f"{i}. {r['title'][:80]} - {r['url']}\n   {r['snippet'][:140]!r}" for i, r in enumerate(shown, 1))
         pick = self._ask(Candidates, (
             f"NEED: {s['need']}\n\nSearch results:\n{listing}\n\nChoose up to 3 distinct APIs or MCP servers that could provide "
@@ -363,8 +473,7 @@ class CapabilityManager:
                 if re.search(r"\bmcp\b", f"{c.name} {c.docs_url} {c.reason}", re.I):  # the model's kind label is unreliable
                     item["kind"] = "mcp"
                 cands.append(item)
-        self._event(s, "candidates_found", {"candidates": [c["name"] for c in cands]})
-        return {"candidates": cands, "outcome": "" if cands else "no usable candidates"}
+        return cands
 
     def _fetch_page(self, s: State, url: str) -> dict | None:
         try:
@@ -403,11 +512,12 @@ class CapabilityManager:
     def n_research(self, s: State) -> dict:
         research = {}
         for cand in s["candidates"]:
-            name, docs = cand["name"], cand["docs_url"]
-            pages = [p for p in [self._fetch_page(s, docs)] if p]
-            if cand["kind"] == "rest":
+            name, docs = cand["name"], cand.get("docs_url")
+            pages = [p for p in [self._fetch_page(s, docs)] if p] if docs else []
+            if docs:            # an API's or an MCP server's pricing and terms pages: both are researched the same way
                 try:
-                    extra = self.search_fn(f"{name} API pricing free tier rate limits terms of use", max_results=6)["results"]
+                    what = "MCP server" if cand["kind"] == "mcp" else "API"
+                    extra = self.search_fn(f"{name} {what} pricing free tier rate limits terms of use", max_results=6)["results"]
                 except Exception:
                     extra = []
                 host = (urlparse(docs).hostname or "").split(".")[-2:]
@@ -418,7 +528,7 @@ class CapabilityManager:
                     if url not in {p["url"] for p in pages} and (page := self._fetch_page(s, url)):
                         pages.append(page)
             facts, unverified, rejected = [], list(FACT_FIELDS), []
-            if pages and cand["kind"] == "rest":
+            if pages:
                 passages = [(i, p, w) for i, p in enumerate(pages, 1) for w in best_windows(p["text"], REQUIREMENT_TERMS)]
                 listing = "\n\n".join(f"[{i}] {p['url']}\n{w}" for i, p, w in passages)
                 ask = self._ask(FactList, (
@@ -483,6 +593,15 @@ class CapabilityManager:
             base = openapi.base_url_from(doc) if openapi.is_openapi(doc) else None
             return bool(base) and host_fits_name(urlparse(base).hostname or "", cand["name"])
 
+        if cand.get("spec_url"):                       # a directory (APIs.guru) gave the API's own OpenAPI spec
+            page = self._fetch_page(s, cand["spec_url"])
+            if page:
+                try:
+                    doc = json.loads(Path(page["raw_path"]).read_text(encoding="utf-8"))
+                    if usable(doc):
+                        return doc
+                except (ValueError, OSError):
+                    pass
         for p in res["pages"]:
             if "json" in p["content_type"]:
                 try:
@@ -514,8 +633,8 @@ class CapabilityManager:
             name, res = cand["name"], s["research"][cand["name"]]
             cid = connector_slug(name)
             if cand["kind"] != "rest":
-                drafts[name] = {"error": "MCP servers are not integrated yet: installing one runs third-party code and "
-                                         "needs a pinned version, a code review and a sandboxed run"}
+                drafts[name] = {"error": "MCP servers are not installed yet: installing one runs or trusts third-party code and "
+                                         "needs a pinned version, a review of its tools and a sandboxed run", "kind": "mcp"}
                 continue
             if not ID_RE.match(cid):
                 drafts[name] = {"error": f"cannot derive a connector id from {name!r}"}
@@ -602,49 +721,81 @@ class CapabilityManager:
         return Manifest.model_validate(self._manifest_dict(
             cid, cand, base, auth.model_dump(), [e.model_dump(by_alias=True) for e in endpoints], smoke, req, terms, need))
 
+    def _fits(self, s: State) -> dict[str, dict]:
+        """Each candidate judged against the brief by code (skills/sourcing.fit), on its quoted facts and its documentation."""
+        brief = s.get("brief") or sourcing.brief_from({"need": s["need"]})
+        out = {}
+        for cand in s["candidates"]:
+            name = cand["name"]
+            res, draft = s["research"].get(name) or {"pages": [], "evidence": []}, s["drafts"].get(name) or {}
+            text = " ".join(self.store_text(p["sha"])[:30_000] for p in res["pages"])
+            out[name] = sourcing.fit(brief, cand, res["evidence"], draft, text)
+        return out
+
     def n_recommend(self, s: State) -> dict:
+        fits = self._fits(s)
         usable = {n: d for n, d in s["drafts"].items() if "manifest" in d}
-        rank = lambda n: (0 if usable[n]["is_free"] is True else 1 if usable[n]["is_free"] is None else 2, n)  # noqa: E731
-        order = sorted(usable, key=rank)
-        default = order[0]
-        summary = "\n".join(
-            f"- {n} (id {connector_slug(n)}): free={usable[n]['is_free']}; verified facts: "
-            + "; ".join(f"{e['field']}={e['value']}" for e in s["research"][n]["evidence"]) + f"; unverified: {s['research'][n]['unverified']}"
-            for n in order)
-        rec = self._ask(Recommendation, (
-            f"NEED: {s['need']}\nCandidates:\n{summary}\n\nRecommend one by connector id. Free options are the default; recommend a "
-            "paid or unknown-cost one over a verified-free one only if it is clearly better for this need, and then fill "
-            "paid_justification. Be honest about weaknesses and about what is unverified."), s)
-        choice, note, justification = connector_slug(default), "", None
-        if rec:
-            ids = {connector_slug(n): n for n in usable}
+        cost_rank = lambda n: 0 if usable[n]["is_free"] is True else 1 if usable[n]["is_free"] is None else 2  # noqa: E731
+        # best fit first (nothing that fails a hard requirement), then the cheaper, then by name
+        order = sorted(usable, key=lambda n: (sourcing.rank_key(fits[n]), cost_rank(n), n))
+        allowed = [n for n in order if not fits[n]["excluded"]]
+        mcps = sorted((c["name"] for c in s["candidates"] if c["kind"] == "mcp"), key=lambda n: (sourcing.rank_key(fits[n]), n))
+        best_mcp = next((n for n in mcps if not fits[n]["excluded"] or
+                         all(c["id"] == "installable" for c in fits[n]["criteria"] if c["hard"] and c["verdict"] == "fails")), None)
+
+        def line(n):
+            f = fits[n]
+            return (f"- {n} (id {connector_slug(n)}, {sourcing.kind_label(next(c['kind'] for c in s['candidates'] if c['name'] == n))}): "
+                    + "; ".join(f"{c['label']}: {c['verdict']} ({c['why']})" for c in f["criteria"])
+                    + ("; RULED OUT: " + "; ".join(f["exclusion_reasons"]) if f["excluded"] else ""))
+
+        default = allowed[0] if allowed else None
+        choice, note, justification, rec = (connector_slug(default) if default else None), "", None, None
+        if not allowed:
+            note = ("None of the APIs found fits the brief: " + " | ".join(f"{n}: {'; '.join(fits[n]['exclusion_reasons'])}" for n in order)
+                    if order else "No API could be connected; see the MCP servers and the reasons below.")
+        if usable or mcps:
+            rec = self._ask(Recommendation, (
+                f"NEED: {s['need']}\nHow each candidate fits the person's brief (worked out by code from quoted facts):\n"
+                + "\n".join(line(n) for n in [*order, *mcps]) +
+                f"\n\nRecommend one API by connector id from: {[connector_slug(n) for n in allowed] or 'none'}. Explain the trade-offs "
+                "honestly in plain language, including what is unverified. A paid or unknown-cost API over a verified-free one needs "
+                "paid_justification."), s)
+        if rec and allowed:
+            ids = {connector_slug(n): n for n in allowed}
             wanted = ids.get(rec.choice) or ids.get(connector_slug(rec.choice))
-            if wanted:
-                better_free_exists = usable[order[0]]["is_free"] is True and usable[wanted]["is_free"] is not True
+            if wanted and wanted != default:
+                better_free_exists = usable[default]["is_free"] is True and usable[wanted]["is_free"] is not True
                 if better_free_exists and not rec.paid_justification:
-                    note = f"The model preferred {wanted}, but gave no reason for choosing it over the free option; defaulting to the free one."
+                    note = f"The model preferred {wanted}, but gave no reason for choosing it over the free option; keeping {default}."
                 else:
                     choice, justification = connector_slug(wanted), rec.paid_justification
-        if choice == connector_slug(default):
-            justification = None   # nothing to justify: this is the cost-ranked default, not a departure from it
-        reasoning = rec.reasoning if rec else "No model opinion available; ranked free options first."
+        if choice == (connector_slug(default) if default else None):
+            justification = None   # nothing to justify: this is the code's best fit, not a departure from it
+        reasoning = rec.reasoning if rec else "No model opinion available; ranked by fit to the brief, then cost."
         recommendation = {"choice": choice, "reasoning": reasoning, "paid_justification": justification, "note": note,
-                          "order": [connector_slug(n) for n in order]}
-        self._event(s, "recommended", {"choice": choice})
+                          "order": [connector_slug(n) for n in order], "best_mcp": connector_slug(best_mcp) if best_mcp else None,
+                          "fits": {connector_slug(n): f for n, f in fits.items()}}
+        self._event(s, "recommended", {"choice": choice, "best_mcp": recommendation["best_mcp"]})
+        if not usable:
+            return {"recommendation": recommendation,
+                    "outcome": "no API could be connected" + (f"; MCP server found: {best_mcp} (not installable yet)" if best_mcp else "")}
         return {"recommendation": recommendation}
 
     def _gate_payload(self, s: State) -> dict:
         candidates = []
         for cand in s["candidates"]:
             name, res, draft = cand["name"], s["research"][cand["name"]], s["drafts"][cand["name"]]
-            item = {"name": name, "connector_id": connector_slug(name), "kind": cand["kind"], "docs_url": cand["docs_url"],
-                    "why_considered": cand["reason"], "verified_facts": tag_sources(res["evidence"], cand["docs_url"]),
-                    "unverified": res["unverified"],
-                    "facts_rejected": len(res.get("rejected", []))}
+            fit = (s["recommendation"].get("fits") or {}).get(connector_slug(name))
+            item = {"name": name, "connector_id": connector_slug(name), "kind": cand["kind"], "kind_label": sourcing.kind_label(cand["kind"]),
+                    "docs_url": cand.get("docs_url"), "found_in": cand.get("found_in"), "description": cand.get("description"),
+                    "registry": cand.get("registry"), "why_considered": cand["reason"],
+                    "verified_facts": tag_sources(res["evidence"], cand.get("docs_url") or ""),
+                    "unverified": res["unverified"], "facts_rejected": len(res.get("rejected", [])), "fit": fit}
             if "manifest" in draft:
                 m = Manifest.model_validate(draft["manifest"])
                 warnings = []
-                item["verified_facts"] = tag_sources(res["evidence"], cand["docs_url"], m.host)
+                item["verified_facts"] = tag_sources(res["evidence"], cand.get("docs_url") or "", m.host)
                 outside = [f for f in item["verified_facts"] if not f["official"]]
                 if outside:
                     sites = sorted({site_of(f["source_url"]) for f in outside})
@@ -672,8 +823,11 @@ class CapabilityManager:
         if plan.get("key_env"):
             steps += [f"Create an account / key at {plan.get('signup_url')}", f"Add {plan['key_env']}=<your key> to .env"]
         steps += ["Read the terms (check whether storing results is allowed)",
-                  f'Reply with {{"approve": "{choice}", "terms_ok": true}} to integrate, or {{"approve": null}} to cancel']
-        return {"type": "capability_gate", "need": s["need"], "recommendation": s["recommendation"],
+                  (f'Reply with {{"approve": "{choice}", "terms_ok": true}} to integrate, or {{"approve": null}} to cancel' if choice
+                   else 'No API fits the brief: reply with {"approve": null} to close, or approve a listed API anyway')]
+        recommendation = {k: v for k, v in s["recommendation"].items() if k != "fits"}       # the fits travel with each candidate
+        return {"type": "capability_gate", "need": s["need"], "brief": s.get("brief"), "recommendation": recommendation,
+                "criteria": [{k: c[k] for k in ("id", "label", "question", "hard")} for c in sourcing.ontology()["criteria"]],
                 "candidates": candidates, "your_steps": steps, "note": s.get("gate_note", "")}
 
     def n_gate(self, s: State) -> dict:
@@ -819,6 +973,77 @@ class CapabilityManager:
         elif outcome.startswith("tests failed"):
             pass  # tests_failed already recorded
         else:
-            self._event(s, "cancelled" if "cancelled" in outcome else "failed",
-                        {"reason": outcome or "no integrable candidate"})
+            detail = {"reason": outcome or "no integrable candidate"}
+            if s.get("recommendation") and "cancelled" not in outcome and s.get("research"):
+                # what was found stays with the request: each candidate, its kind, its fit, why it could not be connected
+                detail["findings"] = self._gate_payload(s)["candidates"]
+                detail["best_mcp"] = s["recommendation"].get("best_mcp")
+            self._event(s, "cancelled" if "cancelled" in outcome else "failed", detail)
         return {}
+
+    # -- after the run: the conversation on a request (skills/advisor) --------------------------------------
+
+    def retest(self, request_id: str) -> dict:
+        """Run the tests again on the version approved earlier, after the person fixed what failed (added the key, waited out a
+        rate limit). Nothing is redrafted and no new approval is assumed: the same manifest, the same checks."""
+        req = self.registry.get_request(request_id)
+        if req is None or req["status"] != "tests_failed":
+            raise ValueError("only a request whose tests failed can be tested again")
+        approved = next((e["detail"] for e in reversed(req["events"]) if e["event"] == "integrated"), None)
+        if not approved:
+            raise ValueError("this request has no approved connection to test")
+        s = {"request_id": request_id, "connector_id": approved["connector_id"], "version": approved["version"],
+             "parent_run_id": req["run_id"]}
+        self._event(s, "retest", {"connector_id": s["connector_id"], "version": s["version"]})
+        out = self.n_test(s)
+        self.n_finish({**s, "outcome": out["outcome"]})
+        return out
+
+    def look_up(self, request_id: str, candidate: str, docs_url: str, question: str, known_urls: list[str] | None = None) -> dict:
+        """Answer a question the request could not answer, from the provider's own site only: the pages of that site this request
+        already read (`known_urls`), its documentation, and a search limited to its domain. The model picks the passage that
+        answers, and code keeps the answer only if the quote is on the page. The model's one-line answer is shown as its
+        reading of that quote, never as a fact on its own. A page that refuses or has nothing readable is reported, never
+        worked around."""
+        s = {"request_id": request_id, "parent_run_id": None}
+        cfg = advisor.settings()["look_up"]
+        check_public_url(docs_url)
+        host = urlparse(docs_url).hostname or ""
+        domain = ".".join(host.split(".")[-2:])
+        own = lambda u: (urlparse(u).hostname or "").endswith(domain)      # noqa: E731
+        # a search engine reads a whole question as words to match ('can' found dictionaries): the question's key words only
+        words = [w for w in sourcing._words(question) if w not in _name_words(candidate)][:6]
+        try:
+            hits = self.search_fn(f"site:{domain} {candidate} {' '.join(words)}", max_results=8)["results"]
+        except Exception:
+            hits = []
+        urls = [u for u in (known_urls or []) if own(u)] + [docs_url] + [h["url"] for h in hits if own(h["url"])]
+        pages, seen, unread = [], set(), []
+        for url in urls:
+            if len(pages) >= cfg["max_pages"]:
+                break
+            if url in seen:
+                continue
+            seen.add(url)
+            if page := self._fetch_page(s, url):
+                pages.append(page)
+            else:
+                unread.append(url)
+        result = {"candidate": candidate, "question": question, "found": False, "pages": [p["url"] for p in pages], "unread": unread}
+        if pages:
+            terms = set(sourcing._words(question)) | {"individual", "organisation", "organization", "register", "terms"} & set(question.lower().split())
+            passages = [(i, p, w) for i, p in enumerate(pages, 1) for w in best_windows(p["text"], terms or REQUIREMENT_TERMS, 2, cfg["window_chars"])]
+            numbered = {n: (p, w) for n, (_, p, w) in enumerate(passages, 1)}
+            listing = "\n\n".join(f"[{n}] {p['url']}\n{w}" for n, (p, w) in numbered.items())
+            got = self._ask(LookUp, (
+                f"QUESTION about {candidate}: {question}\n\nFrom the numbered passages (from {candidate}'s own website), copy EXACTLY "
+                "the words that answer the question into `quote`, and give the passage number. If no passage answers it, set "
+                f"found to false. Do not answer from memory.\n\n{listing}"), s)
+            if got and got.found and got.passage in numbered:
+                page = numbered[got.passage][0]
+                if verify_quote(page["text"], got.quote)["ok"]:
+                    result.update(found=True, quote=normalize(got.quote), source_url=page["url"], answer=got.answer.strip()[:300])
+                else:
+                    result["rejected"] = "the model's quote is not on the page"
+        self._event(s, "looked_up", {k: v for k, v in result.items() if k != "question"} | {"question": question[:300]})
+        return result

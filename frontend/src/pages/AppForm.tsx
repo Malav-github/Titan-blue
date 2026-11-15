@@ -10,7 +10,7 @@ function initial(t: Template, preset: URLSearchParams): Values {
   const v: Values = {}
   for (const [key, p] of Object.entries(t.inputs.properties)) {
     const fromUrl = preset.get(key)
-    if (fromUrl !== null) v[key] = fromUrl
+    if (fromUrl !== null) v[key] = p.type === 'integer' ? Number(fromUrl) : p.type === 'boolean' ? fromUrl === 'true' : fromUrl
     else if (p.default !== undefined) v[key] = p.default as string | number | boolean
     else v[key] = p.type === 'boolean' ? false : ''
   }
@@ -69,7 +69,8 @@ export function AppForm() {
   const current = values ?? (template ? initial(template, preset) : null)
 
   const start = useMutation({
-    mutationFn: (inputs: Record<string, unknown>) => api.runTemplate(id, inputs),
+    // a research run that paused for a data source passes its own request (?request=...), which is started, not duplicated
+    mutationFn: (inputs: Record<string, unknown>) => api.runTemplate(id, inputs, preset.get('request')),
     onSuccess: (r) => navigate(r.kind === 'research' ? `/runs/${r.run_id}` : `/connectors/requests/${r.request_id}`),
   })
 
