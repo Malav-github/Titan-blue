@@ -190,7 +190,7 @@ export interface Report {
 }
 export interface RunDetail {
   run_id: string
-  kind: 'research' | 'block'
+  kind: 'research' | 'block' | 'check' | 'verify'
   status: string | null
   title: string | null
   subject?: string | null

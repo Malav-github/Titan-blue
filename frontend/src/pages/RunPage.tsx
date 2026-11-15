@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, pageText, type Approval, type ClaimReview, type ClaimVerification, type FigureCheck, type Report, type ReportClaim, type RunDetail, type RunEvent, type StatementTableView } from '../api'
 import { StatementTable } from '../StatementTable'
 import { ACTIVE, describeEvent, lines, time } from '../format'
+import { CheckFlow } from '../CheckFlow'
 import { Flow } from '../Flow'
 import { useRunEvents } from '../useRunEvents'
 import { useArchive, useLinks } from '../scope'
@@ -606,7 +607,9 @@ export function RunPage() {
           ? 'You stopped this run. The result below covers only what was gathered before the stop.'
           : 'This run was stopped before doing any research.'}</p></Card>}
         {data.status === 'paused' && !archive && <Card><p className="text-sm">Paused. Everything done so far is saved; Resume carries on from here, even after a restart.</p></Card>}
-        <Flow events={events} status={data.status} />
+        {/* a check run has its own steps: drawing the research flowchart for it showed steps it never took */}
+        {data.kind === 'check' || data.kind === 'verify' ? <CheckFlow kind={data.kind} events={events} status={data.status} />
+          : <Flow events={events} status={data.status} />}
         {data.report && <ReportView report={data.report} runId={archive ? undefined : id} />}
         <Timeline events={events} working={working} />
       </div>

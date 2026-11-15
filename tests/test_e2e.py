@@ -84,6 +84,16 @@ def base_url(tmp_path_factory):
     eid = store.add_entity("Acme", domain="acme.com", domain_status="confirmed")
     cid = store.add_claim(eid, "pricing.starter", "$29", "The Starter plan costs $29 per month.", src, QUOTE)["claim_id"]
     store.record_support_check(cid, "supported", "The quote states the price.", [], [], "gemma4:e4b", "v1")
+    # a finished Verify run (kind 'check'), as the checker logs it: its events carry the node name 'check', which is also a
+    # research step's name, so it once lit the research flowchart as if it had planned, searched and extracted
+    runs.emit("check-e2e", "check", "run_started", {"kind": "check", "question": "Verify: pasted text", "subject": "Acme",
+                                                     "input": {"kind": "text", "url": "upload://pasted", "title": "pasted text"}})
+    runs.emit("check-e2e", "check", "statements_found", {"text": "The Starter plan costs $29 per month. We think it is great.", "checkable": 1,
+              "statements": [{"n": 1, "text": "The Starter plan costs $29 per month.", "checkable": True, "why": "", "claim_id": cid},
+                             {"n": 2, "text": "We think it is great.", "checkable": False, "why": "an opinion"}]})
+    runs.emit("check-e2e", "check", "statement_checked", {"n": 1, "claim_id": cid, "outcome": "corroborated",
+              "checks": [{"check": "second_source", "result": "found"}], "notes": []})
+    runs.emit("check-e2e", "check", "run_finished", {"corroborated": 1})
     engine = Engine(Registry.load(), store, runs, {}, connectors=connectors, uploads_dir=tmp / "uploads", background=False)
     runner, manager = RealisticRunner(runs), RealisticManager(connectors)
     runner.store = store
@@ -183,6 +193,19 @@ def test_a_run_page_lights_up_the_flowchart(page: Page):
     expect(page.locator("header").get_by_text("Finished", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Plan: done")).to_be_visible()
     expect(page.get_by_role("button", name="Report: done")).to_be_visible()
+
+
+def test_a_verify_run_shows_its_own_steps_not_the_research_flowchart(page: Page):
+    page.goto("/runs/check-e2e")
+    expect(page.get_by_role("button", name="Read the input: done")).to_be_visible()
+    expect(page.get_by_role("button", name="Check each statement: done")).to_be_visible()
+    expect(page.get_by_role("button", name="Verdicts: done")).to_be_visible()
+    for research_step in ("Plan", "Search", "Extract claims"):
+        expect(page.get_by_role("button", name=research_step)).to_have_count(0)      # steps a check never takes are not drawn
+    expect(page.get_by_text("Corroborated", exact=True)).to_be_visible()
+    expect(page.get_by_text("not checked: an opinion")).to_be_visible()
+    page.get_by_role("button", name="Check each statement: done").click()
+    expect(page.get_by_text("never against the input itself")).to_be_visible()
 
 
 def test_runs_page_shows_the_run_and_evidence_lists_the_claim(page: Page):
