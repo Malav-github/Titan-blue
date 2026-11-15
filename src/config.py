@@ -18,7 +18,7 @@ DATA_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
 CONFIG_DIR.mkdir(exist_ok=True)
 
-# API Configuration (only needed for LLM_MODE=power)
+# API Configuration (only needed for MODEL_LEVEL=premium)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 # Search: "searxng" is open source and the default; "brave" is an opt-in paid API (needs BRAVE_API_KEY)
@@ -47,9 +47,15 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 MAX_SEARCHES_PER_COMPANY = int(os.getenv("MAX_SEARCHES_PER_COMPANY", "5"))
 RESEARCH_DEPTH = os.getenv("RESEARCH_DEPTH", "deep")
 
-# LLM Configuration
-# standard = open-source models via Ollama only; power = Anthropic for POWER_MODE_TASKS
-LLM_MODE = os.getenv("LLM_MODE", "standard").lower()
+# Model levels: which models do the judgement steps. Skills, ontologies and code checks are the same at every level.
+#   base     = open-weight models through Ollama, on this machine (the current version; no keys, nothing leaves the machine)
+#   standard = cheaper open-weight models on a hosted provider, not local (planned, not built yet)
+#   premium  = Anthropic, Gemini and OpenAI models, for the tasks in PREMIUM_TASKS (Anthropic is wired today)
+MODEL_LEVELS = ("base", "standard", "premium")
+# Before the levels, LLM_MODE was 'standard' (local, now Base) or 'power' (Anthropic, now Premium). An old .env keeps working:
+# MODEL_LEVEL wins when set; otherwise the old setting is read in its old meaning.
+_LEGACY_LEVEL = {"standard": "base", "power": "premium"}
+MODEL_LEVEL = (os.getenv("MODEL_LEVEL") or _LEGACY_LEVEL.get(os.getenv("LLM_MODE", "").strip().lower(), "base")).strip().lower()
 LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "qwen3:8b")
 # Per-task local models, "task=model,task=model". Tasks not listed use LOCAL_LLM_MODEL. Chosen from `eval_models.py`:
 # a different model family as the claim-support checker caught an entity-link error the Qwen models missed.
@@ -67,11 +73,12 @@ OLLAMA_THINK = os.getenv("OLLAMA_THINK", "False").lower() == "true"
 OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "30m")
 
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
-POWER_MODE_TASKS = {
-    t.strip() for t in os.getenv(
+# The tasks a Premium model takes over; every other task stays on the local model (POWER_MODE_TASKS is the old name, still read)
+PREMIUM_TASKS = {
+    t.strip() for t in (os.getenv("PREMIUM_TASKS") or os.getenv(
         "POWER_MODE_TASKS",
         "text2sql,confidence_scoring,contradiction_detection,synthesis,claim_support,capability",
-    ).split(",") if t.strip()
+    )).split(",") if t.strip()
 }
 
 AVAILABLE_MODELS = {
@@ -97,10 +104,12 @@ def validate_config():
     """Validate that all required configuration is present"""
     errors = []
 
-    if LLM_MODE not in ("standard", "power"):
-        errors.append(f"LLM_MODE must be 'standard' or 'power', got '{LLM_MODE}'")
-    if LLM_MODE == "power" and not ANTHROPIC_API_KEY.startswith("sk-"):
-        errors.append("LLM_MODE=power requires ANTHROPIC_API_KEY in .env")
+    if MODEL_LEVEL not in MODEL_LEVELS:
+        errors.append(f"MODEL_LEVEL must be one of {', '.join(MODEL_LEVELS)}, got '{MODEL_LEVEL}'")
+    if MODEL_LEVEL == "standard":
+        errors.append("MODEL_LEVEL=standard (hosted open-weight models) is planned, not built yet: use base or premium")
+    if MODEL_LEVEL == "premium" and not ANTHROPIC_API_KEY.startswith("sk-"):
+        errors.append("MODEL_LEVEL=premium requires ANTHROPIC_API_KEY in .env")
 
     if TIMEZONE:
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -119,7 +128,7 @@ def validate_config():
         print("Configuration warnings:")
         for error in errors:
             print(f"  - {error}")
-        print("\nCopy .env.example to .env and set LLM_MODE and any keys")
+        print("\nCopy .env.example to .env and set MODEL_LEVEL and any keys")
         return False
 
     return True

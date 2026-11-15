@@ -46,7 +46,7 @@ import selection
 import settling
 import source_class
 import sources
-from config import DATA_DIR, LLM_MODE
+from config import DATA_DIR, MODEL_LEVEL
 from evidence import MIN_QUOTE_CHARS, EvidenceStore, narrow_quote, normalize, widen_quote
 from runs import RunStore
 from connectors.caller import ConnectorError, call_api
@@ -529,7 +529,7 @@ class Runner:
         self.runs.emit(run_id, "runner", "run_started", {
             "question": question, "subject": subject, "require_approval": require_approval, "report_type": rt["id"],
             "deadline_seconds": rt["deadline_seconds"],
-            "budgets": merged, "llm_mode": LLM_MODE, "pause_after": pause_after or [],
+            "budgets": merged, "model_level": MODEL_LEVEL, "pause_after": pause_after or [],
         })
         state: State = {
             "run_id": run_id, "question": question, "require_approval": require_approval, "budgets": merged,

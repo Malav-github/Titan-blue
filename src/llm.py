@@ -1,4 +1,9 @@
-"""Model layer: hands out LangChain chat models for Standard (Ollama) or Power (Anthropic) mode."""
+"""Model layer: hands out LangChain chat models for the model level in use (config.MODEL_LEVEL).
+
+    base     open-weight models through Ollama, on this machine (the current version)
+    standard cheaper open-weight models on a hosted provider (planned: asking for it fails loudly, never falls back silently)
+    premium  Anthropic (Gemini and OpenAI to come), only for the tasks in PREMIUM_TASKS; every other task stays local
+"""
 
 from typing import Optional
 
@@ -13,16 +18,14 @@ def get_chat_model(
     model: Optional[str] = None,
     temperature: float = 0.2,
 ) -> BaseChatModel:
-    """Return the chat model for a task.
-
-    Standard mode always uses local Ollama. Power mode swaps in Anthropic only for
-    tasks listed in POWER_MODE_TASKS; everything else stays local.
-    """
-    if config.LLM_MODE == "power" and task in config.POWER_MODE_TASKS:
+    """Return the chat model for a task at the configured level."""
+    if config.MODEL_LEVEL == "standard":
+        raise RuntimeError("MODEL_LEVEL=standard (hosted open-weight models) is planned, not built yet: set MODEL_LEVEL=base or premium")
+    if config.MODEL_LEVEL == "premium" and task in config.PREMIUM_TASKS:
         try:
             from langchain_anthropic import ChatAnthropic
         except ImportError as e:
-            raise RuntimeError("Power mode needs the extra: uv sync --extra power") from e
+            raise RuntimeError("The Premium level needs the extra: uv sync --extra premium") from e
         return ChatAnthropic(
             model=config.ANTHROPIC_MODEL,
             api_key=config.ANTHROPIC_API_KEY,

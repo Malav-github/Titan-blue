@@ -68,7 +68,7 @@ export function HealthPage() {
               <li><Badge tone={h.brave_key_set ? 'ok' : 'neutral'}>{h.brave_key_set ? 'Set' : 'Not set'}</Badge> <strong>Brave search key</strong></li>
               <li><Badge tone={h.langfuse_configured ? 'ok' : 'neutral'}>{h.langfuse_configured ? 'Set' : 'Not set'}</Badge> <strong>Langfuse tracing</strong></li>
             </ul>
-            <p className="mt-2 text-xs text-muted">Search providers in use: {h.search_providers.join(', ')} · mode: {h.mode}</p>
+            <p className="mt-2 text-xs text-muted">Search providers in use: {h.search_providers.join(', ')} · model level: {({ base: 'Base (local open-weight models)', standard: 'Standard (hosted open-weight models)', premium: 'Premium (Anthropic for chosen tasks)' } as Record<string, string>)[h.mode] ?? h.mode}</p>
           </Card>
         )}
         {models.data && (

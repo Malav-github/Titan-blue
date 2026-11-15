@@ -4,7 +4,7 @@ import logging
 import httpx
 
 from config import (
-    validate_config, EVIDENCE_DB_PATH, LOG_LEVEL, LLM_MODE, LOCAL_LLM_MODEL, OLLAMA_BASE_URL, TASK_MODELS,
+    validate_config, EVIDENCE_DB_PATH, LOG_LEVEL, MODEL_LEVEL, LOCAL_LLM_MODEL, OLLAMA_BASE_URL, TASK_MODELS,
 )
 from evidence import EvidenceStore
 
@@ -88,7 +88,7 @@ def main():
             else:
                 note = "" if LOCAL_LLM_MODEL in models else f"  (WARNING: {LOCAL_LLM_MODEL} not installed)"
                 print(f"OK   Ollama: {', '.join(models)}{note}")
-            print(f"OK   Mode: {LLM_MODE}, default model {LOCAL_LLM_MODEL}")
+            print(f"OK   Model level: {MODEL_LEVEL}, default local model {LOCAL_LLM_MODEL}")
             for task, name in TASK_MODELS.items():
                 missing = models is not None and name not in models
                 print(f"{'FAIL' if missing else 'OK  '} Task model: {task} -> {name}" + ("  (not installed: ollama pull it)" if missing else ""))

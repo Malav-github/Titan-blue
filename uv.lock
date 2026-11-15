@@ -1619,7 +1619,7 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-power = [
+premium = [
     { name = "langchain-anthropic" },
 ]
 
@@ -1634,7 +1634,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.162.0" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "jsonschema", specifier = ">=4.26.0" },
-    { name = "langchain-anthropic", marker = "extra == 'power'", specifier = ">=0.3" },
+    { name = "langchain-anthropic", marker = "extra == 'premium'", specifier = ">=0.3" },
     { name = "langchain-mcp-adapters", specifier = ">=0.1" },
     { name = "langchain-ollama", specifier = ">=0.3.6" },
     { name = "langfuse", specifier = ">=5.1.0" },
@@ -1651,7 +1651,7 @@ requires-dist = [
     { name = "requests", specifier = "==2.32.3" },
     { name = "trafilatura", specifier = ">=2.0" },
 ]
-provides-extras = ["power"]
+provides-extras = ["premium"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=7.0" }]

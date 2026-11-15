@@ -30,8 +30,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Power mode: proprietary model provider, never required for Standard mode
-power = [
+# The Premium model level: proprietary model providers, never required for the Base level
+premium = [
     "langchain-anthropic>=0.3",
 ]
 

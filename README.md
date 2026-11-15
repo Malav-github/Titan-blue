@@ -11,7 +11,7 @@ Titan is being built as a general capability platform (tools driven by skills an
 Built and tested:
 
 - **Model layer** ([src/llm.py](src/llm.py)): local models through Ollama (`qwen3:8b` default, `mistral:7b`, `llama3.1:8b`). Switch with `uv run python switch_model.py`.
-- **Standard and Power modes**: Standard uses open-source models only. Power swaps in Anthropic for the tasks listed in `POWER_MODE_TASKS`.
+- **Three model levels** (`MODEL_LEVEL` in `.env`): **Base**, the current version, uses open-weight models through Ollama on this machine. **Standard** will use cheaper open-weight models on a hosted provider (planned, not built). **Premium** swaps in Anthropic (Gemini and OpenAI to come) for the tasks listed in `PREMIUM_TASKS`; everything else stays local. Skills, ontologies and code checks are the same at every level. An old `LLM_MODE` line still works: `standard` means Base, `power` means Premium.
 - **Search** ([src/tools/search/](src/tools/search)): `web_search` fans a query out to the configured providers in parallel, merges them by reciprocal rank fusion, and logs every search (including failed engines) to an append-only ledger. SearXNG is the open-source default; Brave Search API is an opt-in paid provider.
 - **Primary sources** ([src/tools/primary.py](src/tools/primary.py)): `resolve_company_domain` (Wikidata candidates with evidence; `confirmed`, `ambiguous` or `needs_review`) and `discover_company_pages` (sitemaps, homepage, feeds; honors robots.txt; archives discovery files).
 - **Evidence store** ([src/evidence.py](src/evidence.py)): sources, entities and claims in append-only SQLite (triggers block UPDATE and DELETE). A claim is stored only if its quote appears word for word in the archived page text; code checks this, not the model. Rejected attempts are logged. Corrections are new rows (retraction, supersession, contradiction). `audit()` re-verifies every stored claim and file hash. MCP tools: `record_claim`, `list_claims`; every `fetch_url` / `render_url` result carries a `source_id`.
@@ -56,7 +56,7 @@ uv run python infra/searxng.py           # start private SearXNG (Docker in WSL,
 
 To add Brave: put `BRAVE_API_KEY` in `.env` and set `SEARCH_PROVIDERS=searxng,brave`.
 
-Power mode needs `uv sync --extra power` and `ANTHROPIC_API_KEY` in `.env`. Standard mode needs no keys.
+The Premium level needs `uv sync --extra premium`, `MODEL_LEVEL=premium` and `ANTHROPIC_API_KEY` in `.env`. The Base level needs no keys.
 
 ## Run
 
@@ -180,8 +180,8 @@ Skills split three ways with a stronger model:
 **The design rule that follows**: build skills that serve both. Each skill is a self-contained tool with clear inputs and
 outputs (for example `role_holder(company, role) -> {name, title, filing, quote}`) and a written playbook. The fixed pipeline
 calls them in order for the local model; a frontier model gets them as tools and playbooks and decides when to use them; the
-same ontologies define the terms and the same code checks guard the output in both modes. The `edgar`, `statements`,
-`temporal` and `roles` skills are close to that shape already. The crutch-style skills are where a Power mode would save the
+same ontologies define the terms and the same code checks guard the output at every model level. The `edgar`, `statements`,
+`temporal` and `roles` skills are close to that shape already. The crutch-style skills are where the Premium level would save the
 most, and the ones not worth growing further if a stronger model is planned.
 
 ## Skills that cover for the local model

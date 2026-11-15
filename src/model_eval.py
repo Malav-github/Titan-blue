@@ -190,7 +190,7 @@ def gpu_split(model: str) -> str | None:
 
 def default_llm_factory(model: str):
     from llm import get_chat_model
-    return get_chat_model(task="eval", model=model, temperature=0)   # "eval" is never a Power-mode task: always local
+    return get_chat_model(task="eval", model=model, temperature=0)   # "eval" is never a Premium task: always local
 
 
 def evaluate(models: list[str], llm_factory=default_llm_factory, tasks=TASKS, cases: dict | None = None, progress=print) -> dict:

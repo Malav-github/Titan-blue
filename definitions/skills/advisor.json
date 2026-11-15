@@ -84,7 +84,7 @@
      "actions": ["alternatives"]},
     {"id": "model_failed", "match": "llm_failed|model call failed",
      "cause": "A model call failed while reading the documentation.",
-     "check": ["This is a local-model limit: the model returned output that did not fit the expected shape.", "Trying again often works; Power mode, if set up, uses a stronger model for this step."],
+     "check": ["This is a local-model limit: the model returned output that did not fit the expected shape.", "Trying again often works; the Premium model level, if set up, uses a stronger model for this step."],
      "limit": "model",
      "actions": ["retry"]}
   ],

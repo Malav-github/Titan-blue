@@ -123,7 +123,7 @@ Every run, including single-block runs from the Lab, is a run with events. There
 3. Network access goes through the SSRF guard; API calls through the guarded caller (rate limit, budget, no redirects, size cap).
 4. Budgets (searches, fetches, API calls, tokens) are enforced by the runner; a template can lower them, not raise them past the configured maximum.
 5. Block and template versions are append-only; runs record the exact versions used.
-6. Power mode (Anthropic) applies only to tasks in `POWER_MODE_TASKS`, and the UI shows which model produced each result.
+6. The Premium model level (Anthropic) applies only to tasks in `PREMIUM_TASKS`, and the UI shows which model produced each result.
 7. Server binds to localhost only, requires a session token, checks the Host header.
 8. Uploaded files become sources with tier `user_provided`, never `primary`. Claims from them still need a verbatim quote from the extracted text.
 

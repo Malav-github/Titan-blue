@@ -199,7 +199,7 @@ class Engine:
         run_id = uuid.uuid4().hex
         self.runs.emit(run_id, "engine", "run_started", {
             "question": title, "title": title, "graph": {"nodes": plan["resolved"], "edges": graph.get("edges", [])},
-            "inputs": run_inputs, "llm_mode": config.LLM_MODE})
+            "inputs": run_inputs, "model_level": config.MODEL_LEVEL})
         self._submit(run_id)
         return run_id
 

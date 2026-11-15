@@ -218,10 +218,10 @@ def create_app(registry: Registry | None = None, token: str | None = None,
         return {
             "ollama_reachable": installed is not None,
             "installed": installed or [],
-            "mode": config.LLM_MODE,
+            "mode": config.MODEL_LEVEL,
             "tasks": [{"task": t, "model": m, "installed": installed is not None and m in installed}
                       for t, m in tasks.items()],
-            "power_mode_tasks": sorted(config.POWER_MODE_TASKS) if config.LLM_MODE == "power" else [],
+            "premium_tasks": sorted(config.PREMIUM_TASKS) if config.MODEL_LEVEL == "premium" else [],
         }
 
     @app.get("/api/health")
@@ -230,7 +230,7 @@ def create_app(registry: Registry | None = None, token: str | None = None,
         st = store or EvidenceStore(config.EVIDENCE_DB_PATH)
         problems = st.audit()
         return {
-            "mode": config.LLM_MODE,
+            "mode": config.MODEL_LEVEL,
             "checks": {n: {"ok": r is None, "detail": r} for n, r in checks.items()},
             "search_providers": config.SEARCH_PROVIDERS,
             "brave_key_set": bool(config.BRAVE_API_KEY),
